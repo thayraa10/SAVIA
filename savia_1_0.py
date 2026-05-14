@@ -1,0 +1,1636 @@
+
+import streamlit as st
+import pandas as pd
+import numpy as np
+import math
+import io
+import re
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+from datetime import date, timedelta
+st.set_page_config(page_title="SAVIA — Abastecimiento de Medi"
+                              "camentos", layout="wide")
+
+st.markdown("""
+<style>
+html, body { font-family: sans-serif; } .stApp { background-color: #f0f4f8; } /* fondo gris */
+
+[data-testid="stSidebar"] { background: #0a0f2c; } /* barra izquierda */
+[data-testid="stSidebar"] * { color: #f0f4f8 !important; }
+[data-testid="stSidebar"] .stTextInput input,
+[data-testid="stSidebar"] .stNumberInput input,
+[data-testid="stSidebar"] .stDateInput input {
+    background: white !important; border: 1px solid #334155 !important;
+    color: black !important; border-radius: 8px !important;
+}
+[data-testid="stSidebar"] [data-baseweb="select"] div {
+    background: white !important; color: black !important;
+}
+/* Días semana en español */
+[data-testid="stDateInput"] abbr[title="Monday"]    { visibility:hidden; } [data-testid="stDateInput"] abbr[title="Monday"]::after    { content:"Lu"; visibility:visible; }
+[data-testid="stDateInput"] abbr[title="Tuesday"]   { visibility:hidden; } [data-testid="stDateInput"] abbr[title="Tuesday"]::after   { content:"Ma"; visibility:visible; }
+[data-testid="stDateInput"] abbr[title="Wednesday"] { visibility:hidden; } [data-testid="stDateInput"] abbr[title="Wednesday"]::after { content:"Mi"; visibility:visible; }
+[data-testid="stDateInput"] abbr[title="Thursday"]  { visibility:hidden; } [data-testid="stDateInput"] abbr[title="Thursday"]::after  { content:"Ju"; visibility:visible; }
+[data-testid="stDateInput"] abbr[title="Friday"]    { visibility:hidden; } [data-testid="stDateInput"] abbr[title="Friday"]::after    { content:"Vi"; visibility:visible; }
+[data-testid="stDateInput"] abbr[title="Saturday"]  { visibility:hidden; } [data-testid="stDateInput"] abbr[title="Saturday"]::after  { content:"Sá"; visibility:visible; }
+[data-testid="stDateInput"] abbr[title="Sunday"]    { visibility:hidden; } [data-testid="stDateInput"] abbr[title="Sunday"]::after    { content:"Do"; visibility:visible; }
+[data-testid="stSidebar"] hr { border-color: #334155 !important; }
+
+/* ── Tabs ────────────────────────────────────────────────── */
+.stTabs [data-baseweb="tab-list"] {
+    background: white; border-radius: 12px; padding: 4px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08); gap: 4px;
+}
+.stTabs [data-baseweb="tab"] {
+    border-radius: 8px !important; font-weight: 500;
+    color: #64748b !important; padding: 8px 20px !important;
+}
+.stTabs [aria-selected="true"] {
+    background: #2563eb !important; color: white !important;
+}
+
+/* ── Métricas ────────────────────────────────────────────── */
+[data-testid="metric-container"] {
+    background: white; border-radius: 12px; padding: 16px 20px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.07);
+    border-left: 4px solid #2563eb;
+}
+[data-testid="stMetricLabel"] { font-size: 0.78rem !important; color: #64748b !important; font-weight: 500; }
+[data-testid="stMetricValue"] { font-size: 1.4rem !important; color: #0f172a !important; font-weight: 700; }
+
+/* ── Expanders ───────────────────────────────────────────── */
+[data-testid="stExpander"] {
+    background: white; border-radius: 12px !important;
+    border: 1px solid #e2e8f0 !important;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    margin-bottom: 12px;
+}
+[data-testid="stExpander"] summary {
+    font-weight: 600 !important; color: #0f172a !important;
+    padding: 14px 18px !important;
+}
+
+/* ── Botones +/- number input ────────────────────────────── */
+[data-testid="stNumberInput"] button { background: royalblue !important; color: white !important; border: none !important; }
+
+/* ── Dataframes ──────────────────────────────────────────── */
+[data-testid="stDataFrame"] { border-radius: 10px; overflow: hidden; }
+
+/* ── Botones ─────────────────────────────────────────────── */
+.stButton > button, [data-testid="stFileUploaderDropzone"] button {
+    border-radius: 8px !important; font-weight: 500 !important;
+    background-color: royalblue !important; color: white !important;
+    border: none !important;
+}
+
+/* ── Traducción uploader ─────────────────────────────────── */
+[data-testid="stFileUploaderDropzoneInstructions"] span { display: none; }
+[data-testid="stFileUploaderDropzoneInstructions"]::before { content: "Arrastra y suelta el archivo aquí"; display: block; }
+[data-testid="stFileUploaderDropzoneInstructions"] small { display: none; }
+[data-testid="stFileUploaderDropzoneInstructions"]::after { content: "Límite 200MB por archivo • XLSX, CSV"; display: block; font-size: 0.8rem; color: gray; }
+[data-testid="stFileUploaderDropzone"] button { color: transparent !important; position: relative; width: 100% !important; }
+[data-testid="stFileUploaderDropzone"] button::after { content: "Buscar archivo"; color: white; position: absolute; left: 50%; transform: translateX(-50%); font-size: 14px; }
+
+/* ── Alertas ─────────────────────────────────────────────── */
+.stAlert { border-radius: 10px !important; }
+
+/* ── Divider ─────────────────────────────────────────────── */
+hr { border-color: #e2e8f0 !important; }
+
+/* ── Header hero ─────────────────────────────────────────── */
+.hero-banner {
+    background: #0a0f2c;
+    border-radius: 16px; padding: 48px 36px; margin-bottom: 24px;
+    color: white; text-align: center;
+}
+.hero-banner h1 { font-size: 3.5rem; font-weight: 800; margin: 0; color: white; }
+.hero-banner p  { font-size: 1.1rem; color: #93c5fd; margin: 8px 0 0; }
+
+/* ── Tarjeta de sección ──────────────────────────────────── */
+.section-card {
+    background: white; border-radius: 14px; padding: 24px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.08); margin-bottom: 20px;
+}
+
+/* ── Badge de estado ─────────────────────────────────────── */
+.badge-red    { background:lightpink;   color:red;    padding:3px 10px; border-radius:99px; font-size:0.75rem; font-weight:600; }
+.badge-orange { background:moccasin;    color:darkorange; padding:3px 10px; border-radius:99px; font-size:0.75rem; font-weight:600; }
+.badge-green  { background:lightgreen;  color:green;  padding:3px 10px; border-radius:99px; font-size:0.75rem; font-weight:600; }
+.badge-blue   { background:lightblue;   color:blue;   padding:3px 10px; border-radius:99px; font-size:0.75rem; font-weight:600; }
+.badge-gray   { background:lightgray;   color:dimgray; padding:3px 10px; border-radius:99px; font-size:0.75rem; font-weight:600; }
+</style>
+""", unsafe_allow_html=True)
+
+# ──────────────────────────────────────────────────────────────────────────────
+
+def encontrar_columna(df, palabras_clave, ya_usadas):
+    for columna in df.columns:
+        if columna in ya_usadas:
+            continue
+        nombre = columna.lower().replace("_", " ").replace("-", " ")
+        for palabra in palabras_clave:
+            if palabra in nombre:
+                ya_usadas.add(columna)
+                return columna
+    return None
+
+# ──────────────────────────────────────────────────────────────────────────────
+def calcular_estado(dias):
+    if pd.isna(dias): return "Sin fecha"
+    if dias < 0:      return "VENCIDO"
+    if dias <= 30:    return "CRITICO"
+    if dias <= 90:    return "ADVERTENCIA"
+    return "NORMAL"
+
+# ──────────────────────────────────────────────────────────────────────────────
+# FUNCIÓN: CALCULAR PARÁMETROS DE INVENTARIO
+# Calcula s, Q, S, SS y U igual que en el notebook de políticas.
+# ──────────────────────────────────────────────────────────────────────────────
+def calcular_politicas(Media, V, OC, HC, LT, R, Z=1.645):
+    # s cubre la demanda durante el lead time completo + un período de revisión
+    U  = math.ceil((Media / (2 * V)) + ((V * R) / 2))
+    s  = math.ceil((Media * (LT + R)) + Z * (V ** 0.5) * ((LT + R) ** 0.5))
+    Q  = math.ceil(((2 * OC * Media) / HC) ** 0.5)
+    S  = s + Q + U
+    SS = max(0, math.ceil((Media * R) + (Z * (V ** 0.5) * ((LT + R) ** 0.5) - U)))
+
+    return {"s": s, "Q": Q, "S": S, "SS": SS, "U": U}
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# FUNCIÓN: RECOMENDAR PERÍODO DE REVISIÓN
+# Calcula cada cuántos días conviene revisar según el consumo.
+# ──────────────────────────────────────────────────────────────────────────────
+def recomendar_periodo(media_diaria, varianza_diaria, costo_orden, costo_mantener, lead_time):
+    d = max(media_diaria, 0.001)
+    Q = math.ceil(((2 * costo_orden * d) / costo_mantener) ** 0.5)
+    R = Q / d
+
+    if R < lead_time:
+        R = lead_time
+
+    if R <= 7:
+        return 7, "Semanal (7 días)"
+    if R <= 14:
+        return 14, "Quincenal (14 días)"
+    if R <= 21:
+        return 21, "Cada 3 semanas (21 días)"
+    if R <= 30:
+        return 30, "Mensual (30 días)"
+
+    r_redondeado = round(R / 7) * 7
+    return int(r_redondeado), "Cada " + str(int(r_redondeado)) + " días"
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# SIMULACIONES POR EVENTOS (tiempo continuo) — réplica del notebook de referencia.
+#
+# La demanda sigue un proceso de Poisson con tasa Media (u/día):
+#   tiempo entre llegadas ~ Exp(Media)  →  t = (-1/Media) * ln(U), U ~ Unif(0,1)
+#
+# Eventos posibles en cada paso:
+#   1. Llegada de demanda (una unidad)
+#   2. Revisión de inventario (cada R días)
+#   3. Llegada de un pedido (LT días después de ser colocado)
+#
+# Se hacen NR réplicas y se promedian los costos.
+# ──────────────────────────────────────────────────────────────────────────────
+def _simular(Media, V, OC, HC, LT, R, s, Q, S_inicio, politica, NR=5, TiempoTotal=360):
+    """
+    Núcleo de simulación por eventos (tiempo continuo) para las tres políticas.
+    S_inicio es el nivel máximo al que se repone en (R,S) y (R,s,S);
+    en (R,s,Q) es solo el inventario inicial.
+
+    La demanda diaria sigue una distribución Poisson con tasa Media:
+      N_d ~ Poisson(Media)  →  entero aleatorio, algunos días más, otros menos
+    Cada unidad del día d se ubica en un instante uniforme dentro de [d, d+1].
+    Esto equivale exactamente al proceso de Poisson homogéneo del notebook de
+    referencia (inter-llegadas ~ Exp(1/Media)), con la variabilidad visible
+    día a día que muestra el gráfico.
+    """
+    CostoTotalReplicas   = 0.0
+    CostoDiarioReplicas  = 0.0
+    QuiebresTotalReplicas = 0   # unidades de demanda no atendidas (acumulado entre réplicas)
+    Inventario_final     = []
+    Tiempo_final         = []
+
+    total_dias = int(TiempoTotal + LT + R) + 10
+
+    for replica in range(NR):
+        np.random.seed(replica)
+
+        # Demanda diaria: N_d ~ Poisson(Media)
+        # Variance = Media por día  →  consistente con calcular_politicas (V = Media)
+        daily_counts = np.random.poisson(lam=Media, size=total_dias)
+        # Cada unidad se coloca en un instante uniforme dentro de su día
+        day_nums = np.repeat(np.arange(total_dias, dtype=float), daily_counts)
+        if day_nums.size > 0:
+            offsets      = np.random.uniform(0.0, 1.0, day_nums.size)
+            demand_times = np.sort(day_nums + offsets)
+        else:
+            demand_times = np.array([float('inf')])
+        d_idx = 0   # puntero al próximo evento de demanda
+
+        TNow       = 0.0
+        OH         = float(S_inicio)
+        IT         = 0.0
+        CostoTotal = 0.0
+        Tiempo_Ant = 0.0
+        Quiebres   = 0   # unidades sin atender en esta réplica
+
+        Evento_Revisar = float(R)
+        arrivals = []   # lista de (tiempo_llegada, cantidad)
+
+        Inventario = [OH]
+        Tiempo_sim = [TNow]
+        IP_sim     = [OH]       # Posición de Inventario = OH + IT (IT=0 al inicio)
+
+        while TNow <= TiempoTotal:
+            next_demand  = demand_times[d_idx] if d_idx < demand_times.size else float('inf')
+            next_arrival = arrivals[0][0]       if arrivals       else float('inf')
+
+            # Prioridad: demanda (estricto <), luego revisión, luego llegada
+            if next_demand < min(Evento_Revisar, next_arrival):
+                TNow = next_demand
+                CostoTotal += OH * (TNow - Tiempo_Ant) * HC
+                Tiempo_Ant  = TNow
+                if OH > 0:
+                    OH -= 1
+                else:
+                    Quiebres += 1   # unidad demandada sin stock disponible
+
+                d_idx += 1
+
+            elif Evento_Revisar <= next_arrival:
+                TNow = Evento_Revisar
+                CostoTotal += OH * (TNow - Tiempo_Ant) * HC
+                Tiempo_Ant  = TNow
+                IP = OH + IT
+
+                if politica == "rsq":
+                    if IP <= s:
+                        IT += Q
+                        arrivals.append((TNow + LT, Q))
+                        CostoTotal += OC
+
+                elif politica == "rs":
+                    # Reponer hasta el nivel máximo S_inicio en cada revisión
+                    cant = float(max(0.0, S_inicio - IP))
+                    if cant > 0:
+                        IT += cant
+                        arrivals.append((TNow + LT, cant))
+                        CostoTotal += OC
+
+                else:   # rss — reponer hasta S_inicio solo cuando IP ≤ s
+                    if IP <= s:
+                        cant = float(max(0.0, S_inicio - IP))
+                        if cant > 0:
+                            IT += cant
+                            arrivals.append((TNow + LT, cant))
+                            CostoTotal += OC
+
+                Evento_Revisar = TNow + R
+
+            else:
+                t_arr, cant = arrivals.pop(0)
+                TNow = t_arr
+                CostoTotal += OH * (TNow - Tiempo_Ant) * HC
+                Tiempo_Ant  = TNow
+                OH += cant
+                IT -= cant
+
+            Inventario.append(OH)
+            Tiempo_sim.append(TNow)
+            IP_sim.append(OH + IT)   # IP = inventario físico + pedidos en tránsito
+
+        CostoTotalReplicas    += CostoTotal
+        CostoDiarioReplicas   += CostoTotal / TiempoTotal
+        QuiebresTotalReplicas += Quiebres
+        Inventario_final = Inventario
+        Tiempo_final     = Tiempo_sim
+        IP_final         = IP_sim    # Posición de Inventario de la última réplica
+
+    costo_anual       = round(CostoTotalReplicas  / NR)
+    costo_diario      = round(CostoDiarioReplicas / NR)
+    quiebres_promedio = round(QuiebresTotalReplicas / NR)
+    return costo_diario, costo_anual, Tiempo_final, Inventario_final, quiebres_promedio, IP_final
+
+
+def simular_rsq(Media, V, OC, HC, LT, R, s, Q, S, NR=5, TiempoTotal=360):
+    return _simular(Media, V, OC, HC, LT, R, s, Q, S,   "rsq", NR, TiempoTotal)
+
+def simular_rs(Media, V, OC, HC, LT, R, s, Q, S, NR=5, TiempoTotal=360):
+    return _simular(Media, V, OC, HC, LT, R, s, Q, S,   "rs",  NR, TiempoTotal)
+
+def simular_rss(Media, V, OC, HC, LT, R, s, Q, S, NR=5, TiempoTotal=360):
+    return _simular(Media, V, OC, HC, LT, R, s, Q, S,   "rss", NR, TiempoTotal)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# FUNCIONES PARA LEER EL FORMATO DEL HOSPITAL REGIONAL
+# Los archivos del hospital tienen una columna por mes (formato "ancho"),
+# en vez de una fila por dispensación (formato "largo" que usa la app).
+# Estas funciones detectan ese formato y lo convierten automáticamente.
+# ──────────────────────────────────────────────────────────────────────────────
+
+MESES = ["enero", "febrero", "marzo", "abril", "mayo", "junio",
+         "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"]
+
+def detectar_formato_hospital(df):
+    """
+    Devuelve True si el DataFrame tiene formato ancho del hospital:
+    una columna por mes en lugar de una fila por dispensación.
+    Se detecta contando cuántas columnas contienen nombres de meses.
+    """
+    columnas_con_mes = 0
+    for col in df.columns:
+        col_lower = str(col).lower()
+        for mes in MESES:
+            if mes in col_lower:
+                columnas_con_mes += 1
+                break
+    return columnas_con_mes >= 3
+
+def leer_con_encabezado_correcto(archivo_bytes, nombre_hoja):
+    """
+    Lee una hoja de Excel detectando si los encabezados reales están en la fila 1 o en la fila 4.
+    El formato del hospital a veces tiene un título fusionado en las primeras 3 filas,
+    y los encabezados reales (CODIGO, NOMBRE, ...) empiezan en la fila 4.
+    """
+    # Leer solo la primera fila para ver qué hay en el encabezado
+    df_prueba = pd.read_excel(io.BytesIO(archivo_bytes), sheet_name=nombre_hoja, header=0, nrows=1)
+    primera_col = str(df_prueba.columns[0]).lower()
+    # Si la primera columna ya dice "codigo" o "sku", los encabezados están en fila 1
+    if "codigo" in primera_col or "sku" in primera_col:
+        return pd.read_excel(io.BytesIO(archivo_bytes), sheet_name=nombre_hoja, header=0)
+    else:
+        # Si no, los encabezados están en la fila 4 (índice 3)
+        return pd.read_excel(io.BytesIO(archivo_bytes), sheet_name=nombre_hoja, header=3)
+
+def transformar_formato_ancho(df):
+    """
+    Convierte el formato ancho del hospital al formato largo que usa la app.
+
+    Formato ancho (hospital):
+      CODIGO | NOMBRE | CONSUMO Enero/2025 | ... | EXIST.HOSPITAL | PRECIO | StcMinimo | ...
+
+    Retorna (mov_largo, inv_extra) donde:
+      - mov_largo: DataFrame con CODIGO | NOMBRE | FECHA | CANTIDAD
+      - inv_extra: DataFrame con CODIGO | STOCK_TOTAL | COSTO | STC_MIN | STC_MAX | STC_CRITICO | CONSUMO_PROM | ALCANCE | SUGERIDO
+    """
+    # Crear diccionario que mapea nombre de mes a número (enero → 1, febrero → 2, ...)
+    MESES_NUM = {}
+    for num, mes in enumerate(MESES):
+        MESES_NUM[mes] = num + 1
+
+    # Buscar columnas de código y nombre
+    col_codigo = None
+    col_nombre = None
+    for col in df.columns:
+        col_l = str(col).lower().strip()
+        if ("codigo" in col_l or "código" in col_l) and col_codigo is None:
+            col_codigo = col
+        elif "nombre" in col_l and col_nombre is None:
+            col_nombre = col
+
+    if col_codigo is None or col_nombre is None:
+        return None, None
+
+    # Identificar columnas de meses (consumo mensual)
+    cols_meses = {}
+    for col in df.columns:
+        col_str = str(col).lower()
+        for mes_nombre, mes_num in MESES_NUM.items():
+            if mes_nombre in col_str:
+                match_año = re.search(r'20\d\d', str(col))
+                año = int(match_año.group()) if match_año else 2024
+                cols_meses[col] = (mes_num, año)
+                break
+
+    if len(cols_meses) == 0:
+        return None, None
+
+    # Identificar columnas de existencias (EXIST.*)
+    # Recorremos todas las columnas y guardamos las que empiezan con "EXIST"
+    cols_exist = []
+    for c in df.columns:
+        if str(c).strip().upper().startswith("EXIST"):
+            cols_exist.append(c)
+
+    # Buscar columnas de precio y parámetros de stock usando for loops
+    col_precio = None
+    for c in df.columns:
+        if "precio" in str(c).lower():
+            col_precio = c
+            break
+
+    col_stc_min = None
+    for c in df.columns:
+        nombre_c = str(c).lower().replace(" ", "").replace("í", "i").replace("ó", "o")
+        if "stcminimo" in nombre_c:
+            col_stc_min = c
+            break
+
+    col_stc_max = None
+    for c in df.columns:
+        nombre_c = str(c).lower().replace(" ", "").replace("í", "i").replace("ó", "o")
+        if "stcmaximo" in nombre_c:
+            col_stc_max = c
+            break
+
+    col_stc_crit = None
+    for c in df.columns:
+        nombre_c = str(c).lower().replace(" ", "").replace("í", "i").replace("ó", "o")
+        if "stccritico" in nombre_c:
+            col_stc_crit = c
+            break
+
+    col_cons_prom = None
+    for c in df.columns:
+        if "consumo_promedio_sin_cero" in str(c).lower():
+            col_cons_prom = c
+            break
+    if col_cons_prom is None:
+        for c in df.columns:
+            if "consumo_promedio" in str(c).lower():
+                col_cons_prom = c
+                break
+
+    col_alcance = None
+    for c in df.columns:
+        if "alcance" in str(c).lower():
+            col_alcance = c
+            break
+
+    col_sugerido = None
+    for c in df.columns:
+        if "sugerido" in str(c).lower():
+            col_sugerido = c
+            break
+
+    # Convertir de ancho a largo: una fila por producto-mes
+    filas_mov  = []
+    filas_inv  = []
+    for _, row in df.iterrows():
+        codigo = row[col_codigo]
+        nombre = row[col_nombre]
+        if pd.isna(codigo) or pd.isna(nombre):
+            continue
+        cod = str(codigo).strip()
+        nom = str(nombre).strip()
+
+        # Movimientos mensuales
+        for col_mes, (mes_num, año) in cols_meses.items():
+            cantidad = pd.to_numeric(row[col_mes], errors="coerce")
+            if pd.isna(cantidad):
+                cantidad = 0
+            filas_mov.append({
+                "CODIGO":   cod,
+                "NOMBRE":   nom,
+                "FECHA":    pd.Timestamp(year=año, month=mes_num, day=1),
+                "CANTIDAD": float(cantidad),
+            })
+
+        # Datos de inventario complementarios
+        # Sumar todas las columnas de existencias (puede haber una por bodega)
+        stock_total = 0
+        if cols_exist:
+            # Construir la lista de valores de existencia con un for loop explícito
+            lista_existencias = []
+            for c in cols_exist:
+                lista_existencias.append(row[c])
+            vals = pd.to_numeric(pd.Series(lista_existencias), errors="coerce").fillna(0)
+            stock_total = float(vals.sum())
+
+        # Función auxiliar para convertir un valor de celda a número sin romper si está vacío
+        def a_numero(nombre_col):
+            if nombre_col is None: return None
+            valor = pd.to_numeric(row[nombre_col], errors="coerce")
+            return float(valor) if not pd.isna(valor) else None
+
+        filas_inv.append({
+            "CODIGO":       cod,
+            "STOCK_TOTAL":  stock_total,
+            "COSTO":        a_numero(col_precio),
+            "STC_MIN":      a_numero(col_stc_min),
+            "STC_MAX":      a_numero(col_stc_max),
+            "STC_CRITICO":  a_numero(col_stc_crit),
+            "CONS_PROM":    a_numero(col_cons_prom),
+            "ALCANCE":      a_numero(col_alcance),
+            "SUGERIDO":     a_numero(col_sugerido),
+        })
+
+    if len(filas_mov) == 0:
+        return None, None
+
+    mov_largo = pd.DataFrame(filas_mov)
+    inv_extra = pd.DataFrame(filas_inv).drop_duplicates("CODIGO")
+    return mov_largo, inv_extra
+
+# ──────────────────────────────────────────────────────────────────────────────
+# ENCABEZADO DE LA APP
+# ──────────────────────────────────────────────────────────────────────────────
+st.markdown("""
+<div class="hero-banner">
+  <h1>SAVIA</h1>
+  <p>Sistema de gestión y abastecimiento de medicamentos para centros de salud</p>
+</div>
+""", unsafe_allow_html=True)
+
+# ──────────────────────────────────────────────────────────────────────────────
+# SIDEBAR: CARGA DE DATOS Y PARÁMETROS
+# ──────────────────────────────────────────────────────────────────────────────
+with st.sidebar:
+    st.header("Cargar datos")
+    archivo      = st.file_uploader("Archivo Excel o CSV", type=["xlsx", "csv"])
+
+    st.divider()
+    st.header("Registro")
+    fecha_revision   = st.date_input("Fecha última revisión", value=date.today())
+    hora_revision    = st.time_input("Hora de la revisión", value=None)
+    responsable      = st.text_input("Responsable", placeholder="Nombre o cargo")
+
+    st.divider()
+    st.header("Parámetros configurables")
+    costo_orden      = st.number_input("Costo por orden (CLP $)",           value=40000, step=1000)
+    costo_mantener   = st.number_input("Costo mantener ($ / unidad / día)", value=10,    step=1)
+    lead_time        = st.number_input("Tiempo de entrega CENABAST (días)",          value=7,     step=1)
+    periodo_revision = st.number_input("Período de revisión (días)",         value=7,     step=1)
+    Z = 1.881  # nivel de servicio 97%
+
+# ──────────────────────────────────────────────────────────────────────────────
+# CARGA DE DATOS
+# ──────────────────────────────────────────────────────────────────────────────
+@st.cache_data
+def cargar_ejemplo():
+    inv = pd.read_excel("inventario_centro_salud.xlsx", sheet_name="Inventario")
+    mov = pd.read_excel("inventario_centro_salud.xlsx", sheet_name="Movimientos")
+    return inv, mov
+
+# session_state guarda los datos aunque el usuario interactúe con la app
+if "inv" not in st.session_state:
+    st.session_state["inv"]              = None
+    st.session_state["mov"]              = None
+    st.session_state["fuente"]           = None
+    st.session_state["formato_hospital"] = False
+
+
+if archivo is not None:
+    contenido = archivo.getvalue()
+
+    if archivo.name.endswith(".csv"):
+        st.session_state["inv"]              = pd.read_csv(io.BytesIO(contenido))
+        st.session_state["mov"]              = None
+        st.session_state["fuente"]           = archivo.name
+        st.session_state["formato_hospital"] = False
+        st.sidebar.success("CSV cargado.")
+    else:
+        xls   = pd.ExcelFile(io.BytesIO(contenido))
+        hojas = xls.sheet_names
+
+        # Leer la primera hoja para detectar si es formato hospital
+        df_primera = leer_con_encabezado_correcto(contenido, hojas[0])
+
+        if detectar_formato_hospital(df_primera):
+            # ── Formato hospital: archivo de consumos/egresos por mes ──────────
+            # Procesar todas las hojas con formato ancho.
+            # Un producto que aparece en varias hojas (ej: Hoja1 y Hoja2) solo
+            # se toma de la primera hoja que lo contenga, para no duplicar datos.
+            st.sidebar.info("Formato del hospital detectado.")
+            todos_movimientos = []
+            todos_inv_extra   = []
+            codigos_ya_cargados = set()
+
+            for nombre_hoja in hojas:
+                df_hoja = leer_con_encabezado_correcto(contenido, nombre_hoja)
+                if not detectar_formato_hospital(df_hoja):
+                    continue  # saltar hojas sin formato de meses (ej: "consumo hospital")
+                mov_hoja, inv_hoja = transformar_formato_ancho(df_hoja)
+                if mov_hoja is None:
+                    continue
+                # Solo agregar productos nuevos (que no estén ya cargados)
+                nuevos = mov_hoja[~mov_hoja["CODIGO"].isin(codigos_ya_cargados)]
+                if len(nuevos) > 0:
+                    todos_movimientos.append(nuevos)
+                    codigos_ya_cargados.update(nuevos["CODIGO"].unique())
+                if inv_hoja is not None:
+                    # Construir el conjunto de códigos ya cargados en el inventario
+                    # recorriendo la lista de DataFrames ya agregados
+                    codigos_inv_ya_cargados = set()
+                    for df_extra in todos_inv_extra:
+                        for cod in df_extra["CODIGO"]:
+                            codigos_inv_ya_cargados.add(cod)
+                    nuevos_inv = inv_hoja[~inv_hoja["CODIGO"].isin(codigos_inv_ya_cargados)]
+                    if len(nuevos_inv) > 0:
+                        todos_inv_extra.append(nuevos_inv)
+
+            if todos_movimientos:
+                mov_combinado = pd.concat(todos_movimientos, ignore_index=True)
+                st.session_state["mov"] = mov_combinado
+
+                # Construir inventario usando datos reales extraídos del archivo
+                productos = mov_combinado.groupby("CODIGO").agg(
+                    NOMBRE=("NOMBRE", "first")
+                ).reset_index()
+
+                # Combinar con datos de inventario (stock, precio, parámetros)
+                if todos_inv_extra:
+                    inv_extra_combinado = pd.concat(todos_inv_extra, ignore_index=True).drop_duplicates("CODIGO")
+                    productos = productos.merge(inv_extra_combinado, on="CODIGO", how="left")
+                    productos["STOCK"] = productos["STOCK_TOTAL"].fillna(0)
+                    productos["COSTO"] = productos["COSTO"].fillna(0)
+                else:
+                    productos["STOCK"] = 0
+                    productos["COSTO"] = 0
+
+                productos["VENCIMIENTO"] = pd.NaT   # no disponible en archivos de consumo
+
+                st.session_state["inv"]              = productos
+                st.session_state["fuente"]           = archivo.name
+                st.session_state["formato_hospital"] = True
+                n_prod = len(productos)
+                st.sidebar.success("Cargados " + str(n_prod) + " productos desde " + str(len(todos_movimientos)) + " hojas.")
+            else:
+                st.sidebar.error("No se pudo leer el archivo. Verifica el formato.")
+
+        else:
+            # ── Formato normal: inventario + movimientos ───────────────────────
+            st.session_state["formato_hospital"] = False
+            if len(hojas) == 1:
+                st.session_state["inv"]    = df_primera
+                st.session_state["mov"]    = None
+                st.session_state["fuente"] = archivo.name
+            else:
+                hoja_inv = st.sidebar.selectbox("Hoja de INVENTARIO:", hojas, index=0)
+                opciones = ["(ninguna)"] + hojas
+                hoja_mov = st.sidebar.selectbox("Hoja de MOVIMIENTOS:", opciones, index=1)
+                st.session_state["inv"] = pd.read_excel(io.BytesIO(contenido), sheet_name=hoja_inv)
+                if hoja_mov != "(ninguna)":
+                    st.session_state["mov"] = pd.read_excel(io.BytesIO(contenido), sheet_name=hoja_mov)
+                else:
+                    st.session_state["mov"] = None
+                st.session_state["fuente"] = archivo.name
+            st.sidebar.success("Archivo cargado.")
+
+if st.session_state["inv"] is None:
+    st.info("Sube un archivo en el panel izquierdo")
+    st.stop()
+
+# Aviso cuando se cargó un archivo de consumos del hospital (sin stock ni vencimiento)
+if st.session_state.get("formato_hospital", False):
+    st.info(
+        "Archivo de consumos del hospital cargado correctamente.  \n"
+        "Los datos de **existencias actuales** y **fecha de vencimiento** no están en este tipo de archivo, "
+        "por lo que las alertas de vencimiento no estarán disponibles.  \n"
+    )
+
+# Obtener los datos cargados desde el estado de sesión
+datos_inventario = st.session_state["inv"]
+datos_movimientos = st.session_state["mov"]
+
+# ──────────────────────────────────────────────────────────────────────────────
+# DETECCIÓN DE COLUMNAS
+# Se recorre la tabla y se buscan columnas por palabras clave.
+# La primera columna que coincide queda asignada y no se puede usar de nuevo.
+# ──────────────────────────────────────────────────────────────────────────────
+usadas_inv = set()  # rastrea qué columnas ya fueron asignadas
+COL_CODIGO      = encontrar_columna(datos_inventario, ["codigo", "sku", "clave", "articulo", "referencia"],             usadas_inv)
+COL_NOMBRE      = encontrar_columna(datos_inventario, ["nombre", "medicamento", "farmaco", "descripcion"],              usadas_inv)
+COL_LOTE        = encontrar_columna(datos_inventario, ["lote", "batch", "partida"],                                     usadas_inv)
+COL_VENCIMIENTO = encontrar_columna(datos_inventario, ["vencimiento", "vence", "caducidad", "expiry", "fec venc", "vto"], usadas_inv)
+COL_STOCK       = encontrar_columna(datos_inventario, ["stock", "existencia", "disponible", "inventario", "saldo"],     usadas_inv)
+COL_COSTO       = encontrar_columna(datos_inventario, ["costo", "cost", "precio compra", "valor compra", "precio"],     usadas_inv)
+COL_MARCA       = encontrar_columna(datos_inventario, ["marca", "laboratorio", "fabricante"],                           usadas_inv)
+COL_UNIDAD      = encontrar_columna(datos_inventario, ["unidad", "medida", "presentacion"],                             usadas_inv)
+
+
+# Si no se detectó alguna columna esencial, el usuario la elige manualmente
+cols_disponibles = list(datos_inventario.columns)
+if not COL_CODIGO:      COL_CODIGO      = st.selectbox("Columna de CÓDIGO:",      cols_disponibles)
+if not COL_NOMBRE:      COL_NOMBRE      = st.selectbox("Columna de NOMBRE:",      cols_disponibles)
+if not COL_VENCIMIENTO: COL_VENCIMIENTO = st.selectbox("Columna de VENCIMIENTO:", cols_disponibles)
+if not COL_STOCK:       COL_STOCK       = st.selectbox("Columna de STOCK:",       cols_disponibles)
+
+# Detectar columnas de movimientos (con su propio set para no mezclar con inventario)
+if datos_movimientos is not None:
+    usadas_mov       = set()
+    COL_MOV_CODIGO   = encontrar_columna(datos_movimientos, ["codigo", "sku", "nombre", "medicamento"], usadas_mov)
+    COL_MOV_FECHA    = encontrar_columna(datos_movimientos, ["fecha", "date", "periodo", "mes"],         usadas_mov)
+    COL_MOV_CANTIDAD = encontrar_columna(datos_movimientos, ["dispensada", "dispensado", "demanda", "consumo", "cantidad"], usadas_mov)
+    tiene_movimientos = (COL_MOV_CODIGO is not None and COL_MOV_FECHA is not None and COL_MOV_CANTIDAD is not None)
+else:
+    tiene_movimientos = False
+
+# ──────────────────────────────────────────────────────────────────────────────
+# PROCESAMIENTO DEL INVENTARIO
+# Se convierte la tabla cruda en una versión limpia con columnas numéricas
+# y se calcula cuántos días faltan para que venza cada producto.
+# ──────────────────────────────────────────────────────────────────────────────
+inv = datos_inventario.copy()
+hoy = pd.Timestamp(date.today())
+
+# Convertir la columna de vencimiento a formato fecha
+inv[COL_VENCIMIENTO] = pd.to_datetime(inv[COL_VENCIMIENTO], dayfirst=True, errors="coerce")
+# Convertir la columna de stock a número (los valores inválidos quedan en 0)
+inv[COL_STOCK]       = pd.to_numeric(inv[COL_STOCK], errors="coerce").fillna(0)
+
+# Si hay columna de costo, convertirla a número; si no, crear una columna con ceros
+if COL_COSTO is not None:
+    inv[COL_COSTO] = pd.to_numeric(inv[COL_COSTO], errors="coerce").fillna(0)
+else:
+    inv["_costo"] = 0
+    COL_COSTO = "_costo"
+
+# Calcular días que faltan para vencer y asignar estado a cada fila
+inv["dias_vencer"] = (inv[COL_VENCIMIENTO] - hoy).dt.days
+inv["estado"]      = inv["dias_vencer"].map(calcular_estado)
+
+# Agrupar por medicamento (puede haber varios lotes del mismo)
+# Se usa COL_STOCK para contar filas (n_lotes), ya que COL_CODIGO no puede usarse
+# como clave de groupby y como columna a agregar al mismo tiempo (error de pandas)
+agrupado_inv = inv.groupby([COL_CODIGO, COL_NOMBRE])
+resumen = agrupado_inv.agg(
+    stock_total     = (COL_STOCK,    "sum"),
+    min_dias_vencer = ("dias_vencer", "min"),
+    n_lotes         = (COL_STOCK,    "count"),  # cuenta cuántas filas (lotes) hay
+    costo_unitario  = (COL_COSTO,    "mean"),
+).reset_index()
+
+# Agregar la columna de unidad de medida si existe
+if COL_UNIDAD is not None:
+    unidades = inv.groupby([COL_CODIGO, COL_NOMBRE])[COL_UNIDAD].first().reset_index()
+    resumen  = resumen.merge(unidades, on=[COL_CODIGO, COL_NOMBRE], how="left")
+    resumen  = resumen.rename(columns={COL_UNIDAD: "unidad"})
+else:
+    resumen["unidad"] = ""
+
+# Calcular el estado de vencimiento y el valor en existencias para cada medicamento
+resumen["estado"]           = resumen["min_dias_vencer"].map(calcular_estado)
+resumen["valor_inventario"] = resumen["stock_total"] * resumen["costo_unitario"]
+
+# Si el inventario del hospital tiene columnas ALCANCE y SUGERIDO, agregarlas al resumen
+for col_extra in ["ALCANCE", "SUGERIDO", "STC_MIN", "STC_MAX", "STC_CRITICO", "CONS_PROM"]:
+    if col_extra in datos_inventario.columns:
+        col_mapa = datos_inventario[[COL_CODIGO, col_extra]].drop_duplicates(COL_CODIGO)
+        resumen = resumen.merge(col_mapa, on=COL_CODIGO, how="left")
+
+# ──────────────────────────────────────────────────────────────────────────────
+# PROCESAR MOVIMIENTOS (DEMANDA) — enfoque de tasa de llegada Poisson
+#
+# Lógica (equivalente al notebook de referencia):
+#   1. Filtrar períodos con demanda > 0  ("pedidos")
+#   2. lambda_i = demanda_i / días_desde_pedido_anterior
+#   3. lambda_estable = mean(lambda_i)
+#   4. Media = ceil(lambda_estable)   [tasa diaria de la dist. Poisson]
+#   5. V = min(Media, var(tamaños_de_lote))  [varianza de los lotes, no /30]
+# ──────────────────────────────────────────────────────────────────────────────
+if tiene_movimientos:
+    mov = datos_movimientos.copy()
+    mov[COL_MOV_CANTIDAD] = pd.to_numeric(mov[COL_MOV_CANTIDAD], errors="coerce").fillna(0)
+    mov[COL_MOV_FECHA]    = pd.to_datetime(mov[COL_MOV_FECHA], dayfirst=True, errors="coerce")
+
+    def _parametros_llegada(df_prod):
+        df_s    = df_prod.sort_values(COL_MOV_FECHA)
+        pedidos = df_s[df_s[COL_MOV_CANTIDAD] > 0].copy()
+        n       = len(pedidos)
+
+        if n == 0:
+            return pd.Series({"media_diaria": 0.0, "var_diaria": 0.0})
+
+        batch_vals = pedidos[COL_MOV_CANTIDAD].values.astype(float)
+
+        # Con un solo período no se puede calcular días entre llegadas → asumir 30 días
+        if n == 1:
+            lam   = batch_vals[0] / 30.0
+            media = max(math.ceil(lam), 1)
+            return pd.Series({"media_diaria": float(media), "var_diaria": float(media)})
+
+        # Días reales entre llegadas consecutivas (se requieren fechas válidas)
+        fechas = pedidos[COL_MOV_FECHA]
+        if fechas.notna().all():
+            dias_raw = (fechas - fechas.shift(1)).dt.days.dropna().values.astype(float)
+            dias_entre = dias_raw[dias_raw > 0]
+        else:
+            dias_entre = np.full(n - 1, 30.0)
+
+        if len(dias_entre) == 0:
+            dias_entre = np.array([30.0])
+
+        # lambda_i = demanda_i / días_desde_pedido_anterior  (igual que el notebook)
+        k       = min(len(dias_entre), n - 1)
+        lambdas = batch_vals[1: k + 1] / dias_entre[:k]
+
+        lambda_estable = lambdas.mean()
+        if lambda_estable <= 0 or np.isnan(lambda_estable):
+            return pd.Series({"media_diaria": 0.0, "var_diaria": 0.0})
+
+        media     = math.ceil(lambda_estable)
+        var_batch = float(pd.Series(batch_vals).var())
+        if np.isnan(var_batch) or var_batch <= 0:
+            var_batch = float(media)
+        V = min(float(media), var_batch)
+
+        return pd.Series({"media_diaria": float(media), "var_diaria": V})
+
+    # Calcular parámetros para cada producto sin deprecaciones de pandas 2.x
+    filas_params = []
+    for codigo_p, df_grupo in mov.groupby(COL_MOV_CODIGO):
+        params = _parametros_llegada(df_grupo)
+        filas_params.append({
+            COL_CODIGO:      codigo_p,
+            "media_diaria":  params["media_diaria"],
+            "var_diaria":    params["var_diaria"],
+        })
+    tabla_parametros = pd.DataFrame(filas_params)
+
+    resumen = resumen.merge(tabla_parametros, on=COL_CODIGO, how="left")
+    resumen["media_diaria"]   = resumen["media_diaria"].fillna(0)
+    resumen["var_diaria"]     = resumen["var_diaria"].fillna(0)
+    resumen["dias_cobertura"] = (resumen["stock_total"] / resumen["media_diaria"].replace(0, np.nan)).round(1)
+else:
+    resumen["media_diaria"]   = 0
+    resumen["var_diaria"]     = 0
+    resumen["dias_cobertura"] = None
+
+# ──────────────────────────────────────────────────────────────────────────────
+# KPIs GLOBALES
+# ──────────────────────────────────────────────────────────────────────────────
+valor_total   = resumen["valor_inventario"].sum()
+n_vencidos    = (resumen["estado"] == "VENCIDO").sum()
+n_criticos    = (resumen["estado"] == "CRITICO").sum()
+n_advertencia = (resumen["estado"] == "ADVERTENCIA").sum()
+n_normales    = (resumen["estado"] == "NORMAL").sum()
+
+# KPIs adicionales para formato hospital (basados en ALCANCE y SUGERIDO)
+formato_hospital = st.session_state.get("formato_hospital", False)
+if formato_hospital:
+    tiene_alcance  = "ALCANCE"  in resumen.columns
+    tiene_sugerido = "SUGERIDO" in resumen.columns
+    if tiene_alcance:
+        alcance_num = pd.to_numeric(resumen["ALCANCE"], errors="coerce")
+        n_sin_stock    = int((resumen["stock_total"] == 0).sum())
+        n_cob_critica  = int(((alcance_num > 0) & (alcance_num <= 1)).sum())   # ≤ 1 mes
+        n_cob_baja     = int(((alcance_num > 1) & (alcance_num <= 3)).sum())   # 1-3 meses
+        n_cob_ok       = int((alcance_num > 3).sum())                          # > 3 meses
+    if tiene_sugerido:
+        sugerido_num   = pd.to_numeric(resumen["SUGERIDO"], errors="coerce").fillna(0).clip(lower=0)
+        n_pedir_ahora  = int((sugerido_num > 0).sum())
+        valor_pedido   = float((sugerido_num * resumen["costo_unitario"]).sum())
+
+# ──────────────────────────────────────────────────────────────────────────────
+# TABS
+# ──────────────────────────────────────────────────────────────────────────────
+tab1, tab2, tab3, tab4 = st.tabs([
+    "Alertas y KPIs",
+    "Inventario y Pronóstico",
+    "Abastecimiento",
+    "Detalle por Medicamento",
+])
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB 1 — ALERTAS Y KPIs
+# ══════════════════════════════════════════════════════════════════════════════
+with tab1:
+    dias_desde_revision = (date.today() - fecha_revision).days
+    proxima_revision    = fecha_revision + timedelta(days=int(periodo_revision))
+
+
+    resp_str = responsable if responsable else "No especificado"
+    if dias_desde_revision <= periodo_revision:
+        alerta_rev = '<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#16a34a;margin-right:6px;vertical-align:middle"></span>'
+    elif dias_desde_revision <= periodo_revision * 2:
+        alerta_rev = '<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#eab308;margin-right:6px;vertical-align:middle"></span>'
+    else:
+        alerta_rev = '<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#dc2626;margin-right:6px;vertical-align:middle"></span>'
+    st.markdown(f"""
+    <div style="display:flex;gap:16px;margin-bottom:20px;">
+      <!-- Tarjeta Registro -->
+      <div style="background:white;border-radius:12px;padding:16px 24px;
+                  box-shadow:0 1px 3px rgba(0,0,0,0.07);border-left:4px solid #2563eb;
+                  display:flex;gap:32px;align-items:center;">
+        <div><div style="font-size:0.75rem;color:#64748b;font-weight:500">ÚLTIMA REVISIÓN</div>
+             <div style="font-size:1.1rem;font-weight:700;color:#0f172a">{fecha_revision.strftime("%d/%m/%Y")}</div>
+             <div style="font-size:0.75rem;color:#94a3b8">Hace {dias_desde_revision} días</div></div>
+        <div><div style="font-size:0.75rem;color:#64748b;font-weight:500">PRÓXIMA REVISIÓN</div>
+             <div style="font-size:1.1rem;font-weight:700;color:#0f172a">{alerta_rev} {proxima_revision.strftime("%d/%m/%Y")}</div>
+             <div style="font-size:0.75rem;color:#94a3b8">En {periodo_revision} días</div></div>
+        <div><div style="font-size:0.75rem;color:#64748b;font-weight:500">RESPONSABLE</div>
+             <div style="font-size:1.1rem;font-weight:700;color:#0f172a">{resp_str}</div></div>
+      </div>
+      <!-- Tarjeta Valor total -->
+      <div style="background:white;border-radius:12px;padding:16px 24px;flex:1;
+                  box-shadow:0 1px 3px rgba(0,0,0,0.07);text-align:center;
+                  display:flex;flex-direction:column;justify-content:center;">
+        <div style="font-size:0.75rem;color:#64748b;font-weight:500">VALOR TOTAL EN EXISTENCIAS</div>
+        <div style="font-size:1.8rem;font-weight:800;color:#0f172a">${valor_total:,.0f} CLP</div>
+      </div>
+      <!-- Tarjeta Total productos -->
+      <div style="background:white;border-radius:12px;padding:16px 24px;
+                  box-shadow:0 1px 3px rgba(0,0,0,0.07);text-align:center;
+                  display:flex;flex-direction:column;justify-content:center;">
+        <div style="font-size:0.75rem;color:#64748b;font-weight:500">TOTAL PRODUCTOS EN EXISTENCIAS</div>
+        <div style="font-size:1.8rem;font-weight:800;color:#0f172a">{len(resumen):,}</div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── KPIs principales (formato sin hospital) ───────────────────────────────
+    if not formato_hospital:
+        kpi1, kpi2, kpi3, kpi4, kpi5 = st.columns(5)
+        kpi1.metric("Valor total", f"${valor_total:,.0f} CLP")
+        kpi2.metric("Vencidos",    int(n_vencidos))
+        kpi3.metric("Críticos",    int(n_criticos))
+        kpi4.metric("Advertencia", int(n_advertencia))
+        kpi5.metric("Normales",    int(n_normales))
+
+    # ── GRÁFICOS DE RESUMEN ────────────────────────────────────────────────────
+    graf1, graf2 = st.columns(2)
+
+    PALETA = {"sin_stock": "#dc2626", "critico": "#f97316", "bajo": "#eab308",
+              "adecuado": "#16a34a", "normal": "#2563eb", "gris": "#94a3b8"}
+
+    with graf1:
+        if formato_hospital and tiene_alcance:
+            alcance_num = pd.to_numeric(resumen["ALCANCE"], errors="coerce")
+            categorias  = ["Sin existencias", "Crítica (≤1 mes)", "Baja (1–3 meses)", "Adecuada (>3 meses)"]
+            conteos = [
+                int((resumen["stock_total"] == 0).sum()),
+                int(((alcance_num > 0) & (alcance_num <= 1)).sum()),
+                int(((alcance_num > 1) & (alcance_num <= 3)).sum()),
+                int((alcance_num > 3).sum()),
+            ]
+            colores_cob = [PALETA["sin_stock"], PALETA["critico"], PALETA["bajo"], PALETA["adecuado"]]
+            fig_pie = go.Figure(go.Pie(
+                labels=categorias, values=conteos, marker_colors=colores_cob,
+                textinfo="percent+value", hole=0.5,
+                hovertemplate="<b>%{label}</b><br>%{value} productos<br>%{percent}<extra></extra>",
+            ))
+            fig_pie.update_layout(
+                title=dict(text="Cobertura de stock", font=dict(size=14, color="#0f172a")),
+                height=300, margin=dict(t=40, b=10, l=10, r=10),
+                legend=dict(orientation="h", y=-0.15),
+                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+            )
+            st.plotly_chart(fig_pie, use_container_width=True)
+        else:
+            colores_estado = {"VENCIDO": PALETA["sin_stock"], "CRITICO": PALETA["critico"],
+                              "ADVERTENCIA": PALETA["bajo"], "NORMAL": PALETA["adecuado"], "Sin fecha": PALETA["gris"]}
+            estados_counts = resumen["estado"].value_counts().reset_index()
+            estados_counts.columns = ["Estado", "Cantidad"]
+            # Construir la lista de colores para cada estado del gráfico de torta
+            colores_torta = []
+            for estado_nombre in estados_counts["Estado"]:
+                colores_torta.append(colores_estado.get(estado_nombre, PALETA["gris"]))
+            fig_pie = go.Figure(go.Pie(
+                labels=estados_counts["Estado"], values=estados_counts["Cantidad"],
+                marker_colors=colores_torta,
+                textinfo="percent+value", hole=0.5,
+            ))
+            fig_pie.update_layout(
+                title=dict(text="Estado del inventario", font=dict(size=14, color="#0f172a")),
+                height=300, margin=dict(t=40, b=10, l=10, r=10),
+                legend=dict(orientation="h", y=-0.15),
+                paper_bgcolor="rgba(0,0,0,0)",
+            )
+            st.plotly_chart(fig_pie, use_container_width=True)
+
+    with graf2:
+        if tiene_movimientos:
+            top_consumo = resumen[resumen["media_diaria"] > 0].nlargest(10, "media_diaria").copy()
+            top_consumo["consumo_mensual"] = (top_consumo["media_diaria"] * 30).round(0)
+            # Acortar nombres largos para que quepan en el gráfico
+            nombres_cortos = []
+            for nombre_med in top_consumo[COL_NOMBRE]:
+                if len(nombre_med) > 32:
+                    nombres_cortos.append(nombre_med[:32] + "…")
+                else:
+                    nombres_cortos.append(nombre_med)
+            # Crear gradiente de azul oscuro a azul claro para las barras
+            n_bars = len(top_consumo)
+            colores_grad = []
+            for i in range(n_bars):
+                opacidad = 1 - i * 0.06
+                colores_grad.append(f"rgba(37,99,235,{opacidad})")
+            # Crear las etiquetas de texto de cada barra
+            etiquetas_barras = []
+            for valor_consumo in top_consumo["consumo_mensual"]:
+                etiquetas_barras.append(f"{int(valor_consumo):,}")
+            fig_bar = go.Figure(go.Bar(
+                x=top_consumo["consumo_mensual"], y=nombres_cortos,
+                orientation="h", marker_color=colores_grad,
+                text=etiquetas_barras,
+                textposition="outside",
+                hovertemplate="<b>%{y}</b><br>%{x:,} u/mes<extra></extra>",
+            ))
+            fig_bar.update_layout(
+                title=dict(text="Top 10 — Mayor consumo mensual", font=dict(size=14, color="#0f172a")),
+                height=300, margin=dict(t=40, b=10, l=10, r=60),
+                xaxis_title="Unidades / mes", yaxis=dict(autorange="reversed"),
+                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+            )
+            st.plotly_chart(fig_bar, use_container_width=True)
+
+    # ── KPIs interactivos por estado ───────────────────────────────────────────
+    if formato_hospital:
+        alcance_num_all  = pd.to_numeric(resumen.get("ALCANCE",  pd.Series(dtype=float)), errors="coerce")
+        sugerido_num_all = pd.to_numeric(resumen.get("SUGERIDO", pd.Series(dtype=float)), errors="coerce").fillna(0)
+
+        def clasificar(row, alc):
+            if row["stock_total"] == 0:       return "Sin existencias"
+            if not pd.isna(alc) and alc <= 1: return "Crítico (≤1 mes)"
+            if not pd.isna(alc) and alc <= 3: return "Bajo (1–3 meses)"
+            if not pd.isna(alc) and alc > 3:  return "Adecuado (>3 meses)"
+            return "Sin datos"
+
+        # Asignar el estado de cobertura a cada fila del resumen usando la función clasificar
+        lista_estados_cob = []
+        for i in range(len(resumen)):
+            estado_fila = clasificar(resumen.iloc[i], alcance_num_all.iloc[i])
+            lista_estados_cob.append(estado_fila)
+        resumen["_estado_cob"]    = lista_estados_cob
+        resumen["_requiere_pedido"] = sugerido_num_all > 0
+
+        st.divider()
+        st.subheader("Resumen por estado")
+
+        estados_opciones = ["Sin existencias", "Crítico (≤1 mes)", "Bajo (1–3 meses)", "Adecuado (>3 meses)"]
+        # Filtrar solo los estados que realmente existen en los datos
+        estados_disponibles = []
+        for estado_op in estados_opciones:
+            if estado_op in resumen["_estado_cob"].values:
+                estados_disponibles.append(estado_op)
+
+        # Seleccionar por defecto los estados más críticos
+        estados_default = []
+        for estado_op in ["Sin existencias", "Crítico (≤1 mes)"]:
+            if estado_op in estados_disponibles:
+                estados_default.append(estado_op)
+
+        estados_sel = st.multiselect(
+            "Seleccionar estados a visualizar:",
+            estados_disponibles,
+            default=estados_default,
+            key="kpi_estados"
+        )
+
+        if estados_sel:
+            df_sel = resumen[resumen["_estado_cob"].isin(estados_sel)]
+            n_productos   = len(df_sel)
+            n_pedir       = int((sugerido_num_all[df_sel.index] > 0).sum())
+            valor_sel     = float((df_sel["stock_total"] * df_sel["costo_unitario"]).sum()) if "costo_unitario" in df_sel.columns else 0
+            valor_pedido_sel = float((sugerido_num_all[df_sel.index] * df_sel["costo_unitario"]).sum()) if "costo_unitario" in df_sel.columns else 0
+
+            k1, k2, k3, k4 = st.columns(4)
+            k1.metric("Productos en estado seleccionado", f"{n_productos:,}")
+            k2.metric("Requieren pedido",                 f"{n_pedir:,}")
+            k3.metric("Valor en existencias (selección)", f"${valor_sel:,.0f} CLP")
+            k4.metric("Valor estimado a pedir",           f"${valor_pedido_sel:,.0f} CLP")
+
+            # Desglose por estado
+            desglose = df_sel.groupby("_estado_cob").agg(
+                Productos=("stock_total", "count"),
+                Unidades_totales=("stock_total", "sum"),
+            ).reset_index().rename(columns={"_estado_cob": "Estado"})
+            st.dataframe(desglose, use_container_width=True, hide_index=True)
+        else:
+            st.info("Selecciona al menos un estado para ver los KPIs.")
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB 2 — INVENTARIO
+# ══════════════════════════════════════════════════════════════════════════════
+with tab2:
+
+    t2_busq, t2_fil = st.columns([3, 2])
+    busq_inv = t2_busq.text_input("Buscar producto:", placeholder="Escribe parte del nombre...", key="busq_inv")
+
+    if formato_hospital and "_estado_cob" in resumen.columns:
+        cats_inv_sin_orden = resumen["_estado_cob"].value_counts().index.tolist()
+        orden_inv = ["Sin existencias", "Crítico (≤1 mes)", "Bajo (1–3 meses)", "Adecuado (>3 meses)", "Sin datos"]
+        # Ordenar las categorías según el orden definido arriba
+        cats_inv = []
+        for cat in orden_inv:
+            if cat in cats_inv_sin_orden:
+                cats_inv.append(cat)
+        filtro_cob = t2_fil.multiselect("Estado de cobertura:", cats_inv, default=cats_inv, key="filtro_cob_inv")
+        tabla = resumen[resumen["_estado_cob"].isin(filtro_cob)].copy()
+        col_estado_tbl = "_estado_cob"
+    else:
+        filtro_estado = t2_fil.multiselect(
+            "Estado:", ["VENCIDO", "CRITICO", "ADVERTENCIA", "NORMAL", "Sin fecha"],
+            default=["VENCIDO", "CRITICO", "ADVERTENCIA", "NORMAL", "Sin fecha"], key="filtro_est_inv"
+        )
+        tabla = resumen[resumen["estado"].isin(filtro_estado)].copy()
+        col_estado_tbl = "estado"
+
+    if busq_inv.strip():
+        tabla = tabla[tabla[COL_NOMBRE].str.contains(busq_inv.strip(), case=False, na=False)]
+
+    # Columnas seleccionadas: las más relevantes para inventario, sin scroll horizontal
+    if formato_hospital:
+        cols_tbl = [COL_CODIGO, COL_NOMBRE, "stock_total", "_estado_cob"]
+        for extra in ["ALCANCE", "SUGERIDO"]:
+            if extra in tabla.columns:
+                cols_tbl.append(extra)
+        if "costo_unitario"  in tabla.columns: cols_tbl.append("costo_unitario")
+        if "valor_inventario" in tabla.columns: cols_tbl.append("valor_inventario")
+    else:
+        cols_tbl = [COL_CODIGO, COL_NOMBRE, "stock_total", "n_lotes", "min_dias_vencer", "estado", "costo_unitario", "valor_inventario"]
+
+    # Quedarse solo con las columnas que realmente existen en la tabla
+    cols_tbl_existentes = []
+    for col in cols_tbl:
+        if col in tabla.columns:
+            cols_tbl_existentes.append(col)
+    tabla = tabla[cols_tbl_existentes].copy()
+
+    # Formato de valores
+    if "valor_inventario" in tabla.columns:
+        tabla["valor_inventario"] = tabla["valor_inventario"].map("${:,.0f}".format)
+    if "costo_unitario" in tabla.columns:
+        tabla["costo_unitario"] = tabla["costo_unitario"].map("${:,.0f}".format)
+    if "SUGERIDO" in tabla.columns:
+        tabla["SUGERIDO"] = pd.to_numeric(tabla["SUGERIDO"], errors="coerce").fillna(0).clip(lower=0).astype(int)
+    if "ALCANCE" in tabla.columns:
+        tabla["ALCANCE"] = pd.to_numeric(tabla["ALCANCE"], errors="coerce").round(1)
+
+    tabla = tabla.rename(columns={
+        COL_CODIGO: "Código",
+        COL_NOMBRE: "Medicamento",
+        "stock_total": "Existencias",
+        "n_lotes": "Lotes",
+        "min_dias_vencer": "Días p/Vencer",
+        "costo_unitario": "Costo unit.",
+        "valor_inventario": "Valor en existencias",
+        "estado": "Estado",
+        "_estado_cob": "Cobertura",
+        "ALCANCE": "Cobertura (meses)",
+        "SUGERIDO": "Cantidad sugerida",
+    })
+
+    st.caption(f"{len(tabla)} producto(s)")
+    st.dataframe(tabla, use_container_width=True, hide_index=True, height=500)
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB 3 — ABASTECIMIENTO Y SIMULACIÓN
+# ══════════════════════════════════════════════════════════════════════════════
+with tab3:
+    if not tiene_movimientos:
+        st.warning("Se requiere el archivo de movimientos para calcular las políticas.")
+    else:
+        # Calcular políticas para todos los productos (una sola vez)
+        filas_politicas = []
+        for i in range(len(resumen)):
+            fila = resumen.iloc[i]
+            if fila["media_diaria"] <= 0:
+                continue
+            var_d      = max(fila["var_diaria"], 0.001)
+            p          = calcular_politicas(fila["media_diaria"], var_d, costo_orden, costo_mantener, lead_time, periodo_revision, Z)
+            R_etiqueta = f"Cada {int(periodo_revision)} días"
+            dias_cob = fila["dias_cobertura"]
+            if fila["estado"] == "VENCIDO":
+                accion = "DAR DE BAJA — reponer"
+            elif fila["stock_total"] < p["s"]:
+                accion = "Pedir ahora"
+            elif dias_cob is not None and not pd.isna(dias_cob) and dias_cob < (lead_time + periodo_revision) * 1.5:
+                accion = "Pedir pronto"
+            else:
+                accion = "Existencias suficientes"
+            filas_politicas.append({
+                "Código":                       fila[COL_CODIGO],
+                "Medicamento":                  fila[COL_NOMBRE],
+                "Consumo diario promedio":       str(round(fila["media_diaria"], 1)) + " u/día",
+                "Stock actual":                 int(fila["stock_total"]),
+                "Pedir cuando queden menos de": int(p["s"]),
+                "Cuánto pedir":                 int(p["Q"]),
+                "Nivel máximo recomendado":      int(p["S"]),
+                "Reserva de seguridad":         int(p["SS"]),
+                "Días de existencias disponibles": dias_cob if dias_cob is not None and not pd.isna(dias_cob) else "—",
+                "Revisar cada":                 R_etiqueta,
+                "Acción recomendada":           accion,
+                "_media":                       fila["media_diaria"],
+            })
+
+        if len(filas_politicas) == 0:
+            st.warning("No hay medicamentos con datos de demanda suficientes.")
+        else:
+            df_politicas = pd.DataFrame(filas_politicas)
+            orden_accion = {"DAR DE BAJA — reponer": 0, "Pedir ahora": 1, "Pedir pronto": 2, "Existencias suficientes": 3}
+            df_politicas["_orden"] = df_politicas["Acción recomendada"].map(orden_accion).fillna(4)
+            df_politicas = df_politicas.sort_values("_orden").drop(columns="_orden")
+
+            NOMBRES = {"(R,s,Q)": "Cantidad fija", "(R,S)": "Reponer hasta el máximo", "(R,s,S)": "Variable hasta el máximo"}
+            DESCRIPCION = {
+                "(R,s,Q)": "Si el stock está bajo, pide siempre la misma cantidad fija.",
+                "(R,S)":   "Pide lo necesario para llegar al nivel máximo.",
+                "(R,s,S)": "Si el stock está bajo, pide lo necesario para llegar al máximo.",
+            }
+
+            # ── SECCIÓN 1: tabla de políticas ──────────────────────────────────
+            with st.expander("Detalle de abastecimiento", expanded=True):
+                t3a, t3b = st.columns([3, 2])
+                busq_t3 = t3a.text_input("Buscar:", placeholder="Nombre del producto...", key="busq_t3")
+                # Filtrar solo las acciones que aparecen en los datos actuales
+                acciones_disp = []
+                for accion in ["DAR DE BAJA — reponer", "Pedir ahora", "Pedir pronto", "Existencias suficientes"]:
+                    if accion in df_politicas["Acción recomendada"].values:
+                        acciones_disp.append(accion)
+                filtro_accion = t3b.multiselect("Filtrar por acción:", acciones_disp, default=acciones_disp, key="filtro_accion_t3")
+                df_vis = df_politicas[df_politicas["Acción recomendada"].isin(filtro_accion)].drop(columns="_media", errors="ignore")
+                if busq_t3.strip():
+                    df_vis = df_vis[df_vis["Medicamento"].str.contains(busq_t3.strip(), case=False, na=False)]
+                st.caption(f"{len(df_vis)} producto(s)")
+                st.dataframe(df_vis, use_container_width=True, hide_index=True, height=400)
+                st.info("**Guía:** *Pedir cuando queden menos de X* = punto de reorden. *Cuánto pedir* = cantidad más económica (EOQ). *Reserva de seguridad* = colchón para imprevistos.")
+
+            # ── SECCIÓN 2: frecuencia de revisión ──────────────────────────────
+
+            # ── SECCIÓN 3: simulación de estrategias ───────────────────────────
+            with st.expander("Comparación de estrategias de pedido"):
+                st.caption("Simula el costo anual de tres estrategias distintas para un medicamento.")
+                # Ordenar los medicamentos de mayor a menor consumo para que el default sea relevante
+                meds_sim_ord = df_politicas.sort_values("_media", ascending=False)["Medicamento"].tolist()
+                med_sim = st.selectbox("Medicamento a simular:", meds_sim_ord, key="sim_med")
+                # Obtener los datos del medicamento seleccionado
+                fila_simulacion = resumen[resumen[COL_NOMBRE] == med_sim].iloc[0]
+                media_sim = max(fila_simulacion["media_diaria"], 0.001)
+                # var_diaria ya contiene min(Media, var_batch) del proceso de estimación
+                var_diaria_raw = fila_simulacion["var_diaria"]
+                var_sim = max(float(var_diaria_raw) if not pd.isna(var_diaria_raw) else media_sim, 0.001)
+                params_sim = calcular_politicas(media_sim, var_sim, costo_orden, costo_mantener, lead_time, periodo_revision, Z)
+                R_opt_sim, _ = recomendar_periodo(media_sim, var_sim, costo_orden, costo_mantener, lead_time)
+
+                # Nivel máximo (S_inicio) según la política — igual que el notebook de referencia:
+                #   (R,s,Q) → inventario inicial = s+Q+U; pide Q fija cuando IP ≤ s
+                #   (R,S)   → S_inicio = s;     repone hasta s en CADA revisión
+                #   (R,s,S) → S_inicio = s+Q;   repone hasta s+Q solo cuando IP ≤ s
+                s_sim  = params_sim["s"]
+                Q_sim  = params_sim["Q"]
+                S_rsq  = params_sim["S"]   # = s + Q + U  (inventario inicial (R,s,Q))
+                S_rs   = s_sim             # (R,S)  ordena hasta el propio punto de reorden
+                S_rss  = s_sim + Q_sim     # (R,s,S) ordena hasta s + Q
+
+                # ── Resumen de parámetros de simulación ───────────────────────
+                pc1, pc2, pc3 = st.columns(3)
+                with pc1:
+                    st.markdown("**Demanda**")
+                    st.markdown(f"""
+| Parámetro | Valor |
+|---|---|
+| Tasa de demanda (λ) | **{round(media_sim, 2)} u/día** |
+| Varianza diaria (V) | **{round(var_sim, 2)} u²/día** |
+| Horizonte simulado | **360 días** |
+| Réplicas | **5** |
+""")
+                with pc2:
+                    st.markdown("**Operación y costos**")
+                    st.markdown(f"""
+| Parámetro | Valor |
+|---|---|
+| Tiempo de entrega (LT) | **{int(lead_time)} días** |
+| Período de revisión (R) | **{int(periodo_revision)} días** |
+| Nivel de servicio (Z) | **{Z} (~97 %)** |
+| Costo por orden (OC) | **${costo_orden:,} CLP** |
+| Costo mantener (HC) | **${costo_mantener:,} CLP/u/día** |
+""")
+                with pc3:
+                    st.markdown("**Parámetros de política**")
+                    st.markdown(f"""
+| Parámetro | Valor |
+|---|---|
+| Punto de reorden (s) | **{s_sim} u** |
+| Lote fijo (Q) | **{Q_sim} u** |
+| Undershoot prom. (U) | **{params_sim['U']} u** |
+| Reserva de seguridad (SS) | **{params_sim['SS']} u** |
+| S — inicio (R,s,Q) | **{S_rsq} u** |
+| S — máximo (R,S) | **{S_rs} u** |
+| S — máximo (R,s,S) | **{S_rss} u** |
+""")
+                st.divider()
+
+                with st.spinner("Ejecutando simulaciones..."):
+                    resultado_rsq = simular_rsq(media_sim, var_sim, costo_orden, costo_mantener, lead_time, periodo_revision, s_sim, Q_sim, S_rsq)
+                    resultado_rs  = simular_rs( media_sim, var_sim, costo_orden, costo_mantener, lead_time, periodo_revision, s_sim, Q_sim, S_rs)
+                    resultado_rss = simular_rss(media_sim, var_sim, costo_orden, costo_mantener, lead_time, periodo_revision, s_sim, Q_sim, S_rss)
+
+                # Comparar políticas por QUIEBRES primero, luego por COSTO
+                costos_anuales  = {"(R,s,Q)": resultado_rsq[1], "(R,S)": resultado_rs[1], "(R,s,S)": resultado_rss[1]}
+                quiebres_pol    = {"(R,s,Q)": resultado_rsq[4], "(R,S)": resultado_rs[4], "(R,s,S)": resultado_rss[4]}
+
+                min_quiebres = min(quiebres_pol.values())
+                # Candidatas: las que tienen el menor número de quiebres
+                candidatas   = [p for p, q in quiebres_pol.items() if q == min_quiebres]
+                # Entre las candidatas, elegir la de menor costo
+                mejor = min(candidatas, key=lambda p: costos_anuales[p])
+
+                filas_comparacion = []
+                for pol, resultado_pol in [("(R,s,Q)", resultado_rsq), ("(R,S)", resultado_rs), ("(R,s,S)", resultado_rss)]:
+                    q = quiebres_pol[pol]
+                    disponibilidad = "Sin quiebres" if q == 0 else f"{q} u. sin atender"
+                    if pol == mejor:
+                        etiqueta_resultado = "RECOMENDADA"
+                    elif quiebres_pol[pol] > min_quiebres:
+                        etiqueta_resultado = f"Quiebres de stock"
+                    else:
+                        diferencia_pct = round((costos_anuales[pol] - costos_anuales[mejor]) / max(costos_anuales[mejor], 1) * 100, 1)
+                        etiqueta_resultado = f"Más cara (+{diferencia_pct} %)"
+                    filas_comparacion.append({
+                        "Estrategia":         NOMBRES[pol],
+                        "Cómo funciona":      DESCRIPCION[pol],
+                        "Quiebres de stock":  disponibilidad,
+                        "Costo diario ($)":   f"{resultado_pol[0]:,}",
+                        "Costo anual ($)":    f"{resultado_pol[1]:,}",
+                        "Evaluación":         etiqueta_resultado,
+                    })
+                st.dataframe(pd.DataFrame(filas_comparacion), use_container_width=True, hide_index=True)
+
+                razon_mejor = []
+                if min_quiebres == 0:
+                    razon_mejor.append("sin quiebres de stock")
+                else:
+                    razon_mejor.append(f"menor cantidad de quiebres ({min_quiebres} u.)")
+                razon_mejor.append(f"menor costo entre las de igual disponibilidad")
+                st.success(
+                    f"Estrategia recomendada: **{NOMBRES[mejor]}** ({mejor}) — {DESCRIPCION[mejor]}  \n"
+                    f"Criterio: {' y '.join(razon_mejor)}.  \n"
+                    f"Costo anual estimado: **${costos_anuales[mejor]:,.0f} CLP** · "
+                    f"Quiebres promedio: **{quiebres_pol[mejor]} u.**"
+                )
+
+                st.divider()
+                st.markdown("**Evolución de existencias en bodega — últimos 90 días de simulación:**")
+
+                # Mostrar los últimos ~15 ciclos de pedido (ventana temporal, no por eventos)
+                dias_por_ciclo = max(float(periodo_revision), params_sim["Q"] / max(media_sim, 0.001))
+                dias_mostrar   = max(periodo_revision * 4, min(dias_por_ciclo * 15, 360.0))
+
+                titulos_estrategias = [
+                    f"Política (R,s,Q) — {NOMBRES['(R,s,Q)']}",
+                    f"Política (R,S) — {NOMBRES['(R,S)']}",
+                    f"Política (R,s,S) — {NOMBRES['(R,s,S)']}",
+                ]
+                fig_sim = make_subplots(rows=3, cols=1, shared_xaxes=True,
+                                        subplot_titles=titulos_estrategias, vertical_spacing=0.12)
+
+                # Líneas de referencia por política — cada una muestra su propio S:
+                #   (R,s,Q)  → s (rojo),  SS (naranja)
+                #   (R,S)    → S = s (verde, el inventario máximo = punto de reorden), SS (naranja)
+                #   (R,s,S)  → s (rojo), S = s+Q (verde), SS (naranja)
+                refs_por_politica = {
+                    "(R,s,Q)": [
+                        (s_sim,            "#dc2626", "s = punto reorden"),
+                        (params_sim["SS"], "#d97706", "SS = seg."),
+                    ],
+                    "(R,S)": [
+                        (S_rs,             "#16a34a", "S = s (nivel máx.)"),
+                        (params_sim["SS"], "#d97706", "SS = seg."),
+                    ],
+                    "(R,s,S)": [
+                        (s_sim,            "#dc2626", "s = punto reorden"),
+                        (S_rss,            "#16a34a", "S = s+Q (nivel máx.)"),
+                        (params_sim["SS"], "#d97706", "SS = seg."),
+                    ],
+                }
+
+                estrategias_datos = [
+                    ("(R,s,Q)", resultado_rsq, "#1a3a5c"),
+                    ("(R,S)",   resultado_rs,  "#2563eb"),
+                    ("(R,s,S)", resultado_rss, "#16a34a"),
+                ]
+                for num_fila, (pol, resultado_sim, color_linea) in enumerate(estrategias_datos, start=1):
+                    # Recortar al final por ventana temporal (la sim por eventos tiene tiempo continuo)
+                    t_fin   = resultado_sim[2][-1] if resultado_sim[2] else 360
+                    t_ini   = max(0.0, t_fin - dias_mostrar)
+                    idx_ini = next((i for i, t in enumerate(resultado_sim[2]) if t >= t_ini), 0)
+                    x_datos  = resultado_sim[2][idx_ini:]
+                    y_oh     = resultado_sim[3][idx_ini:]   # OH: inventario físico en bodega
+                    y_ip     = resultado_sim[5][idx_ini:]   # IP: posición de inventario (OH + pedidos en tránsito)
+
+                    # Traza principal: inventario físico (OH) — línea sólida
+                    fig_sim.add_trace(go.Scatter(
+                        x=x_datos, y=y_oh, mode="lines",
+                        name=f"OH {NOMBRES[pol]}",
+                        legendgroup=pol,
+                        line=dict(color=color_linea, width=1.8),
+                        showlegend=True),
+                        row=num_fila, col=1)
+
+                    # Traza secundaria: posición de inventario (IP = OH + IT) — línea punteada
+                    # IP es lo que controla cuándo se activa una orden; cuando IP baja de 's', se pide.
+                    fig_sim.add_trace(go.Scatter(
+                        x=x_datos, y=y_ip, mode="lines",
+                        name=f"IP {NOMBRES[pol]}",
+                        legendgroup=pol,
+                        line=dict(color=color_linea, width=1, dash="dot"),
+                        opacity=0.55,
+                        showlegend=True),
+                        row=num_fila, col=1)
+
+                    # Líneas de referencia específicas para esta política, con etiqueta en cada fila
+                    for nivel, color_ref, etiqueta in refs_por_politica[pol]:
+                        fig_sim.add_hline(
+                            y=nivel,
+                            line_dash="dash", line_color=color_ref, line_width=1,
+                            annotation_text=etiqueta,
+                            annotation_position="right",
+                            annotation_font_size=10,
+                            row=num_fila, col=1,
+                        )
+
+                fig_sim.update_layout(
+                    height=780,
+                    margin=dict(t=50, b=30, l=80, r=130),
+                    paper_bgcolor="white",
+                    plot_bgcolor="#f8fafc",
+                )
+                fig_sim.update_xaxes(title_text="Día de simulación", row=3, col=1)
+                for num_fila in [1, 2, 3]:
+                    fig_sim.update_yaxes(
+                        title_text="Unidades en bodega",
+                        tickformat=",",
+                        title_font_size=11,
+                        row=num_fila, col=1
+                    )
+                st.plotly_chart(fig_sim, use_container_width=True)
+                st.caption(
+                    "**Línea sólida (OH)** = inventario físico en bodega  |  "
+                    "**Línea punteada (IP)** = posición de inventario (OH + pedidos en tránsito) — "
+                    "la orden se activa cuando **IP** cruza el umbral **s**, no cuando lo hace OH  \n"
+                    "**Rojo** = punto de reorden (s)  |  "
+                    "**Verde** = nivel máximo (S)  |  "
+                    "**Naranja** = reserva de seguridad (SS)"
+                )
+
+            # ── SECCIÓN 4: comparación actual vs óptimo ────────────────────────
+            with st.expander("Que tan cerca estas del ideal"):
+                # Ordenar medicamentos por consumo para que el default sea relevante
+                meds_comp_ord = df_politicas.sort_values("_media", ascending=False)["Medicamento"].tolist()
+                med_comp  = st.selectbox("Medicamento a evaluar:", meds_comp_ord, key="comp")
+                fila_comparacion = resumen[resumen[COL_NOMBRE] == med_comp].iloc[0]
+                consumo_c = max(fila_comparacion["media_diaria"], 0.001)
+                var_c     = max(fila_comparacion["var_diaria"], 0.001)
+                # Calcular los parámetros óptimos usando el MISMO período de revisión del sidebar
+                # (para que la comparación sea justa: mismo R, solo difieren Q y s)
+                revision_actual = int(periodo_revision)
+                p_opt = calcular_politicas(consumo_c, var_c, costo_orden, costo_mantener, lead_time, revision_actual, Z)
+
+                # El usuario ingresa los valores que usa actualmente en la práctica
+                ci2, ci3 = st.columns(2)
+                cantidad_actual = ci2.number_input("Unidades que se piden habitualmente", min_value=1, value=int(p_opt["Q"]), step=1, key="real_Q")
+                reorden_actual  = ci3.number_input("Existencias con las que se decide pedir (u)", min_value=0, value=int(p_opt["s"]), step=1, key="real_s")
+
+                # Función para calcular cuánto se aleja el valor actual del ideal (en %)
+                def desviacion(actual, ideal):
+                    if ideal == 0: return 0
+                    return round((actual - ideal) / ideal * 100, 1)
+                # Función para clasificar la desviación en texto
+                def evaluacion(pct):
+                    if abs(pct) <= 10:  return "Adecuado (" + str(pct) + "%)"
+                    if abs(pct) <= 30:  return "Alejado (" + str(pct) + "%)"
+                    return "Muy alejado (" + str(pct) + "%)"
+
+                # Construir tabla de evaluación comparando actual vs recomendado
+                df_eval = pd.DataFrame([
+                    {"Parámetro": "Cantidad que se pide",
+                     "Actual": str(cantidad_actual) + " u",
+                     "Recomendado": str(p_opt["Q"]) + " u",
+                     "Evaluación": evaluacion(desviacion(cantidad_actual, p_opt["Q"]))},
+                    {"Parámetro": "Existencias mínimas para activar el pedido",
+                     "Actual": str(reorden_actual) + " u",
+                     "Recomendado": str(p_opt["s"]) + " u",
+                     "Evaluación": evaluacion(desviacion(reorden_actual, p_opt["s"]))},
+                ])
+                st.dataframe(df_eval, use_container_width=True, hide_index=True)
+
+                # Simular ambas políticas con el MISMO período de revisión (revision_actual)
+                # Diferencia: parámetros Q y s del usuario vs los calculados como óptimos
+                with st.spinner("Calculando impacto en costos..."):
+                    _, costo_actual, _, _, _, _ = simular_rsq(consumo_c, var_c, costo_orden, costo_mantener, lead_time, revision_actual, reorden_actual, cantidad_actual, reorden_actual + cantidad_actual)
+                    _, costo_optimo, _, _, _, _ = simular_rsq(consumo_c, var_c, costo_orden, costo_mantener, lead_time, revision_actual, p_opt["s"], p_opt["Q"], p_opt["S"])
+
+                diferencia = costo_actual - costo_optimo
+                cc1, cc2, cc3 = st.columns(3)
+                cc1.metric("Costo actual (CLP/año)", f"${costo_actual:,.0f}")
+                cc2.metric("Costo recomendado (CLP/año)", f"${costo_optimo:,.0f}")
+                cc3.metric("Diferencia", f"${abs(diferencia):,.0f}", delta=f"{'más caro' if diferencia > 0 else 'más barato'}", delta_color="inverse")
+                if diferencia > 0:
+                    st.warning(f"Tu política actual cuesta **${diferencia:,.0f} CLP/año más** que la recomendada.")
+                elif diferencia < 0:
+                    st.success(f"Tu política actual es **${abs(diferencia):,.0f} CLP/año más barata** que la recomendada.")
+                else:
+                    st.info("El costo actual es equivalente al recomendado.")
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB 4 — DETALLE POR MEDICAMENTO
+# ══════════════════════════════════════════════════════════════════════════════
+with tab4:
+
+    # Ordenar por consumo descendente para que el default sea relevante
+    if "media_diaria" in resumen.columns:
+        meds_det_ord = resumen.sort_values("media_diaria", ascending=False)[COL_NOMBRE].tolist()
+    else:
+        meds_det_ord = resumen[COL_NOMBRE].sort_values().tolist()
+
+    busq_det = st.text_input("Buscar:", placeholder="Nombre del producto...", key="busq_det")
+    if busq_det.strip():
+        # Filtrar la lista de medicamentos según el texto de búsqueda
+        meds_det_filt = []
+        texto_busqueda = busq_det.strip().lower()
+        for nombre_med in meds_det_ord:
+            if texto_busqueda in nombre_med.lower():
+                meds_det_filt.append(nombre_med)
+    else:
+        meds_det_filt = meds_det_ord
+    med_detalle = st.selectbox("Medicamento:", meds_det_filt if meds_det_filt else meds_det_ord, key="det")
+
+    fila_det = resumen[resumen[COL_NOMBRE] == med_detalle].iloc[0]
+    codigo_det = fila_det[COL_CODIGO]
+
+    # ── Métricas rápidas ────────────────────────────────────────────────────
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Stock actual", f"{int(fila_det['stock_total']):,} u")
+    m2.metric("Consumo prom. mensual", f"{fila_det['media_diaria']*30:,.0f} u/mes" if fila_det["media_diaria"] > 0 else "—")
+    if "ALCANCE" in fila_det and not pd.isna(fila_det.get("ALCANCE")):
+        m3.metric("Cobertura", f"{round(float(fila_det['ALCANCE']), 1)} meses")
+    elif fila_det["media_diaria"] > 0 and fila_det["dias_cobertura"] is not None and not pd.isna(fila_det["dias_cobertura"]):
+        m3.metric("Días de cobertura", f"{fila_det['dias_cobertura']:.0f} días")
+    else:
+        m3.metric("Cobertura", "—")
+    if "SUGERIDO" in fila_det and not pd.isna(fila_det.get("SUGERIDO")):
+        sug_val = max(0, int(float(fila_det["SUGERIDO"])))
+        m4.metric("Sugerido pedir", f"{sug_val:,} u")
+    elif "costo_unitario" in fila_det:
+        m4.metric("Costo unitario", f"${fila_det['costo_unitario']:,.0f}")
+
+    st.divider()
+    col_izq, col_der = st.columns(2)
+
+    with col_izq:
+        if formato_hospital:
+            # En formato hospital no hay lotes ni vencimiento — mostrar resumen del producto
+            st.markdown("**Información del producto**")
+            info_rows = [
+                {"Campo": "Código",          "Valor": str(codigo_det)},
+                {"Campo": "Stock actual",    "Valor": f"{int(fila_det['stock_total']):,} u"},
+            ]
+            for campo, col_res in [("Cobertura (meses)", "ALCANCE"), ("Existencias mínimas", "STC_MIN"),
+                                    ("Existencias máximas", "STC_MAX"), ("Existencias críticas", "STC_CRITICO"),
+                                    ("Consumo promedio", "CONS_PROM")]:
+                if col_res in fila_det and not pd.isna(fila_det.get(col_res)):
+                    val = fila_det[col_res]
+                    info_rows.append({"Campo": campo, "Valor": f"{float(val):,.1f}"})
+            if "costo_unitario" in fila_det and fila_det["costo_unitario"] > 0:
+                info_rows.append({"Campo": "Precio unitario", "Valor": f"${fila_det['costo_unitario']:,.0f} CLP"})
+                info_rows.append({"Campo": "Valor en existencias", "Valor": f"${fila_det['valor_inventario']:,.0f} CLP"})
+            st.dataframe(pd.DataFrame(info_rows), use_container_width=True, hide_index=True)
+        else:
+            st.markdown("**Lotes (orden FEFO: primero en vencer, primero en salir)**")
+            # Incluir solo las columnas de lotes que existen en el archivo
+            cols_lotes = []
+            for col_posible in [COL_LOTE, COL_MARCA, COL_VENCIMIENTO, COL_STOCK, "dias_vencer", "estado"]:
+                if col_posible is not None:
+                    cols_lotes.append(col_posible)
+            # Filtrar el inventario por medicamento, quedarse con las columnas de lotes y ordenar por vencimiento
+            lotes_medicamento = inv[inv[COL_NOMBRE] == med_detalle]
+            lotes_detalle = lotes_medicamento[cols_lotes].copy()
+            lotes_detalle = lotes_detalle.sort_values("dias_vencer")
+            if COL_VENCIMIENTO in lotes_detalle.columns:
+                lotes_detalle[COL_VENCIMIENTO] = lotes_detalle[COL_VENCIMIENTO].dt.strftime("%d/%m/%Y")
+            st.dataframe(lotes_detalle, use_container_width=True, hide_index=True)
+
+    with col_der:
+        if tiene_movimientos:
+            st.markdown("**Consumo mensual histórico**")
+            consumo_det = datos_movimientos[datos_movimientos[COL_MOV_CODIGO] == codigo_det].copy()
+            consumo_det[COL_MOV_FECHA]    = pd.to_datetime(consumo_det[COL_MOV_FECHA], errors="coerce")
+            consumo_det[COL_MOV_CANTIDAD] = pd.to_numeric(consumo_det[COL_MOV_CANTIDAD], errors="coerce").fillna(0)
+
+            # Agrupar por mes (en caso de que haya varias filas por mes)
+            consumo_det["mes"] = consumo_det[COL_MOV_FECHA].dt.to_period("M")
+            serie_det = consumo_det.groupby("mes")[COL_MOV_CANTIDAD].sum().reset_index()
+            serie_det["mes_dt"] = serie_det["mes"].dt.to_timestamp()
+            serie_det = serie_det.sort_values("mes_dt")
+
+            MESES_ES = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"]
+            # Crear etiquetas de mes en español para el eje X del gráfico
+            def formatear_mes(fecha):
+                return MESES_ES[fecha.month - 1] + " " + str(fecha.year)
+            serie_det["mes_label"] = serie_det["mes_dt"].apply(formatear_mes)
+
+            promedio_det = serie_det[COL_MOV_CANTIDAD].mean()
+
+            fig_det = go.Figure()
+            fig_det.add_trace(go.Bar(
+                x=serie_det["mes_label"], y=serie_det[COL_MOV_CANTIDAD],
+                marker_color="#2563eb", name="Consumo mensual",
+                hovertemplate="%{x}: %{y:,.0f} u<extra></extra>",
+            ))
+            fig_det.add_hline(y=promedio_det, line_dash="dash", line_color="#dc2626", line_width=1.5,
+                              annotation_text=f"Prom: {promedio_det:,.0f}", annotation_position="top right")
+            fig_det.update_layout(
+                xaxis_title="Mes", yaxis_title="Unidades",
+                height=340, margin=dict(t=20, b=20, l=10, r=10),
+                paper_bgcolor="white", plot_bgcolor="#f8fafc", showlegend=False,
+            )
+            st.plotly_chart(fig_det, use_container_width=True)
+        else:
+            st.info("Carga el archivo de movimientos para ver el consumo histórico.")
