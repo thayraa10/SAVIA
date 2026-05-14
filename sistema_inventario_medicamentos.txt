@@ -1,0 +1,1441 @@
+import pandas as pd
+import numpy as np
+import re
+import unicodedata
+from difflib import SequenceMatcher
+from itertools import product as iterproduct
+
+# ── intentar importar rapidfuzz (mejor fuzzy matching); si no está, usar difflib ──
+try:
+    from rapidfuzz import fuzz as _fuzz
+    def fuzzy_score(a, b):
+        return _fuzz.token_set_ratio(a, b) / 100.0
+except ImportError:
+    def fuzzy_score(a, b):
+        return SequenceMatcher(None, a, b).ratio()
+
+print("Librerías cargadas correctamente.")
+
+# ══════════════════════════════════════════════════════════════════════════════
+# DICCIONARIOS DE PALABRAS CLAVE  (español + inglés + variantes comunes)
+# Cada campo tiene una lista de tokens que, si aparecen en el nombre de columna,
+# son señales fuertes de que esa columna corresponde a ese campo.
+# ══════════════════════════════════════════════════════════════════════════════
+
+KEYWORDS: dict[str, list[str]] = {
+    "sku": [
+        "sku", "codigo", "code", "cod", "clave", "key", "id", "item",
+        "articulo", "article", "producto", "product", "referencia", "ref",
+        "part", "partno", "partnumber", "material", "numerico", "number",
+        "descripcion_corta", "short_desc",
+    ],
+    "demand": [
+        "demanda", "demand", "cantidad", "quantity", "qty", "ventas",
+        "sales", "pedido", "order", "orders", "consumo", "consumption",
+        "unidades", "units", "sold", "vendido", "despacho", "shipped",
+        "venta", "forecast", "pronostico", "pronostic",
+    ],
+    "date": [
+        "fecha", "date", "periodo", "period", "mes", "month", "semana",
+        "week", "año", "year", "time", "tiempo", "dt", "dia", "day",
+        "trimestre", "quarter", "anio",
+    ],
+    "price": [
+        "precio", "price", "pvp", "valor_venta", "sale_price", "tarifa",
+        "rate", "list_price", "precio_venta", "p_venta",
+    ],
+    "cost": [
+        "costo", "cost", "coste", "unit_cost", "costo_unitario",
+        "purchase_price", "precio_compra", "valor_compra",
+    ],
+    "description": [
+        "descripcion", "description", "desc", "nombre", "name",
+        "detalle", "detail", "label", "etiqueta", "titulo", "title",
+        "producto_nombre", "item_name", "item_desc",
+    ],
+    "category": [
+        "categoria", "category", "familia", "family", "grupo", "group",
+        "tipo", "type", "clase", "class", "linea", "line", "segmento",
+        "segment", "departamento", "department", "seccion", "section",
+    ],
+    "supplier": [
+        "proveedor", "supplier", "vendor", "fabricante", "manufacturer",
+        "marca", "brand", "origen", "source",
+    ],
+    "warehouse": [
+        "almacen", "warehouse", "bodega", "deposito", "location",
+        "ubicacion", "tienda", "store", "sucursal", "branch", "site",
+        "planta", "plant", "centro", "center",
+    ],
+    "lead_time": [
+        "lead_time", "leadtime", "lt", "tiempo_entrega", "plazo",
+        "reorder_time", "delivery_time", "tiempo_reorden",
+    ],
+    "stock": [
+        "stock", "inventario", "inventory", "existencias", "on_hand",
+        "disponible", "available", "saldo", "balance", "oh",
+        "nivel_inventario", "qty_on_hand",
+    ],
+    "safety_stock": [
+        "safety", "stock_seguridad", "ss", "buffer", "minimo", "minimum",
+        "reorder_point", "punto_reorden",
+    ],
+}
+
+# Peso relativo de cada señal en el score final
+WEIGHT_NAME  = 0.55   # señal del nombre de columna
+WEIGHT_DATA  = 0.45   # señal del patrón de datos
+
+print(f"Diccionarios listos: {len(KEYWORDS)} tipos de campo definidos.")
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CAPA 1 — SCORE POR NOMBRE DE COLUMNA
+# ══════════════════════════════════════════════════════════════════════════════
+
+def normalize(text: str) -> str:
+    """Minúsculas, sin acentos, reemplaza separadores con espacio."""
+    text = str(text).lower().strip()
+    text = unicodedata.normalize("NFD", text)
+    text = "".join(c for c in text if unicodedata.category(c) != "Mn")  # quita acentos
+    text = re.sub(r"[_\-\.\s/\\]+", " ", text)                          # separadores → espacio
+    return text.strip()
+
+
+def name_score(col_name: str, field: str) -> float:
+    """
+    Score 0-1 de qué tan bien coincide el nombre de la columna con un campo.
+    Combina coincidencia exacta de tokens + fuzzy matching.
+    """
+    norm = normalize(col_name)
+    tokens_col = set(norm.split())
+    keywords   = KEYWORDS[field]
+
+    best = 0.0
+    for kw in keywords:
+        kw_tokens = set(kw.split())
+
+        # Coincidencia exacta de token → score alto
+        if kw_tokens & tokens_col:
+            overlap = len(kw_tokens & tokens_col) / max(len(kw_tokens), 1)
+            best = max(best, 0.7 + 0.3 * overlap)
+
+        # Fuzzy sobre el nombre completo normalizado
+        fs = fuzzy_score(norm, kw)
+        best = max(best, fs * 0.85)   # penalizado respecto a exacta
+
+        if best >= 0.99:
+            break
+
+    return round(min(best, 1.0), 4)
+
+
+# ── prueba rápida ──────────────────────────────────────────────────────────────
+tests = [
+    ("Código Producto",  "sku"),
+    ("DEMANDA_MENSUAL",  "demand"),
+    ("Fecha_Venta",      "date"),
+    ("qty sold",         "demand"),
+    ("Familia",          "category"),
+    ("COSTO UNITARIO",   "cost"),
+    ("Proveedor_ID",     "supplier"),
+    ("almacen_origen",   "warehouse"),
+]
+print(f"{'Columna':<22} {'Campo':<14} Score")
+print("-" * 44)
+for col, field in tests:
+    print(f"{col:<22} {field:<14} {name_score(col, field):.3f}")
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CAPA 2 — SCORE POR PATRÓN DE DATOS
+# Analiza el contenido de la columna para inferir su tipo semántico.
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _pct_numeric(series: pd.Series) -> float:
+    return pd.to_numeric(series, errors="coerce").notna().mean()
+
+def _pct_datetime(series: pd.Series) -> float:
+    try:
+        parsed = pd.to_datetime(series, errors="coerce", infer_datetime_format=True)
+        return parsed.notna().mean()
+    except Exception:
+        return 0.0
+
+def _cardinality_ratio(series: pd.Series) -> float:
+    """Proporción de valores únicos respecto al total (0=todos iguales, 1=todos distintos)."""
+    n = len(series.dropna())
+    if n == 0:
+        return 0.0
+    return series.nunique() / n
+
+def _avg_str_len(series: pd.Series) -> float:
+    return series.dropna().astype(str).str.len().mean()
+
+def _is_mostly_integer(series: pd.Series) -> bool:
+    num = pd.to_numeric(series, errors="coerce").dropna()
+    if len(num) == 0:
+        return False
+    return (num % 1 == 0).mean() > 0.90
+
+def _numeric_range(series: pd.Series):
+    num = pd.to_numeric(series, errors="coerce").dropna()
+    if len(num) == 0:
+        return None, None
+    return num.min(), num.max()
+
+
+def data_scores(series: pd.Series) -> dict[str, float]:
+    """
+    Devuelve un dict {campo: score_0_a_1} basado en el patrón de los datos.
+    """
+    pct_num  = _pct_numeric(series)
+    pct_dt   = _pct_datetime(series)
+    card     = _cardinality_ratio(series)
+    avg_len  = _avg_str_len(series)
+    is_int   = _is_mostly_integer(series)
+    vmin, vmax = _numeric_range(series)
+    n_unique = series.nunique()
+
+    scores = {f: 0.0 for f in KEYWORDS}
+
+    # ── DATE ──────────────────────────────────────────────────────────────────
+    scores["date"] = pct_dt * 0.9 + (0.1 if card < 0.5 else 0.0)
+
+    # ── SKU ───────────────────────────────────────────────────────────────────
+    # Alta cardinalidad, strings cortos o alfanuméricos
+    sku_score = 0.0
+    if pct_num < 0.5 and avg_len <= 30 and card > 0.3:
+        sku_score += 0.5
+    if card > 0.7:
+        sku_score += 0.3
+    if avg_len <= 15:
+        sku_score += 0.2
+    scores["sku"] = min(sku_score, 1.0)
+
+    # ── DEMAND ────────────────────────────────────────────────────────────────
+    dem_score = 0.0
+    if pct_num > 0.85 and is_int:
+        dem_score += 0.6
+    if vmin is not None and vmin >= 0:
+        dem_score += 0.2
+    if vmax is not None and vmax < 1_000_000:
+        dem_score += 0.2
+    scores["demand"] = min(dem_score, 1.0)
+
+    # ── PRICE / COST ──────────────────────────────────────────────────────────
+    monetary_score = 0.0
+    if pct_num > 0.85:
+        monetary_score += 0.5
+    if vmin is not None and vmin >= 0:
+        monetary_score += 0.2
+    if not is_int:          # precios suelen tener decimales
+        monetary_score += 0.2
+    if vmax is not None and vmax > 10:
+        monetary_score += 0.1
+    scores["price"] = min(monetary_score, 1.0)
+    scores["cost"]  = min(monetary_score, 1.0)
+
+    # ── DESCRIPTION ───────────────────────────────────────────────────────────
+    desc_score = 0.0
+    if pct_num < 0.1 and avg_len > 20:
+        desc_score += 0.6
+    if card > 0.4:
+        desc_score += 0.3
+    scores["description"] = min(desc_score, 1.0)
+
+    # ── CATEGORY ──────────────────────────────────────────────────────────────
+    cat_score = 0.0
+    if pct_num < 0.1 and card < 0.15 and n_unique >= 2:
+        cat_score += 0.8
+    if avg_len <= 40:
+        cat_score += 0.2
+    scores["category"] = min(cat_score, 1.0)
+
+    # ── SUPPLIER ──────────────────────────────────────────────────────────────
+    scores["supplier"] = scores["category"] * 0.8   # patrón similar a category
+
+    # ── WAREHOUSE ─────────────────────────────────────────────────────────────
+    scores["warehouse"] = scores["category"] * 0.7
+
+    # ── LEAD_TIME ─────────────────────────────────────────────────────────────
+    lt_score = 0.0
+    if pct_num > 0.85 and is_int and vmin is not None and vmax is not None:
+        if 0 <= vmin and vmax <= 365:
+            lt_score = 0.75
+    scores["lead_time"] = min(lt_score, 1.0)
+
+    # ── STOCK ─────────────────────────────────────────────────────────────────
+    stk_score = 0.0
+    if pct_num > 0.85 and is_int:
+        stk_score += 0.5
+    if vmin is not None and vmin >= 0:
+        stk_score += 0.3
+    scores["stock"] = min(stk_score, 1.0)
+
+    # ── SAFETY_STOCK ──────────────────────────────────────────────────────────
+    scores["safety_stock"] = scores["stock"] * 0.8
+
+    return {k: round(v, 4) for k, v in scores.items()}
+
+print("Funciones de análisis de datos listas.")
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CAPA 3 — CLASE PRINCIPAL: ColumnRecognizer
+# Combina las dos señales y asigna campos sin conflictos.
+# ══════════════════════════════════════════════════════════════════════════════
+
+class ColumnRecognizer:
+    """
+    Detecta automáticamente qué campo semántico representa cada columna.
+
+    Uso:
+        cr = ColumnRecognizer(df)
+        mapping = cr.mapping          # {'sku': 'col_A', 'demand': 'col_C', ...}
+        df_std  = cr.standardize()    # DataFrame con columnas renombradas a nombres estándar
+    """
+
+    # Umbral mínimo de score para asignar un campo (evita asignaciones con poca confianza)
+    MIN_SCORE = 0.25
+
+    def __init__(self, df: pd.DataFrame):
+        self.df = df
+        self._score_matrix: dict[str, dict[str, float]] = {}   # {col: {field: score}}
+        self._mapping: dict[str, str] | None = None
+        self._confidence: dict[str, float] | None = None
+        self._run()
+
+    # ── Paso 1: calcular scores combinados ────────────────────────────────────
+    def _run(self):
+        for col in self.df.columns:
+            name_s = {f: name_score(col, f) for f in KEYWORDS}
+            data_s = data_scores(self.df[col])
+            combined = {
+                f: round(WEIGHT_NAME * name_s[f] + WEIGHT_DATA * data_s[f], 4)
+                for f in KEYWORDS
+            }
+            self._score_matrix[col] = combined
+
+    # ── Paso 2: asignación greedy sin conflictos ───────────────────────────────
+    def _assign(self) -> tuple[dict[str, str], dict[str, float]]:
+        """
+        Para cada campo, elige la mejor columna disponible.
+        Orden de prioridad: campo con mayor score ganador primero (evita robo entre campos).
+        """
+        # Construir lista (score, field, col) para todas las combinaciones
+        candidates = []
+        for col, fscores in self._score_matrix.items():
+            for field, score in fscores.items():
+                if score >= self.MIN_SCORE:
+                    candidates.append((score, field, col))
+
+        candidates.sort(reverse=True)   # mejor score primero
+
+        assigned_fields = {}   # field → col
+        assigned_cols   = set()
+        confidence      = {}
+
+        for score, field, col in candidates:
+            if field in assigned_fields:
+                continue   # campo ya asignado
+            if col in assigned_cols:
+                continue   # columna ya usada
+            assigned_fields[field] = col
+            assigned_cols.add(col)
+            confidence[field] = score
+
+        return assigned_fields, confidence
+
+    @property
+    def mapping(self) -> dict[str, str]:
+        """Devuelve {campo_estándar: nombre_columna_original}."""
+        if self._mapping is None:
+            self._mapping, self._confidence = self._assign()
+        return self._mapping
+
+    @property
+    def confidence(self) -> dict[str, float]:
+        """Score de confianza (0-1) por cada campo asignado."""
+        if self._confidence is None:
+            self._mapping, self._confidence = self._assign()
+        return self._confidence
+
+    def score_table(self) -> pd.DataFrame:
+        """Tabla completa de scores: filas=columnas del df, columnas=campos semánticos."""
+        return pd.DataFrame(self._score_matrix).T.sort_index()
+
+    def report(self) -> pd.DataFrame:
+        """Resumen de la asignación final con la columna original y el score."""
+        rows = []
+        for field, col in self.mapping.items():
+            rows.append({
+                "campo_estándar": field,
+                "columna_original": col,
+                "confianza": self.confidence.get(field, 0),
+            })
+        df_rep = pd.DataFrame(rows).sort_values("confianza", ascending=False)
+        df_rep["confianza"] = df_rep["confianza"].map("{:.1%}".format)
+        return df_rep.reset_index(drop=True)
+
+    def standardize(self, fields: list[str] | None = None) -> pd.DataFrame:
+        """
+        Devuelve el DataFrame con las columnas renombradas a nombres estándar.
+        Si `fields` no es None, sólo incluye esas columnas.
+        Las columnas no mapeadas se conservan con su nombre original.
+        """
+        rename_map = {v: k for k, v in self.mapping.items()}  # col_orig → campo_std
+        df_out = self.df.rename(columns=rename_map)
+        if fields:
+            cols_to_keep = [f for f in fields if f in df_out.columns]
+            unmapped_orig = [c for c in self.df.columns if c not in rename_map]
+            df_out = df_out[cols_to_keep]
+        return df_out
+
+    def get(self, field: str) -> pd.Series | None:
+        """Extrae directamente la serie correspondiente a un campo estándar."""
+        col = self.mapping.get(field)
+        if col is None:
+            print(f"[ColumnRecognizer] Campo '{field}' no detectado.")
+            return None
+        return self.df[col]
+
+
+print("Clase ColumnRecognizer lista.")
+
+np.random.seed(42)
+N = 200
+
+# ── BASE DE DATOS A: columnas en español, SKU en columna A ────────────────────
+skus_a = [f"PROD-{i:04d}" for i in range(1, 51)]
+df_A = pd.DataFrame({
+    "Código_Artículo":   np.random.choice(skus_a, N),                           # ← SKU
+    "Familia_Producto":  np.random.choice(["Electrónica","Hogar","Alimentos","Ropa"], N),  # ← category
+    "Descripción":       np.random.choice(["Artículo de alta gama","Producto estándar","Ítem básico"], N),
+    "Fecha_Venta":       pd.date_range("2023-01-01", periods=N, freq="D").astype(str),  # ← date
+    "DEMANDA_MENSUAL":   np.random.randint(10, 500, N),                         # ← demand
+    "Precio_Unitario":   np.round(np.random.uniform(5.0, 999.0, N), 2),        # ← price
+    "Costo_Compra":      np.round(np.random.uniform(2.0, 600.0, N), 2),        # ← cost
+    "Proveedor":         np.random.choice(["ProvA","ProvB","ProvC"], N),        # ← supplier
+    "Stock_Actual":      np.random.randint(0, 1000, N),                         # ← stock
+    "Lead_Time_días":    np.random.randint(1, 60, N),                           # ← lead_time
+})
+
+# ── BASE DE DATOS B: columnas en inglés, orden distinto, SKU en columna C ─────
+skus_b = [f"SKU{i:05d}" for i in range(100, 150)]
+df_B = pd.DataFrame({
+    "Store_Location":    np.random.choice(["North","South","East","West"], N),  # ← warehouse
+    "Brand":             np.random.choice(["BrandX","BrandY","BrandZ"], N),     # ← supplier
+    "Item_Code":         np.random.choice(skus_b, N),                           # ← SKU  (columna C)
+    "Product_Name":      np.random.choice(["Widget Pro","Gadget Lite","Toolset"], N),
+    "Units_Sold":        np.random.randint(5, 800, N),                          # ← demand
+    "Sale_Date":         pd.date_range("2024-01-01", periods=N, freq="D").astype(str),
+    "List_Price":        np.round(np.random.uniform(10.0, 1500.0, N), 2),
+    "Purchase_Price":    np.round(np.random.uniform(5.0,  900.0,  N), 2),
+    "Qty_On_Hand":       np.random.randint(0, 2000, N),
+    "Delivery_Time":     np.random.randint(3, 90, N),
+    "Category":          np.random.choice(["Electronics","Home","Food","Clothing"], N),
+})
+
+print("Dataset A  →  columnas:", list(df_A.columns))
+print("Dataset B  →  columnas:", list(df_B.columns))
+
+# ── Reconocimiento automático ─────────────────────────────────────────────────
+
+cr_A = ColumnRecognizer(df_A)
+cr_B = ColumnRecognizer(df_B)
+
+print("=" * 55)
+print("  DATASET A — Reporte de asignación automática")
+print("=" * 55)
+print(cr_A.report().to_string(index=False))
+
+print()
+print("=" * 55)
+print("  DATASET B — Reporte de asignación automática")
+print("=" * 55)
+print(cr_B.report().to_string(index=False))
+
+# ── Estandarización: ambos datasets con mismas columnas estándar ──────────────
+
+campos_core = ["sku", "demand", "date", "price", "cost", "category", "supplier", "stock", "lead_time"]
+
+df_A_std = cr_A.standardize(fields=campos_core)
+df_B_std = cr_B.standardize(fields=campos_core)
+
+print("Dataset A estandarizado:")
+print(df_A_std.head(3).to_string())
+print()
+print("Dataset B estandarizado:")
+print(df_B_std.head(3).to_string())
+
+# ── Combinar ambos datasets ya estandarizados ─────────────────────────────────
+
+df_combined = pd.concat([df_A_std, df_B_std], ignore_index=True)
+print(f"Dataset combinado: {df_combined.shape[0]} filas × {df_combined.shape[1]} columnas")
+print()
+print(df_combined.dtypes)
+print()
+print(df_combined.head(3).to_string())
+
+# ══════════════════════════════════════════════════════════════════════════════
+# FUNCIÓN DE UTILIDAD — para usar con tu propio archivo
+# ══════════════════════════════════════════════════════════════════════════════
+
+def load_and_recognize(filepath: str, **read_kwargs) -> tuple[pd.DataFrame, ColumnRecognizer]:
+    """
+    Lee cualquier CSV o Excel y devuelve (df_original, recognizer).
+
+    Ejemplos:
+        df, cr = load_and_recognize("ventas.csv")
+        df, cr = load_and_recognize("inventario.xlsx", sheet_name="Hoja1")
+
+    Luego puedes hacer:
+        cr.report()                        # ver el mapeo detectado
+        cr.get("demand")                   # extraer la columna de demanda
+        cr.standardize(["sku","demand"])   # df con nombres estándar
+    """
+    ext = filepath.rsplit(".", 1)[-1].lower()
+    if ext in ("xlsx", "xls", "xlsm"):
+        df = pd.read_excel(filepath, **read_kwargs)
+    elif ext == "csv":
+        if "encoding" not in read_kwargs:
+            read_kwargs.setdefault("encoding", "utf-8")
+        try:
+            df = pd.read_csv(filepath, **read_kwargs)
+        except UnicodeDecodeError:
+            read_kwargs["encoding"] = "latin-1"
+            df = pd.read_csv(filepath, **read_kwargs)
+    else:
+        raise ValueError(f"Formato no soportado: .{ext}  (usa CSV o Excel)")
+
+    cr = ColumnRecognizer(df)
+    print(f"Archivo cargado: {df.shape[0]} filas × {df.shape[1]} columnas")
+    print()
+    print(cr.report().to_string(index=False))
+    return df, cr
+
+
+# ── Para cargar tu propio archivo descomenta una línea: ──────────────────────
+# df, cr = load_and_recognize("mi_base_de_datos.csv")
+# df, cr = load_and_recognize("mi_base_de_datos.xlsx", sheet_name=0)
+
+print("Función load_and_recognize() lista para usar.")
+
+# Extender el diccionario de keywords con términos farmacéuticos
+KEYWORDS.update({
+    "med_name": [
+        "nombre", "medicamento", "farmaco", "droga", "medicine", "drug",
+        "principio_activo", "principio", "active", "nombre_generico",
+        "generic", "nombre_comercial", "denominacion", "dci",
+    ],
+    "brand": [
+        "marca", "laboratorio", "lab", "fabricante_marca", "comercial",
+        "nombre_comercial", "trade_name",
+    ],
+    "batch": [
+        "lote", "batch", "partida", "lot", "numero_lote", "lot_number",
+        "nro_lote", "no_lote", "serie",
+    ],
+    "expiry_date": [
+        "vencimiento", "fecha_vencimiento", "vence", "expiry", "expiration",
+        "caducidad", "fecha_caducidad", "exp_date", "fecha_exp",
+        "fecha_venc", "fec_venc", "vto",
+    ],
+    "entry_date": [
+        "fecha_ingreso", "ingreso", "recepcion", "fecha_recepcion",
+        "received_date", "fecha_entrada", "entrada", "fecha_compra",
+        "purchase_date", "fecha_llegada",
+    ],
+    "unit_measure": [
+        "unidad", "unidad_medida", "presentacion", "forma_farmaceutica",
+        "dosis", "dosage", "unit", "formato", "envase",
+    ],
+    "active_ingredient": [
+        "principio_activo", "principio", "active_ingredient", "dci",
+        "nombre_generico", "generic_name", "formula",
+    ],
+})
+
+# También enriquecer el campo demand con términos de farmacia
+KEYWORDS["demand"] += [
+    "dispensacion", "dispensado", "consumo_mensual", "consumo_diario",
+    "dispensaciones", "despachos_mes", "consumo_promedio", "uso_mensual",
+    "dosis_dispensadas",
+]
+
+# y stock con términos de farmacia
+KEYWORDS["stock"] += [
+    "cantidad_disponible", "existencia", "unidades_disponibles",
+    "stock_fisico", "cantidad_fisica", "disponibilidad",
+]
+
+print(f"Keywords actualizados: {len(KEYWORDS)} tipos de campo definidos.")
+
+def analyze_expiry(df: pd.DataFrame,
+                   col_med_code: str,
+                   col_med_name: str,
+                   col_expiry: str,
+                   col_qty: str,
+                   col_cost: str | None = None,
+                   col_batch: str | None = None,
+                   today: pd.Timestamp | None = None) -> pd.DataFrame:
+    """
+    Analiza el estado de vencimiento de cada batch de medicamento.
+
+    Retorna DataFrame con columnas:
+    - dias_para_vencer: días hasta la fecha de vencimiento
+    - estado_vencimiento: VENCIDO / CRITICO (<30d) / ADVERTENCIA (30-90d) / OK
+    - valor_en_riesgo: monto (qty * costo) que podría perderse
+    - fefo_prioridad: orden de despacho (primero el que vence antes)
+    """
+    if today is None:
+        today = pd.Timestamp.today().normalize()
+
+    df = df.copy()
+
+    # Parsear fecha de vencimiento
+    df[col_expiry] = pd.to_datetime(df[col_expiry], errors="coerce", dayfirst=True)
+    df["dias_para_vencer"] = (df[col_expiry] - today).dt.days
+
+    # Estado de vencimiento
+    def _estado(d):
+        if pd.isna(d):
+            return "SIN FECHA"
+        if d < 0:
+            return "VENCIDO"
+        if d <= 30:
+            return "CRITICO"
+        if d <= 90:
+            return "ADVERTENCIA"
+        return "OK"
+
+    df["estado_vencimiento"] = df["dias_para_vencer"].map(_estado)
+
+    # Valor en riesgo (para productos VENCIDO o CRITICO)
+    if col_cost:
+        df[col_cost] = pd.to_numeric(df[col_cost], errors="coerce").fillna(0)
+        df[col_qty]  = pd.to_numeric(df[col_qty],  errors="coerce").fillna(0)
+        df["valor_en_riesgo"] = df.apply(
+            lambda r: r[col_qty] * r[col_cost]
+            if r["estado_vencimiento"] in ("VENCIDO", "CRITICO") else 0,
+            axis=1
+        )
+
+    # Prioridad FEFO: menor días para vencer = prioridad 1
+    df["fefo_prioridad"] = df.groupby(col_med_code)["dias_para_vencer"].rank(method="min")
+
+    return df.sort_values([col_med_code, "dias_para_vencer"])
+
+
+def expiry_summary(df_expiry: pd.DataFrame,
+                   col_med_code: str,
+                   col_med_name: str,
+                   col_qty: str) -> pd.DataFrame:
+    """
+    Resumen por medicamento: mínimo días para vencer, estado más crítico,
+    cantidad total disponible, cantidad en riesgo.
+    """
+    ORDEN_ESTADO = {"VENCIDO": 0, "CRITICO": 1, "ADVERTENCIA": 2, "OK": 3, "SIN FECHA": 4}
+
+    agg = df_expiry.groupby([col_med_code, col_med_name]).agg(
+        min_dias_vencer   = ("dias_para_vencer", "min"),
+        max_dias_vencer   = ("dias_para_vencer", "max"),
+        stock_total       = (col_qty, "sum"),
+        n_batches         = (col_qty, "count"),
+    ).reset_index()
+
+    # Estado más crítico del medicamento (el peor batch)
+    worst = (df_expiry
+             .assign(_ord=df_expiry["estado_vencimiento"].map(ORDEN_ESTADO))
+             .sort_values("_ord")
+             .groupby(col_med_code)["estado_vencimiento"]
+             .first()
+             .reset_index()
+             .rename(columns={"estado_vencimiento": "estado_critico"}))
+
+    agg = agg.merge(worst, on=col_med_code, how="left")
+
+    # Cantidad en riesgo
+    if "valor_en_riesgo" in df_expiry.columns:
+        riesgo = (df_expiry.groupby(col_med_code)["valor_en_riesgo"]
+                  .sum().reset_index()
+                  .rename(columns={"valor_en_riesgo": "valor_total_en_riesgo"}))
+        agg = agg.merge(riesgo, on=col_med_code, how="left")
+
+    return agg.sort_values("min_dias_vencer")
+
+print("Módulo 3 (vencimientos) listo.")
+
+def analyze_demand(df_movements: pd.DataFrame,
+                   col_med_code: str,
+                   col_date: str,
+                   col_qty: str,
+                   freq: str = "M") -> pd.DataFrame:
+    """
+    Calcula estadísticas de demanda a partir del historial de movimientos.
+
+    Parámetros:
+    - df_movements: tabla de dispensaciones/consumos (una fila por evento)
+    - freq: 'D' diario, 'W' semanal, 'M' mensual
+
+    Retorna por medicamento:
+    - demanda_promedio_periodo: consumo promedio por período
+    - demanda_diaria_promedio: consumo diario promedio
+    - desv_std: desviación estándar del consumo
+    - cv: coeficiente de variación (variabilidad)
+    - tendencia: subiendo / estable / bajando (últimos 3 vs anteriores)
+    - n_periodos: cantidad de períodos con datos
+    """
+    df = df_movements.copy()
+    df[col_date] = pd.to_datetime(df[col_date], errors="coerce", dayfirst=True)
+    df[col_qty]  = pd.to_numeric(df[col_qty], errors="coerce").fillna(0)
+    df = df.dropna(subset=[col_date])
+
+    # Agrupar por medicamento y período
+    df["periodo"] = df[col_date].dt.to_period(freq)
+    demand_ts = (df.groupby([col_med_code, "periodo"])[col_qty]
+                 .sum()
+                 .reset_index())
+
+    # Estadísticas por medicamento
+    stats = []
+    DAYS_PER_PERIOD = {"D": 1, "W": 7, "M": 30, "Q": 90}
+    days = DAYS_PER_PERIOD.get(freq, 30)
+
+    for code, grp in demand_ts.groupby(col_med_code):
+        vals = grp[col_qty].values
+        n = len(vals)
+        avg = vals.mean()
+        std = vals.std(ddof=1) if n > 1 else 0
+        cv  = std / avg if avg > 0 else 0
+
+        # Tendencia: compara últimos 3 períodos vs anteriores
+        if n >= 6:
+            reciente  = vals[-3:].mean()
+            anterior  = vals[:-3].mean()
+            if reciente > anterior * 1.10:
+                tendencia = "SUBIENDO"
+            elif reciente < anterior * 0.90:
+                tendencia = "BAJANDO"
+            else:
+                tendencia = "ESTABLE"
+        else:
+            tendencia = "INSUFICIENTE"
+
+        stats.append({
+            col_med_code: code,
+            "demanda_promedio_periodo": round(avg, 2),
+            "demanda_diaria_promedio":  round(avg / days, 4),
+            "desv_std":                 round(std, 2),
+            "cv_pct":                   round(cv * 100, 1),
+            "tendencia_demanda":        tendencia,
+            "n_periodos_datos":         n,
+        })
+
+    return pd.DataFrame(stats)
+
+
+def forecast_simple(df_movements: pd.DataFrame,
+                    col_med_code: str,
+                    col_date: str,
+                    col_qty: str,
+                    horizonte_dias: int = 30,
+                    alpha: float = 0.3) -> pd.DataFrame:
+    """
+    Forecast de demanda usando suavización exponencial simple (SES).
+    Más robusto que promedio simple cuando hay tendencia.
+
+    Retorna por medicamento:
+    - forecast_proximo_periodo: consumo esperado en los próximos `horizonte_dias` días
+    - intervalo_inferior / superior: banda de confianza al 80%
+    """
+    df = df_movements.copy()
+    df[col_date] = pd.to_datetime(df[col_date], errors="coerce", dayfirst=True)
+    df[col_qty]  = pd.to_numeric(df[col_qty], errors="coerce").fillna(0)
+    df["periodo"] = df[col_date].dt.to_period("M")
+
+    results = []
+    for code, grp in df.groupby(col_med_code):
+        monthly = grp.groupby("periodo")[col_qty].sum().values.astype(float)
+        if len(monthly) == 0:
+            continue
+
+        # SES
+        smoothed = monthly[0]
+        for val in monthly[1:]:
+            smoothed = alpha * val + (1 - alpha) * smoothed
+
+        # Escalar al horizonte pedido (de mensual a horizonte_dias)
+        scale = horizonte_dias / 30.0
+        forecast = smoothed * scale
+
+        # Banda de confianza basada en RMSE histórico
+        errors = [abs(monthly[i] - (alpha * monthly[i-1] + (1-alpha) * monthly[i-1]))
+                  for i in range(1, len(monthly))]
+        rmse = (np.mean([e**2 for e in errors]) ** 0.5) * scale if errors else forecast * 0.2
+
+        results.append({
+            col_med_code:          code,
+            "forecast_demanda":    round(max(forecast, 0), 1),
+            "intervalo_inferior":  round(max(forecast - 1.28 * rmse, 0), 1),
+            "intervalo_superior":  round(forecast + 1.28 * rmse, 1),
+            "horizonte_dias":      horizonte_dias,
+        })
+
+    return pd.DataFrame(results)
+
+print("Módulo 4 (demanda y forecast) listo.")
+
+from scipy import stats as scipy_stats
+
+# Factor Z según nivel de servicio
+_Z_TABLE = {0.80: 0.842, 0.85: 1.036, 0.90: 1.282,
+            0.95: 1.645, 0.97: 1.881, 0.99: 2.326}
+
+def _z(service_level: float) -> float:
+    closest = min(_Z_TABLE.keys(), key=lambda k: abs(k - service_level))
+    return _Z_TABLE[closest]
+
+
+def inventory_policies(demand_stats: pd.DataFrame,
+                       col_med_code: str,
+                       lead_time_days: float = 7.0,
+                       service_level: float  = 0.95,
+                       ordering_cost: float  = 5_000,    # $ por orden
+                       holding_rate: float   = 0.25,     # 25% del valor anual
+                       unit_costs: dict | None = None,    # {cod: costo_unitario}
+                       shelf_life_days: dict | None = None,  # {cod: días_vida_útil}
+                       review_period_days: float = 7.0,
+                       ) -> pd.DataFrame:
+    """
+    Calcula las políticas de inventario para cada medicamento.
+
+    Fórmulas:
+    ──────────────────────────────────────────────────────────────
+    Demanda anual            D   = demanda_diaria * 365
+    Stock de seguridad       SS  = Z * σ_d * √(LT)
+    Punto de reorden         ROP = d̄ * LT + SS
+    EOQ (base)               Q*  = √(2·D·S / H)    donde H = holding_rate * unit_cost
+    EOQ ajustado perecibles  Q** = min(Q*, d̄ * (shelf_life - LT))
+    Nivel máximo (Max)       MAX = ROP + Q**
+    Días de cobertura stock  DOS = stock_actual / d̄
+    ──────────────────────────────────────────────────────────────
+
+    Parámetros:
+    - demand_stats:      salida de analyze_demand()
+    - lead_time_days:    días desde pedido hasta entrega
+    - service_level:     nivel de servicio deseado (0.95 = 95%)
+    - ordering_cost:     costo fijo por orden (CLP o USD, consistente con unit_cost)
+    - holding_rate:      fracción del valor del medicamento que cuesta mantenerlo/año
+    - unit_costs:        dict {cod_medicamento: precio_unitario}
+    - shelf_life_days:   dict {cod_medicamento: días_vida_útil_promedio}
+    - review_period_days: cada cuántos días se revisa el inventario
+    """
+    z = _z(service_level)
+    rows = []
+
+    for _, r in demand_stats.iterrows():
+        code  = r[col_med_code]
+        d_bar = r["demanda_diaria_promedio"]   # unidades/día
+        sigma = r["desv_std"] / 30.0           # σ diaria (asumiendo que std es mensual)
+        D_annual = d_bar * 365
+
+        # Costo de mantener por unidad por año
+        uc = (unit_costs or {}).get(code, 1.0)
+        H  = holding_rate * uc
+        if H == 0:
+            H = 0.01
+
+        # Stock de seguridad
+        SS = z * sigma * (lead_time_days ** 0.5)
+
+        # Punto de reorden
+        ROP = d_bar * lead_time_days + SS
+
+        # EOQ base (Wilson)
+        if D_annual > 0 and ordering_cost > 0:
+            EOQ_base = (2 * D_annual * ordering_cost / H) ** 0.5
+        else:
+            EOQ_base = 0
+
+        # Ajuste por perecibilidad: no pedir más de lo que se consume antes de vencer
+        sl = (shelf_life_days or {}).get(code, 365)
+        consumible_antes_vence = d_bar * max(sl - lead_time_days, 1)
+        EOQ_adj = min(EOQ_base, consumible_antes_vence) if consumible_antes_vence > 0 else EOQ_base
+
+        # Min-Max
+        MAX = ROP + EOQ_adj
+
+        rows.append({
+            col_med_code:            code,
+            "demanda_diaria":        round(d_bar, 4),
+            "demanda_anual_est":     round(D_annual, 1),
+            "lead_time_dias":        lead_time_days,
+            "stock_seguridad":       round(SS, 1),
+            "punto_reorden_ROP":     round(ROP, 1),
+            "cantidad_pedido_EOQ":   round(EOQ_adj, 1),
+            "nivel_maximo":          round(MAX, 1),
+            "nivel_minimo_MIN":      round(ROP, 1),   # Min = ROP
+            "vida_util_dias":        sl,
+            "costo_unitario":        uc,
+            "costo_orden":           ordering_cost,
+            "tasa_mantenimiento":    holding_rate,
+            "nivel_servicio_pct":    f"{service_level*100:.0f}%",
+        })
+
+    return pd.DataFrame(rows)
+
+print("Módulo 5 (políticas de inventario) listo.")
+
+def financial_analysis(df_inventory: pd.DataFrame,
+                       col_med_code: str,
+                       col_med_name: str,
+                       col_qty: str,
+                       col_cost: str,
+                       col_expiry_status: str = "estado_vencimiento",
+                       col_dias_vencer: str   = "dias_para_vencer",
+                       demand_daily: dict | None = None) -> pd.DataFrame:
+    """
+    Calcula indicadores financieros por medicamento:
+
+    - valor_inventario_total:  qty_total * costo_unitario
+    - valor_perdido_vencido:   qty_vencida * costo (pérdida realizada)
+    - valor_en_riesgo_critico: qty_critica * costo (podría perderse en <30d)
+    - valor_en_riesgo_advertencia: qty_advertencia * costo (<90d)
+    - rotacion_inventario:     demanda_anual / stock_promedio (si se entrega demand_daily)
+    - dias_inventario_DOS:     stock / demanda_diaria
+    - pct_capital_en_riesgo:   (vencido + critico) / total * 100
+    """
+    df = df_inventory.copy()
+    df[col_cost] = pd.to_numeric(df[col_cost], errors="coerce").fillna(0)
+    df[col_qty]  = pd.to_numeric(df[col_qty],  errors="coerce").fillna(0)
+    df["_valor"] = df[col_qty] * df[col_cost]
+
+    rows = []
+    for code, grp in df.groupby(col_med_code):
+        name     = grp[col_med_name].iloc[0] if col_med_name in grp else ""
+        total_qty  = grp[col_qty].sum()
+        total_val  = grp["_valor"].sum()
+        unit_cost  = grp[col_cost].mean()
+
+        # Pérdidas y riesgos por estado de vencimiento
+        if col_expiry_status in grp.columns:
+            val_vencido = grp.loc[grp[col_expiry_status]=="VENCIDO", "_valor"].sum()
+            val_critico = grp.loc[grp[col_expiry_status]=="CRITICO", "_valor"].sum()
+            val_advert  = grp.loc[grp[col_expiry_status]=="ADVERTENCIA", "_valor"].sum()
+        else:
+            val_vencido = val_critico = val_advert = 0
+
+        # Rotación e indicadores de flujo (si se provee demanda)
+        d_daily = (demand_daily or {}).get(code, None)
+        if d_daily and d_daily > 0:
+            dos      = round(total_qty / d_daily, 1)
+            rot_anual = round(d_daily * 365 / total_qty, 2) if total_qty > 0 else 0
+        else:
+            dos       = None
+            rot_anual = None
+
+        capital_en_riesgo = val_vencido + val_critico
+        pct_riesgo = (capital_en_riesgo / total_val * 100) if total_val > 0 else 0
+
+        rows.append({
+            col_med_code:                code,
+            col_med_name:                name,
+            "costo_unitario":            round(unit_cost, 2),
+            "stock_total_unidades":      int(total_qty),
+            "valor_inventario_CLP":      round(total_val, 0),
+            "valor_perdido_vencido_CLP": round(val_vencido, 0),
+            "valor_en_riesgo_critico_CLP": round(val_critico, 0),
+            "valor_en_riesgo_advert_CLP":  round(val_advert, 0),
+            "pct_capital_en_riesgo":     round(pct_riesgo, 1),
+            "dias_de_inventario_DOS":    dos,
+            "rotacion_anual":            rot_anual,
+        })
+
+    df_fin = pd.DataFrame(rows).sort_values("pct_capital_en_riesgo", ascending=False)
+
+    # Totales
+    totales = {
+        col_med_code: "TOTAL",
+        col_med_name: "",
+        "costo_unitario": None,
+        "stock_total_unidades":      df_fin["stock_total_unidades"].sum(),
+        "valor_inventario_CLP":      df_fin["valor_inventario_CLP"].sum(),
+        "valor_perdido_vencido_CLP": df_fin["valor_perdido_vencido_CLP"].sum(),
+        "valor_en_riesgo_critico_CLP": df_fin["valor_en_riesgo_critico_CLP"].sum(),
+        "valor_en_riesgo_advert_CLP":  df_fin["valor_en_riesgo_advert_CLP"].sum(),
+        "pct_capital_en_riesgo":     None,
+        "dias_de_inventario_DOS":    None,
+        "rotacion_anual":            None,
+    }
+    df_fin = pd.concat([df_fin, pd.DataFrame([totales])], ignore_index=True)
+    return df_fin
+
+print("Módulo 6 (análisis financiero) listo.")
+
+def compute_kpis(df_expiry_summary: pd.DataFrame,
+                 df_policies: pd.DataFrame,
+                 df_financial: pd.DataFrame,
+                 col_med_code: str) -> dict:
+    """
+    Calcula KPIs globales del inventario del centro de salud.
+
+    KPIs incluidos:
+    ┌─────────────────────────────────────────────────────────────────────┐
+    │ KPI                       │ Descripción                             │
+    ├─────────────────────────────────────────────────────────────────────┤
+    │ tasa_vencimiento_pct      │ % del valor total que ya venció         │
+    │ capital_en_riesgo_pct     │ % del valor en zona crítica (<30 días)  │
+    │ pct_meds_estado_ok        │ % de medicamentos en estado OK          │
+    │ pct_meds_bajo_rop         │ % de meds cuyo stock < Punto de Reorden │
+    │ dos_promedio              │ Días de inventario promedio (cobertura) │
+    │ rotacion_promedio         │ Rotación de inventario promedio         │
+    │ valor_total_inventario    │ Inversión total en stock                │
+    │ valor_total_perdido        │ Pérdida por vencimientos                │
+    │ n_meds_vencidos           │ Nº de medicamentos con stock vencido    │
+    │ n_meds_criticos           │ Nº de medicamentos en zona crítica      │
+    │ n_meds_bajo_rop           │ Nº de medicamentos bajo punto de reorden│
+    └─────────────────────────────────────────────────────────────────────┘
+    """
+    kpis = {}
+
+    # ── Desde expiry summary ─────────────────────────────────────────────────
+    if "estado_critico" in df_expiry_summary.columns:
+        total_meds = len(df_expiry_summary)
+        kpis["n_medicamentos_total"]   = total_meds
+        kpis["n_meds_vencidos"]        = (df_expiry_summary["estado_critico"]=="VENCIDO").sum()
+        kpis["n_meds_criticos"]        = (df_expiry_summary["estado_critico"]=="CRITICO").sum()
+        kpis["n_meds_advertencia"]     = (df_expiry_summary["estado_critico"]=="ADVERTENCIA").sum()
+        kpis["n_meds_ok"]              = (df_expiry_summary["estado_critico"]=="OK").sum()
+        kpis["pct_meds_estado_ok"]     = round(kpis["n_meds_ok"] / total_meds * 100, 1) if total_meds else 0
+
+    # ── Desde análisis financiero (sin la fila TOTAL) ────────────────────────
+    df_fin_meds = df_financial[df_financial[col_med_code] != "TOTAL"].copy()
+    valor_total = df_fin_meds["valor_inventario_CLP"].sum()
+    valor_perdido = df_fin_meds["valor_perdido_vencido_CLP"].sum()
+    valor_critico = df_fin_meds["valor_en_riesgo_critico_CLP"].sum()
+
+    kpis["valor_total_inventario_CLP"]  = round(valor_total, 0)
+    kpis["valor_perdido_vencido_CLP"]   = round(valor_perdido, 0)
+    kpis["valor_en_riesgo_critico_CLP"] = round(valor_critico, 0)
+    kpis["tasa_vencimiento_pct"]        = round(valor_perdido / valor_total * 100, 2) if valor_total else 0
+    kpis["capital_en_riesgo_critico_pct"] = round(valor_critico / valor_total * 100, 2) if valor_total else 0
+
+    if "dias_de_inventario_DOS" in df_fin_meds.columns:
+        dos_vals = df_fin_meds["dias_de_inventario_DOS"].dropna()
+        kpis["dos_promedio_dias"]  = round(dos_vals.mean(), 1) if len(dos_vals) else None
+        kpis["dos_mediana_dias"]   = round(dos_vals.median(), 1) if len(dos_vals) else None
+
+    if "rotacion_anual" in df_fin_meds.columns:
+        rot = df_fin_meds["rotacion_anual"].dropna()
+        kpis["rotacion_anual_promedio"] = round(rot.mean(), 2) if len(rot) else None
+
+    # ── Desde políticas ──────────────────────────────────────────────────────
+    if "punto_reorden_ROP" in df_policies.columns and "stock_total_unidades" in df_fin_meds.columns:
+        merged = df_policies.merge(
+            df_fin_meds[[col_med_code, "stock_total_unidades"]],
+            on=col_med_code, how="inner"
+        )
+        bajo_rop = merged["stock_total_unidades"] < merged["punto_reorden_ROP"]
+        kpis["n_meds_bajo_rop"]    = int(bajo_rop.sum())
+        kpis["pct_meds_bajo_rop"]  = round(bajo_rop.mean() * 100, 1)
+
+    return kpis
+
+
+def print_kpis(kpis: dict):
+    """Imprime los KPIs en formato de tabla legible."""
+    LABELS = {
+        "n_medicamentos_total":          "Nº total de medicamentos",
+        "n_meds_ok":                     "  └─ Estado OK",
+        "n_meds_advertencia":            "  └─ Advertencia (<90 días vence)",
+        "n_meds_criticos":               "  └─ CRITICOS (<30 días vence)",
+        "n_meds_vencidos":               "  └─ VENCIDOS",
+        "pct_meds_estado_ok":            "% medicamentos en estado OK",
+        "n_meds_bajo_rop":               "Nº meds bajo punto de reorden",
+        "pct_meds_bajo_rop":             "% meds bajo punto de reorden",
+        "valor_total_inventario_CLP":    "Valor total inventario ($)",
+        "valor_perdido_vencido_CLP":     "Valor perdido por vencimiento ($)",
+        "valor_en_riesgo_critico_CLP":   "Valor en riesgo crítico ($)",
+        "tasa_vencimiento_pct":          "Tasa de vencimiento (%)",
+        "capital_en_riesgo_critico_pct": "Capital en riesgo crítico (%)",
+        "dos_promedio_dias":             "Días de inventario promedio (DOS)",
+        "dos_mediana_dias":              "Días de inventario mediana (DOS)",
+        "rotacion_anual_promedio":       "Rotación anual promedio",
+    }
+    print("=" * 55)
+    print("  DASHBOARD DE KPIs — INVENTARIO DE MEDICAMENTOS")
+    print("=" * 55)
+    for key, label in LABELS.items():
+        val = kpis.get(key, "—")
+        if isinstance(val, float):
+            val_str = f"{val:,.2f}"
+        elif isinstance(val, (int, np.integer)):
+            val_str = f"{val:,}"
+        else:
+            val_str = str(val) if val is not None else "—"
+        print(f"  {label:<42} {val_str:>10}")
+    print("=" * 55)
+
+print("Módulo 7 (KPIs) listo.")
+
+def generate_recommendations(df_policies: pd.DataFrame,
+                              df_financial: pd.DataFrame,
+                              df_expiry_summary: pd.DataFrame,
+                              df_demand: pd.DataFrame,
+                              col_med_code: str,
+                              col_med_name: str,
+                              substitutes: dict | None = None) -> pd.DataFrame:
+    """
+    Genera recomendaciones de acción para cada medicamento.
+
+    Lógica de priorización:
+    ──────────────────────────────────────────────────────────────
+    URGENTE   : stock < ROP  →  pedir ahora (EOQ unidades)
+    PRONTO    : stock < 1.3*ROP  →  pedir en los próximos días
+    EXCESO    : stock > 2*MAX  →  investigar sobrestock
+    VENCIDO   : hay stock ya vencido  →  dar de baja
+    CRITICO   : vence en <30d y stock > consumo hasta vencimiento
+    OK        : sin acción requerida
+    ──────────────────────────────────────────────────────────────
+
+    Parámetros:
+    - substitutes: dict {cod_med: [cod_sustituto1, cod_sustituto2]}
+                   Indica qué medicamento puede reemplazar a otro si hay desabastecimiento.
+                   Ejemplo: {"MED001": ["MED015", "MED022"]}
+    """
+    # Juntar toda la información disponible
+    df_fin_m = df_financial[df_financial[col_med_code] != "TOTAL"].copy()
+    df = df_policies.merge(df_fin_m[[col_med_code, col_med_name,
+                                     "stock_total_unidades", "valor_inventario_CLP",
+                                     "valor_perdido_vencido_CLP"]],
+                           on=col_med_code, how="outer")
+    df = df.merge(df_expiry_summary[[col_med_code, "min_dias_vencer", "estado_critico"]],
+                  on=col_med_code, how="left")
+    df = df.merge(df_demand[[col_med_code, "tendencia_demanda", "cv_pct"]],
+                  on=col_med_code, how="left")
+
+    rows = []
+    for _, r in df.iterrows():
+        code      = r[col_med_code]
+        name      = r.get(col_med_name, "")
+        stock     = r.get("stock_total_unidades", 0) or 0
+        rop       = r.get("punto_reorden_ROP", 0) or 0
+        eoq       = r.get("cantidad_pedido_EOQ", 0) or 0
+        max_level = r.get("nivel_maximo", 0) or 0
+        estado    = r.get("estado_critico", "OK") or "OK"
+        dias_venc = r.get("min_dias_vencer", 999) or 999
+        d_daily   = r.get("demanda_diaria", 0) or 0
+        tendencia = r.get("tendencia_demanda", "—") or "—"
+        cv        = r.get("cv_pct", 0) or 0
+        perdido   = r.get("valor_perdido_vencido_CLP", 0) or 0
+
+        acciones    = []
+        prioridad   = "OK"
+        cantidad_pedir = 0
+
+        # ── Regla 1: stock vencido → dar de baja ──────────────────────────
+        if estado == "VENCIDO" or perdido > 0:
+            acciones.append("DAR DE BAJA stock vencido y solicitar reposicion")
+            prioridad = "URGENTE"
+            cantidad_pedir = max(eoq, rop - stock + eoq)
+
+        # ── Regla 2: bajo punto de reorden → pedir ahora ──────────────────
+        elif stock < rop:
+            faltante = rop - stock + eoq   # llevar al nivel Max
+            cantidad_pedir = max(round(faltante, 0), eoq)
+            acciones.append(f"PEDIR AHORA: {cantidad_pedir:.0f} unidades (stock {stock:.0f} < ROP {rop:.1f})")
+            prioridad = "URGENTE"
+
+        # ── Regla 3: próximo a vencer con exceso de stock ──────────────────
+        if estado == "CRITICO" and d_daily > 0:
+            consumible = d_daily * dias_venc
+            sobrante   = stock - consumible
+            if sobrante > 0:
+                acciones.append(f"RIESGO VENCIMIENTO: {sobrante:.0f} u. no se consumirán antes de vencer ({dias_venc}d)")
+                prioridad = max(prioridad, "CRITICO") if prioridad == "OK" else prioridad
+
+        # ── Regla 4: zona de advertencia → pedir pronto ───────────────────
+        elif stock < 1.3 * rop and prioridad == "OK":
+            cantidad_pedir = eoq
+            acciones.append(f"PEDIR PRONTO: {eoq:.0f} unidades (stock cercano al ROP)")
+            prioridad = "PRONTO"
+
+        # ── Regla 5: sobrestock ───────────────────────────────────────────
+        if max_level > 0 and stock > 2 * max_level:
+            acciones.append(f"SOBRESTOCK: stock ({stock:.0f}) supera 2x nivel máximo ({max_level:.0f})")
+            if prioridad == "OK":
+                prioridad = "SOBRESTOCK"
+
+        # ── Regla 6: demanda subiendo → ajustar cantidad ──────────────────
+        if tendencia == "SUBIENDO" and cantidad_pedir > 0:
+            cantidad_pedir_adj = round(cantidad_pedir * 1.15, 0)
+            acciones.append(f"Demanda creciente: considerar pedir {cantidad_pedir_adj:.0f} u. (+15%)")
+
+        # ── Regla 7: alta variabilidad → verificar stock seguridad ────────
+        if cv > 50:
+            acciones.append(f"Alta variabilidad (CV={cv:.0f}%): revisar stock de seguridad")
+
+        # ── Sustitutos ────────────────────────────────────────────────────
+        subs = (substitutes or {}).get(code, [])
+        if subs and stock < rop:
+            acciones.append(f"SUSTITUTO disponible: {', '.join(subs)}")
+
+        if not acciones:
+            acciones.append("Sin acción requerida")
+            prioridad = "OK"
+
+        rows.append({
+            col_med_code:          code,
+            col_med_name:          name,
+            "prioridad":           prioridad,
+            "stock_actual":        round(stock, 0),
+            "punto_reorden_ROP":   round(rop, 1),
+            "cantidad_a_pedir":    round(cantidad_pedir, 0),
+            "min_dias_vencimiento": dias_venc if dias_venc < 9999 else None,
+            "estado_vencimiento":  estado,
+            "tendencia_demanda":   tendencia,
+            "acciones":            " | ".join(acciones),
+        })
+
+    ORDEN_PRIO = {"URGENTE": 0, "CRITICO": 1, "PRONTO": 2, "SOBRESTOCK": 3, "OK": 4}
+    df_rec = pd.DataFrame(rows)
+    df_rec["_ord"] = df_rec["prioridad"].map(ORDEN_PRIO).fillna(5)
+    return df_rec.sort_values("_ord").drop(columns="_ord").reset_index(drop=True)
+
+print("Módulo 8 (recomendaciones) listo.")
+
+np.random.seed(7)
+TODAY = pd.Timestamp("2026-04-02")   # fecha de referencia
+
+# ── Catálogo de medicamentos ──────────────────────────────────────────────────
+CATALOGO = [
+    # (cod,       nombre,                       marca,         principio_activo,     costo_unit, vida_util_dias, demanda_diaria_base)
+    ("MED001", "Amoxicilina 500mg",            "Laferpe",     "Amoxicilina",         450,  365, 8.0),
+    ("MED002", "Paracetamol 500mg",            "Bagó",        "Paracetamol",         80,   730, 50.0),
+    ("MED003", "Ibuprofeno 400mg",             "Mintlab",     "Ibuprofeno",          120,  730, 30.0),
+    ("MED004", "Omeprazol 20mg",               "Laferpe",     "Omeprazol",           200,  365, 20.0),
+    ("MED005", "Metformina 850mg",             "Recalcine",   "Metformina",          180,  730, 25.0),
+    ("MED006", "Atorvastatina 20mg",           "Grunenthal",  "Atorvastatina",       350,  730, 15.0),
+    ("MED007", "Enalapril 10mg",               "Andrómaco",   "Enalapril",           160,  730, 18.0),
+    ("MED008", "Insulina NPH 100UI",           "Novo Nordisk","Insulina",           8500,  180, 3.0),
+    ("MED009", "Salbutamol Inhalador",         "GSK",         "Salbutamol",         3200,  365, 4.0),
+    ("MED010", "Clonazepam 0.5mg",             "Roche",       "Clonazepam",          300,  365, 6.0),
+    ("MED011", "Sertralina 50mg",              "Pfizer",      "Sertralina",          280,  365, 10.0),
+    ("MED012", "Furosemida 40mg",              "Mintlab",     "Furosemida",          100,  730, 8.0),
+    ("MED013", "Loratadina 10mg",              "Laferpe",     "Loratadina",           90,  730, 12.0),
+    ("MED014", "Diclofenaco 50mg",             "Novartis",    "Diclofenaco",         140,  730, 22.0),
+    ("MED015", "Amoxicilina+Ac.Clavulánico",   "GSK",         "Amoxicilina",        1200,  365, 5.0),
+]
+
+# ── Construir tabla de inventario (batches) ──────────────────────────────────
+inv_rows = []
+for cod, nombre, marca, principio, costo, vida_util, d_base in CATALOGO:
+    n_batches = np.random.choice([1, 2, 3], p=[0.2, 0.5, 0.3])
+    for b in range(n_batches):
+        # Fechas de vencimiento: algunas críticas, algunas OK
+        if b == 0 and np.random.rand() < 0.25:
+            dias_venc = np.random.randint(-10, 25)   # vencido o crítico
+        elif b == 0 and np.random.rand() < 0.20:
+            dias_venc = np.random.randint(25, 90)    # advertencia
+        else:
+            dias_venc = np.random.randint(90, vida_util)
+        fecha_venc   = TODAY + pd.Timedelta(days=int(dias_venc))
+        fecha_ingreso = fecha_venc - pd.Timedelta(days=int(vida_util * np.random.uniform(0.3, 0.8)))
+
+        qty = max(1, int(np.random.normal(d_base * 30, d_base * 10)))   # ~1 mes de stock
+
+        inv_rows.append({
+            "Codigo_Medicamento": cod,
+            "Nombre_Medicamento": nombre,
+            "Marca_Laboratorio":  marca,
+            "Principio_Activo":   principio,
+            "Numero_Lote":        f"LOTE-{cod}-{b+1:02d}",
+            "Fecha_Ingreso":      fecha_ingreso.strftime("%d/%m/%Y"),
+            "Fecha_Vencimiento":  fecha_venc.strftime("%d/%m/%Y"),
+            "Cantidad_Disponible": qty,
+            "Costo_Unitario_CLP": costo,
+            "Unidad_Medida":      "Comprimido" if "mg" in nombre else "Unidad",
+        })
+
+df_inventario = pd.DataFrame(inv_rows)
+
+# ── Construir tabla de movimientos (dispensaciones últimos 12 meses) ──────────
+mov_rows = []
+for cod, nombre, marca, principio, costo, vida_util, d_base in CATALOGO:
+    for mes_offset in range(12):
+        fecha = TODAY - pd.Timedelta(days=30 * (11 - mes_offset))
+        # Simular variabilidad y tendencia
+        tendencia_mult = 1.0 + 0.03 * mes_offset if np.random.rand() < 0.3 else 1.0
+        qty_mes = max(0, int(np.random.normal(d_base * 30 * tendencia_mult,
+                                               d_base * 8)))
+        mov_rows.append({
+            "Cod_Med":        cod,
+            "Fecha_Despacho": fecha.strftime("%Y-%m-%d"),
+            "Unidades_Dispensadas": qty_mes,
+        })
+
+df_movimientos = pd.DataFrame(mov_rows)
+
+print(f"Inventario: {len(df_inventario)} filas ({df_inventario['Codigo_Medicamento'].nunique()} medicamentos, múltiples batches)")
+print(f"Movimientos: {len(df_movimientos)} filas ({df_movimientos['Cod_Med'].nunique()} medicamentos × 12 meses)")
+print()
+print("Primeras filas del inventario:")
+df_inventario.head()
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PIPELINE COMPLETO — paso a paso
+# ══════════════════════════════════════════════════════════════════════════════
+
+print("► Paso 1: Reconocimiento automático de columnas del inventario...")
+cr_inv = ColumnRecognizer(df_inventario)
+print(cr_inv.report().to_string(index=False))
+
+print()
+print("► Paso 1b: Reconocimiento automático de columnas de movimientos...")
+cr_mov = ColumnRecognizer(df_movimientos)
+print(cr_mov.report().to_string(index=False))
+
+# ── Extraer nombres de columnas detectados automáticamente ───────────────────
+# (o sobrescribir manualmente si el reconocedor falla en alguna)
+COL_CODE    = cr_inv.mapping.get("sku",          "Codigo_Medicamento")
+COL_NAME    = cr_inv.mapping.get("med_name",     "Nombre_Medicamento")
+COL_BATCH   = cr_inv.mapping.get("batch",        "Numero_Lote")
+COL_EXPIRY  = cr_inv.mapping.get("expiry_date",  "Fecha_Vencimiento")
+COL_ENTRY   = cr_inv.mapping.get("entry_date",   "Fecha_Ingreso")
+COL_QTY     = cr_inv.mapping.get("stock",        "Cantidad_Disponible")
+COL_COST    = cr_inv.mapping.get("cost",         "Costo_Unitario_CLP")
+
+# Movimientos
+COL_MOV_CODE = cr_mov.mapping.get("sku",    "Cod_Med")
+COL_MOV_DATE = cr_mov.mapping.get("date",   "Fecha_Despacho")
+COL_MOV_QTY  = cr_mov.mapping.get("demand", "Unidades_Dispensadas")
+
+print("Columnas mapeadas (inventario):")
+for campo, col in [("cod_medicamento", COL_CODE), ("nombre", COL_NAME),
+                   ("lote", COL_BATCH), ("vencimiento", COL_EXPIRY),
+                   ("ingreso", COL_ENTRY), ("stock", COL_QTY), ("costo", COL_COST)]:
+    print(f"  {campo:<20} → '{col}'")
+
+print("► Paso 2: Análisis de vencimientos...")
+
+df_exp = analyze_expiry(
+    df_inventario,
+    col_med_code=COL_CODE,
+    col_med_name=COL_NAME,
+    col_expiry=COL_EXPIRY,
+    col_qty=COL_QTY,
+    col_cost=COL_COST,
+    col_batch=COL_BATCH,
+    today=TODAY,
+)
+
+df_exp_summ = expiry_summary(df_exp, COL_CODE, COL_NAME, COL_QTY)
+
+print()
+print("Resumen de vencimientos por medicamento:")
+print(df_exp_summ.to_string(index=False))
+
+print("► Paso 3: Análisis de demanda...")
+
+df_demand = analyze_demand(
+    df_movimientos,
+    col_med_code=COL_MOV_CODE,
+    col_date=COL_MOV_DATE,
+    col_qty=COL_MOV_QTY,
+    freq="M",
+)
+
+# Normalizar código para hacer join
+df_demand = df_demand.rename(columns={COL_MOV_CODE: COL_CODE})
+
+print("Estadísticas de demanda:")
+print(df_demand.to_string(index=False))
+
+print()
+print("► Paso 3b: Forecast próximos 30 días...")
+df_forecast = forecast_simple(
+    df_movimientos,
+    col_med_code=COL_MOV_CODE,
+    col_date=COL_MOV_DATE,
+    col_qty=COL_MOV_QTY,
+    horizonte_dias=30,
+)
+df_forecast = df_forecast.rename(columns={COL_MOV_CODE: COL_CODE})
+print(df_forecast.to_string(index=False))
+
+print("► Paso 4: Políticas de inventario (EOQ, ROP, Stock de Seguridad)...")
+
+# Diccionarios auxiliares del catálogo
+unit_costs    = {cod: costo      for cod, *_, costo, vida, d in CATALOGO}
+shelf_lives   = {cod: vida       for cod, *_, costo, vida, d in CATALOGO}
+
+df_policies = inventory_policies(
+    df_demand,
+    col_med_code=COL_CODE,
+    lead_time_days=7,          # 7 días de lead time CENABAST (ajustable)
+    service_level=0.95,        # 95% nivel de servicio
+    ordering_cost=10_000,      # $10.000 CLP por orden (ajustable)
+    holding_rate=0.20,         # 20% del valor anual (ajustable)
+    unit_costs=unit_costs,
+    shelf_life_days=shelf_lives,
+)
+
+cols_mostrar = [COL_CODE, "demanda_diaria", "stock_seguridad",
+                "punto_reorden_ROP", "cantidad_pedido_EOQ", "nivel_maximo"]
+print(df_policies[cols_mostrar].to_string(index=False))
+
+print("► Paso 5: Análisis financiero...")
+
+# Agregar estado_vencimiento al df de inventario
+df_inv_con_estado = df_exp[[COL_CODE, COL_NAME, COL_QTY, COL_COST,
+                              "estado_vencimiento", "dias_para_vencer"]].copy()
+
+demand_daily_dict = dict(zip(df_demand[COL_CODE], df_demand["demanda_diaria_promedio"]))
+
+df_fin = financial_analysis(
+    df_inv_con_estado,
+    col_med_code=COL_CODE,
+    col_med_name=COL_NAME,
+    col_qty=COL_QTY,
+    col_cost=COL_COST,
+    demand_daily=demand_daily_dict,
+)
+
+print(df_fin.to_string(index=False))
+
+print("► Paso 6: KPIs globales...")
+
+kpis = compute_kpis(df_exp_summ, df_policies, df_fin, COL_CODE)
+print_kpis(kpis)
+
+print("► Paso 7: Recomendaciones de acción...")
+
+# Sustitutos conocidos (mismo principio activo, diferente presentación/marca)
+# MED001 (Amoxicilina 500mg) puede sustituirse por MED015 (Amoxicilina+Ac.Clavulánico)
+sustitutos = {
+    "MED001": ["MED015"],
+    "MED015": ["MED001"],
+    "MED002": ["MED003"],   # Paracetamol → Ibuprofeno (solo para dolor/fiebre leve)
+}
+
+df_rec = generate_recommendations(
+    df_policies,
+    df_fin,
+    df_exp_summ,
+    df_demand,
+    col_med_code=COL_CODE,
+    col_med_name=COL_NAME,
+    substitutes=sustitutos,
+)
+
+print()
+print("=" * 90)
+print("  RECOMENDACIONES DE ABASTECIMIENTO (ordenadas por prioridad)")
+print("=" * 90)
+for _, row in df_rec.iterrows():
+    prio = row["prioridad"]
+    marker = {"URGENTE":"🔴", "CRITICO":"🟠", "PRONTO":"🟡",
+              "SOBRESTOCK":"🔵", "OK":"🟢"}.get(prio, "⚪")
+    print(f"\n{marker} [{prio}] {row[COL_CODE]} — {row[COL_NAME]}")
+    print(f"   Stock actual: {int(row['stock_actual'])}  |  ROP: {row['punto_reorden_ROP']}  "
+          f"|  Pedir: {int(row['cantidad_a_pedir'])}  |  Vence en: {row['min_dias_vencimiento']} días")
+    print(f"   → {row['acciones']}")

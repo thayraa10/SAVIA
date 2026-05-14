@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "JupyterLab",
+      "runtimeExecutable": "/opt/anaconda3/bin/jupyter",
+      "runtimeArgs": ["lab", "--no-browser", "--notebook-dir", "/Users/thay/Capstone"],
+      "port": 8888
+    },
+    {
+      "name": "Jupyter Notebook (classic)",
+      "runtimeExecutable": "/opt/anaconda3/bin/jupyter",
+      "runtimeArgs": ["notebook", "--no-browser", "--notebook-dir", "/Users/thay/Capstone"],
+      "port": 8889
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(jupyter --version)",
+      "Bash(pip3 show:*)",
+      "Bash(conda info:*)",
+      "Bash(pip3 list:*)",
+      "Read(//Users/thay/anaconda3/**)",
+      "Read(//Users/thay/miniconda3/**)",
+      "Read(//Users/thay/**)",
+      "Read(//usr/local/bin/**)",
+      "Bash(/dev/null -name jupyter* -maxdepth 3)",
+      "mcp__Claude_Preview__preview_start",
+      "Bash(/opt/anaconda3/bin/jupyter nbconvert:*)",
+      "Bash(/opt/anaconda3/bin/python3 -:*)",
+      "Bash(python3)",
+      "Bash(python3 -c ':*)",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('SAVIA 1.0.py'\\).read\\(\\)\\); print\\('OK - sin errores de sintaxis'\\)\")",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('SAVIA 1.0.py'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('/Users/thay/Capstone/SAVIA 1.0.py'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Bash(python3 -c ' *)",
+      "Bash(code /Users/thay/Capstone/SAVIA 1.0.py)",
+      "Bash(open -a \"Visual Studio Code\" /Users/thay/Capstone/SAVIA 1.0.py)",
+      "Bash(open -a \"Code\" /Users/thay/Capstone/SAVIA 1.0.py)",
+      "Read(//Applications/**)",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('/Users/thay/Capstone/SAVIA 1.0.py'\\).read\\(\\)\\); print\\('Sintaxis OK'\\)\")",
+      "Bash(pip install *)"
+    ]
+  }
+}
