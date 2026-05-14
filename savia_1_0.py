@@ -1634,3 +1634,4 @@ with tab4:
             st.plotly_chart(fig_det, use_container_width=True)
         else:
             st.info("Carga el archivo de movimientos para ver el consumo histórico.")
+# redeploy
