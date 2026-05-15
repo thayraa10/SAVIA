@@ -5,7 +5,6 @@ import numpy as np
 import math
 import io
 import re
-import uuid
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import date, timedelta
@@ -528,41 +527,27 @@ def transformar_formato_ancho(df):
     inv_extra = pd.DataFrame(filas_inv).drop_duplicates("CODIGO")
     return mov_largo, inv_extra
 
-# ── Persistencia entre recargas ───────────────────────────────────────────────
-# st.cache_resource crea un dict global que vive mientras el servidor esté en pie.
-# El session ID en la URL permite recuperar los datos aunque se refresque la página.
+# ── Datos compartidos entre todos los usuarios ────────────────────────────────
+# st.cache_resource crea un dict global único para todos los usuarios conectados.
+# Cualquier usuario que suba un archivo lo deja disponible para los demás.
 @st.cache_resource
 def _store_global():
-    return {}
-
-_params = st.query_params
-if "sid" not in _params:
-    _sid = str(uuid.uuid4())[:8]
-    st.query_params["sid"] = _sid
-else:
-    _sid = _params["sid"]
+    return {"inv": None, "mov": None, "fuente": None, "formato_hospital": False}
 
 def _guardar_sesion():
-    _store_global()[_sid] = {
-        "inv":              st.session_state.get("inv"),
-        "mov":              st.session_state.get("mov"),
-        "fuente":           st.session_state.get("fuente"),
-        "formato_hospital": st.session_state.get("formato_hospital", False),
-    }
+    store = _store_global()
+    store["inv"]              = st.session_state.get("inv")
+    store["mov"]              = st.session_state.get("mov")
+    store["fuente"]           = st.session_state.get("fuente")
+    store["formato_hospital"] = st.session_state.get("formato_hospital", False)
 
-# Si la página se refresca se restauran los datos desde el store global.
+# Al cargar la página, restaurar los datos compartidos si existen.
 if "inv" not in st.session_state:
-    _cache = _store_global().get(_sid)
-    if _cache and _cache.get("inv") is not None:
-        st.session_state["inv"]              = _cache["inv"]
-        st.session_state["mov"]              = _cache["mov"]
-        st.session_state["fuente"]           = _cache["fuente"]
-        st.session_state["formato_hospital"] = _cache.get("formato_hospital", False)
-    else:
-        st.session_state["inv"]              = None
-        st.session_state["mov"]              = None
-        st.session_state["fuente"]           = None
-        st.session_state["formato_hospital"] = False
+    _cache = _store_global()
+    st.session_state["inv"]              = _cache["inv"]
+    st.session_state["mov"]              = _cache["mov"]
+    st.session_state["fuente"]           = _cache["fuente"]
+    st.session_state["formato_hospital"] = _cache.get("formato_hospital", False)
 
 # ──────────────────────────────────────────────────────────────────────────────
 # ENCABEZADO DE LA APP
