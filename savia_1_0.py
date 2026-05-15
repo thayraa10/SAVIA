@@ -532,7 +532,11 @@ def transformar_formato_ancho(df):
 # Cualquier usuario que suba un archivo lo deja disponible para los demás.
 @st.cache_resource
 def _store_global():
-    return {"inv": None, "mov": None, "fuente": None, "formato_hospital": False}
+    return {
+        "inv": None, "mov": None, "fuente": None, "formato_hospital": False,
+        "costo_orden": 40000, "costo_mantener": 10, "lead_time": 7, "periodo_revision": 7,
+        "fecha_revision": date.today(), "hora_revision": None, "responsable": "",
+    }
 
 def _guardar_sesion():
     store = _store_global()
@@ -540,6 +544,16 @@ def _guardar_sesion():
     store["mov"]              = st.session_state.get("mov")
     store["fuente"]           = st.session_state.get("fuente")
     store["formato_hospital"] = st.session_state.get("formato_hospital", False)
+
+def _guardar_params(fecha, hora, resp, c_orden, c_mant, lt, pr):
+    store = _store_global()
+    store["fecha_revision"]   = fecha
+    store["hora_revision"]    = hora
+    store["responsable"]      = resp
+    store["costo_orden"]      = c_orden
+    store["costo_mantener"]   = c_mant
+    store["lead_time"]        = lt
+    store["periodo_revision"] = pr
 
 # Al cargar la página, restaurar los datos compartidos si existen.
 if "inv" not in st.session_state:
@@ -571,17 +585,21 @@ with st.sidebar:
 
     st.divider()
     st.header("Registro")
-    fecha_revision   = st.date_input("Fecha última revisión", value=date.today())
-    hora_revision    = st.time_input("Hora de la revisión", value=None)
-    responsable      = st.text_input("Responsable", placeholder="Nombre o cargo")
+    _s = _store_global()
+    fecha_revision   = st.date_input("Fecha última revisión", value=_s["fecha_revision"])
+    hora_revision    = st.time_input("Hora de la revisión",   value=_s["hora_revision"])
+    responsable      = st.text_input("Responsable", value=_s["responsable"], placeholder="Nombre o cargo")
 
     st.divider()
     st.header("Parámetros configurables")
-    costo_orden      = st.number_input("Costo por orden (CLP $)",           value=40000, step=1000)
-    costo_mantener   = st.number_input("Costo mantener ($ / unidad / día)", value=10,    step=1)
-    lead_time        = st.number_input("Tiempo de entrega CENABAST (días)",          value=7,     step=1)
-    periodo_revision = st.number_input("Período de revisión (días)",         value=7,     step=1)
+    costo_orden      = st.number_input("Costo por orden (CLP $)",           value=_s["costo_orden"],      step=1000)
+    costo_mantener   = st.number_input("Costo mantener ($ / unidad / día)", value=_s["costo_mantener"],   step=1)
+    lead_time        = st.number_input("Tiempo de entrega CENABAST (días)", value=_s["lead_time"],        step=1)
+    periodo_revision = st.number_input("Período de revisión (días)",        value=_s["periodo_revision"], step=1)
     Z = 1.881  # nivel de servicio 97%
+
+_guardar_params(fecha_revision, hora_revision, responsable,
+                costo_orden, costo_mantener, lead_time, periodo_revision)
 
 # ──────────────────────────────────────────────────────────────────────────────
 # CARGA DE DATOS
