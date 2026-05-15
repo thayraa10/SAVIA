@@ -5,6 +5,7 @@ import numpy as np
 import math
 import io
 import re
+import uuid
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import date, timedelta
@@ -567,12 +568,42 @@ def cargar_ejemplo():
     mov = pd.read_excel("inventario_centro_salud.xlsx", sheet_name="Movimientos")
     return inv, mov
 
-# session_state guarda los datos aunque el usuario interactúe con la app
+# ── Persistencia entre recargas ───────────────────────────────────────────────
+# st.cache_resource crea un dict global que vive mientras el servidor esté en pie.
+# El session ID en la URL permite recuperar los datos aunque se refresque la página.
+@st.cache_resource
+def _store_global():
+    return {}
+
+_params = st.query_params
+if "sid" not in _params:
+    _sid = str(uuid.uuid4())[:8]
+    st.query_params["sid"] = _sid
+else:
+    _sid = _params["sid"]
+
+def _guardar_sesion():
+    _store_global()[_sid] = {
+        "inv":              st.session_state.get("inv"),
+        "mov":              st.session_state.get("mov"),
+        "fuente":           st.session_state.get("fuente"),
+        "formato_hospital": st.session_state.get("formato_hospital", False),
+    }
+
+# session_state guarda los datos aunque el usuario interactúe con la app;
+# si la página se refresca se restauran desde el store global usando el sid de la URL.
 if "inv" not in st.session_state:
-    st.session_state["inv"]              = None
-    st.session_state["mov"]              = None
-    st.session_state["fuente"]           = None
-    st.session_state["formato_hospital"] = False
+    _cache = _store_global().get(_sid)
+    if _cache and _cache.get("inv") is not None:
+        st.session_state["inv"]              = _cache["inv"]
+        st.session_state["mov"]              = _cache["mov"]
+        st.session_state["fuente"]           = _cache["fuente"]
+        st.session_state["formato_hospital"] = _cache.get("formato_hospital", False)
+    else:
+        st.session_state["inv"]              = None
+        st.session_state["mov"]              = None
+        st.session_state["fuente"]           = None
+        st.session_state["formato_hospital"] = False
 
 
 if archivo is not None:
@@ -583,6 +614,7 @@ if archivo is not None:
         st.session_state["mov"]              = None
         st.session_state["fuente"]           = archivo.name
         st.session_state["formato_hospital"] = False
+        _guardar_sesion()
         st.sidebar.success("CSV cargado.")
     else:
         xls   = pd.ExcelFile(io.BytesIO(contenido))
@@ -648,6 +680,7 @@ if archivo is not None:
                 st.session_state["inv"]              = productos
                 st.session_state["fuente"]           = archivo.name
                 st.session_state["formato_hospital"] = True
+                _guardar_sesion()
                 n_prod = len(productos)
                 st.sidebar.success("Cargados " + str(n_prod) + " productos desde " + str(len(todos_movimientos)) + " hojas.")
             else:
@@ -670,6 +703,7 @@ if archivo is not None:
                 else:
                     st.session_state["mov"] = None
                 st.session_state["fuente"] = archivo.name
+            _guardar_sesion()
             st.sidebar.success("Archivo cargado.")
 
 if st.session_state["inv"] is None:
