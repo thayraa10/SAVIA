@@ -582,10 +582,36 @@ st.markdown("""
 # ──────────────────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.header("Cargar datos")
-    archivo      = st.file_uploader("Archivo Excel o CSV", type=["xlsx", "csv"])
+    archivos = st.file_uploader("Archivos Excel o CSV", type=["xlsx", "csv"],
+                                accept_multiple_files=True)
     _fuente_actual = st.session_state.get("fuente")
-    if archivo is None and _fuente_actual:
-        st.caption(f"📂 Cargado: **{_fuente_actual}**")
+    if not archivos and _fuente_actual:
+        for _nombre in _fuente_actual.split(" + "):
+            st.caption(f"📂 **{_nombre.strip()}**")
+        # ── Botón eliminar con confirmación ───────────────────────────────
+        if not st.session_state.get("_confirmar_eliminar"):
+            if st.button("🗑️ Eliminar datos cargados", use_container_width=True):
+                st.session_state["_confirmar_eliminar"] = True
+                st.rerun()
+        else:
+            st.warning("¿Seguro que quieres eliminar los datos cargados?")
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("✅ Sí, eliminar", use_container_width=True):
+                    store = _store_global()
+                    store["inv"] = None;  store["mov"] = None
+                    store["fuente"] = None; store["formato_hospital"] = False
+                    st.session_state["inv"]              = None
+                    st.session_state["mov"]              = None
+                    st.session_state["fuente"]           = None
+                    st.session_state["formato_hospital"] = False
+                    st.session_state["_archivos_key"]    = None
+                    st.session_state["_confirmar_eliminar"] = False
+                    st.rerun()
+            with col2:
+                if st.button("❌ Cancelar", use_container_width=True):
+                    st.session_state["_confirmar_eliminar"] = False
+                    st.rerun()
 
     st.divider()
     st.header("Registro")
@@ -614,105 +640,87 @@ def cargar_ejemplo():
     mov = pd.read_excel("inventario_centro_salud.xlsx", sheet_name="Movimientos")
     return inv, mov
 
-if archivo is not None:
-    contenido = archivo.getvalue()
+if archivos:
+    _key = tuple(sorted((a.name, a.size) for a in archivos))
+    if _key != st.session_state.get("_archivos_key"):
+        st.session_state["_archivos_key"] = _key
 
-    if archivo.name.endswith(".csv"):
-        st.session_state["inv"]              = pd.read_csv(io.BytesIO(contenido))
-        st.session_state["mov"]              = None
-        st.session_state["fuente"]           = archivo.name
-        st.session_state["formato_hospital"] = False
-        _guardar_sesion()
-        st.sidebar.success("CSV cargado.")
-    else:
-        xls   = pd.ExcelFile(io.BytesIO(contenido))
-        hojas = xls.sheet_names
+        todos_movimientos = []
+        todos_inv_extra   = []
+        codigos_cargados  = set()
+        nombres_ok        = []
+        nombres_extra     = []
 
-        # Leer la primera hoja para detectar si es formato hospital
-        df_primera = leer_con_encabezado_correcto(contenido, hojas[0])
+        for archivo in archivos:
+            contenido = archivo.getvalue()
 
-        if detectar_formato_hospital(df_primera):
-            # ── Formato hospital: archivo de consumos/egresos por mes ──────────
-            # Procesar todas las hojas con formato ancho.
-            # Un producto que aparece en varias hojas (ej: Hoja1 y Hoja2) solo
-            # se toma de la primera hoja que lo contenga, para no duplicar datos.
-            st.sidebar.info("Formato del hospital detectado.")
-            todos_movimientos = []
-            todos_inv_extra   = []
-            codigos_ya_cargados = set()
-
-            for nombre_hoja in hojas:
-                df_hoja = leer_con_encabezado_correcto(contenido, nombre_hoja)
-                if not detectar_formato_hospital(df_hoja):
-                    continue  # saltar hojas sin formato de meses (ej: "consumo hospital")
-                mov_hoja, inv_hoja = transformar_formato_ancho(df_hoja)
-                if mov_hoja is None:
-                    continue
-                # Solo agregar productos nuevos (que no estén ya cargados)
-                nuevos = mov_hoja[~mov_hoja["CODIGO"].isin(codigos_ya_cargados)]
-                if len(nuevos) > 0:
-                    todos_movimientos.append(nuevos)
-                    codigos_ya_cargados.update(nuevos["CODIGO"].unique())
-                if inv_hoja is not None:
-                    # Construir el conjunto de códigos ya cargados en el inventario
-                    # recorriendo la lista de DataFrames ya agregados
-                    codigos_inv_ya_cargados = set()
-                    for df_extra in todos_inv_extra:
-                        for cod in df_extra["CODIGO"]:
-                            codigos_inv_ya_cargados.add(cod)
-                    nuevos_inv = inv_hoja[~inv_hoja["CODIGO"].isin(codigos_inv_ya_cargados)]
-                    if len(nuevos_inv) > 0:
-                        todos_inv_extra.append(nuevos_inv)
-
-            if todos_movimientos:
-                mov_combinado = pd.concat(todos_movimientos, ignore_index=True)
-                st.session_state["mov"] = mov_combinado
-
-                # Construir inventario usando datos reales extraídos del archivo
-                productos = mov_combinado.groupby("CODIGO").agg(
-                    NOMBRE=("NOMBRE", "first")
-                ).reset_index()
-
-                # Combinar con datos de inventario (stock, precio, parámetros)
-                if todos_inv_extra:
-                    inv_extra_combinado = pd.concat(todos_inv_extra, ignore_index=True).drop_duplicates("CODIGO")
-                    productos = productos.merge(inv_extra_combinado, on="CODIGO", how="left")
-                    productos["STOCK"] = productos["STOCK_TOTAL"].fillna(0)
-                    productos["COSTO"] = productos["COSTO"].fillna(0)
-                else:
-                    productos["STOCK"] = 0
-                    productos["COSTO"] = 0
-
-                productos["VENCIMIENTO"] = pd.NaT   # no disponible en archivos de consumo
-
-                st.session_state["inv"]              = productos
+            # ── CSV ────────────────────────────────────────────────────────────
+            if archivo.name.lower().endswith(".csv"):
+                st.session_state["inv"]              = pd.read_csv(io.BytesIO(contenido))
+                st.session_state["mov"]              = None
                 st.session_state["fuente"]           = archivo.name
-                st.session_state["formato_hospital"] = True
+                st.session_state["formato_hospital"] = False
                 _guardar_sesion()
-                n_prod = len(productos)
-                st.sidebar.success("Cargados " + str(n_prod) + " productos desde " + str(len(todos_movimientos)) + " hojas.")
-            else:
-                st.sidebar.error("No se pudo leer el archivo. Verifica el formato.")
+                nombres_ok.append(archivo.name)
+                continue
 
-        else:
-            # ── Formato normal: inventario + movimientos ───────────────────────
-            st.session_state["formato_hospital"] = False
-            if len(hojas) == 1:
-                st.session_state["inv"]    = df_primera
-                st.session_state["mov"]    = None
-                st.session_state["fuente"] = archivo.name
+            # ── Excel ──────────────────────────────────────────────────────────
+            xls        = pd.ExcelFile(io.BytesIO(contenido))
+            hojas      = xls.sheet_names
+            df_primera = leer_con_encabezado_correcto(contenido, hojas[0])
+
+            if detectar_formato_hospital(df_primera):
+                # Formato hospital: consumos mensuales por columna
+                for nombre_hoja in hojas:
+                    df_hoja = leer_con_encabezado_correcto(contenido, nombre_hoja)
+                    if not detectar_formato_hospital(df_hoja):
+                        continue
+                    mov_hoja, inv_hoja = transformar_formato_ancho(df_hoja)
+                    if mov_hoja is None:
+                        continue
+                    nuevos = mov_hoja[~mov_hoja["CODIGO"].isin(codigos_cargados)]
+                    if len(nuevos) > 0:
+                        todos_movimientos.append(nuevos)
+                        codigos_cargados.update(nuevos["CODIGO"].unique())
+                    if inv_hoja is not None:
+                        cods_inv = {c for df_e in todos_inv_extra for c in df_e["CODIGO"]}
+                        nuevos_inv = inv_hoja[~inv_hoja["CODIGO"].isin(cods_inv)]
+                        if len(nuevos_inv) > 0:
+                            todos_inv_extra.append(nuevos_inv)
+                nombres_ok.append(archivo.name)
+
             else:
-                hoja_inv = st.sidebar.selectbox("Hoja de INVENTARIO:", hojas, index=0)
-                opciones = ["(ninguna)"] + hojas
-                hoja_mov = st.sidebar.selectbox("Hoja de MOVIMIENTOS:", opciones, index=1)
-                st.session_state["inv"] = pd.read_excel(io.BytesIO(contenido), sheet_name=hoja_inv)
-                if hoja_mov != "(ninguna)":
-                    st.session_state["mov"] = pd.read_excel(io.BytesIO(contenido), sheet_name=hoja_mov)
-                else:
-                    st.session_state["mov"] = None
-                st.session_state["fuente"] = archivo.name
+                # Formato no reconocido aún → se recibe pero no se integra todavía
+                nombres_extra.append(archivo.name)
+
+        # ── Combinar todo lo recopilado ────────────────────────────────────────
+        if todos_movimientos:
+            mov_combinado = pd.concat(todos_movimientos, ignore_index=True)
+            productos = mov_combinado.groupby("CODIGO").agg(
+                NOMBRE=("NOMBRE", "first")
+            ).reset_index()
+
+            if todos_inv_extra:
+                inv_extra_comb = pd.concat(todos_inv_extra, ignore_index=True).drop_duplicates("CODIGO")
+                productos = productos.merge(inv_extra_comb, on="CODIGO", how="left")
+                productos["STOCK"] = productos["STOCK_TOTAL"].fillna(0)
+                productos["COSTO"] = productos["COSTO"].fillna(0)
+            else:
+                productos["STOCK"] = 0
+                productos["COSTO"] = 0
+
+            productos["VENCIMIENTO"]             = pd.NaT
+            st.session_state["inv"]              = productos
+            st.session_state["mov"]              = mov_combinado
+            st.session_state["fuente"]           = " + ".join(nombres_ok + nombres_extra)
+            st.session_state["formato_hospital"] = True
             _guardar_sesion()
-            st.sidebar.success("Archivo cargado.")
+            n = len(productos)
+            st.sidebar.success(f"{n} productos cargados desde {len(nombres_ok)} archivo(s).")
+            if nombres_extra:
+                st.sidebar.info(f"Recibidos (pendientes de integrar): {', '.join(nombres_extra)}")
+        elif nombres_extra and not nombres_ok:
+            st.sidebar.warning(f"Formato no reconocido: {', '.join(nombres_extra)}")
 
 if st.session_state["inv"] is None:
     st.info("Sube un archivo en el panel izquierdo")
