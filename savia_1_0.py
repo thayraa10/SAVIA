@@ -158,10 +158,12 @@ def _safe_df(df):
 # ──────────────────────────────────────────────────────────────────────────────
 
 def encontrar_columna(df, palabras_clave, ya_usadas):
+    if df is None:
+        return None
     for columna in df.columns:
         if columna in ya_usadas:
             continue
-        nombre = columna.lower().replace("_", " ").replace("-", " ")
+        nombre = str(columna).lower().replace("_", " ").replace("-", " ")
         for palabra in palabras_clave:
             if palabra in nombre:
                 ya_usadas.add(columna)
@@ -615,11 +617,13 @@ def _recompute():
         else:
             productos["STOCK"] = 0;  productos["COSTO"] = 0
         productos["VENCIMIENTO"] = pd.NaT
+        productos.columns = [str(c) for c in productos.columns]  # normalizar nombres de columna
         store["inv"] = productos;  store["mov"] = mov_comb;  store["formato_hospital"] = True
         st.session_state["inv"] = productos;  st.session_state["mov"] = mov_comb
         st.session_state["formato_hospital"] = True
     elif inv_dirs:
         inv_comb = pd.concat(inv_dirs, ignore_index=True)
+        inv_comb.columns = [str(c) for c in inv_comb.columns]  # normalizar nombres de columna
         store["inv"] = inv_comb;  store["mov"] = None;  store["formato_hospital"] = False
         st.session_state["inv"] = inv_comb;  st.session_state["mov"] = None
         st.session_state["formato_hospital"] = False
