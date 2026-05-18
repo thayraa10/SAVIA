@@ -15,12 +15,12 @@ from streamlit_autorefresh import st_autorefresh
 st.set_page_config(page_title="SAVIA — Abastecimiento de Medi"
                               "camentos", layout="wide")
 
-# ── Keep-alive doble: WebSocket + HTTP ───────────────────────────────────────
-# 1) Autorefresh cada 2 min → mantiene el WebSocket activo con un rerun real.
+# ── Keep-alive triple: WebSocket + HTTP browser + HTTP server-side ───────────
+
+# 1) Autorefresh cada 2 min → mantiene WebSocket activo con un rerun real.
 st_autorefresh(interval=2 * 60 * 1000, limit=None, key="keepalive")
-# 2) Ping HTTP a /_stcore/health cada 2.5 min desde el iframe del componente.
-#    Esto genera una petición HTTP genuina que resetea el timer de inactividad
-#    del health-check de Streamlit Cloud (distinto del timer WebSocket).
+
+# 2) Ping HTTP desde el browser cada 2.5 min (funciona mientras el tab está abierto).
 _components.html("""
 <script>
 (function ping() {
@@ -29,8 +29,32 @@ _components.html("""
 })();
 </script>
 """, height=0)
-# 3) Recolección de basura explícita en cada rerun para evitar que las sesiones
-#    huérfanas de Streamlit se acumulen y expiren todas a la vez (~5 min).
+
+# 3) Hilo de fondo server-side: hace ping HTTP a la propia app cada 90 segundos.
+#    A diferencia de los pings del browser, este corre aunque nadie tenga el tab abierto.
+#    Previene que el event loop de Tornado quede completamente inactivo y falle el
+#    health-check con EOF cuando las sesiones huérfanas expiran a los ~5 minutos.
+@st.cache_resource
+def _iniciar_keepalive_server():
+    import threading, urllib.request, time
+    def _worker():
+        time.sleep(30)           # dar tiempo a que Streamlit termine de arrancar
+        while True:
+            try:
+                urllib.request.urlopen(
+                    "http://localhost:8501/_stcore/health", timeout=5
+                )
+            except Exception:
+                pass
+            time.sleep(90)       # ping cada 90 segundos
+    hilo = threading.Thread(target=_worker, daemon=True)
+    hilo.start()
+    return id(hilo)              # int serializable → Streamlit no se queja
+
+_iniciar_keepalive_server()
+
+# 4) GC explícito en cada rerun para limpiar objetos de sesiones huérfanas
+#    de forma incremental en lugar de dejar que se acumulen 5 minutos.
 gc.collect()
 
 st.markdown("""
