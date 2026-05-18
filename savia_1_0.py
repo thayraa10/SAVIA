@@ -31,8 +31,21 @@ html, body { font-family: sans-serif; } .stApp { background-color: #f0f4f8; } /*
     background: white !important; border: 1px solid #334155 !important;
     color: #0f172a !important; border-radius: 8px !important;
 }
-[data-testid="stSidebar"] [data-baseweb="select"] div {
+/* placeholder de los inputs también en tono visible pero diferenciado */
+[data-testid="stSidebar"] .stTextInput input::placeholder,
+[data-testid="stSidebar"] .stNumberInput input::placeholder,
+[data-testid="stSidebar"] .stDateInput input::placeholder {
+    color: #64748b !important;
+}
+/* select / dropdown: fondo blanco y texto negro en todos sus descendientes */
+[data-testid="stSidebar"] [data-baseweb="select"],
+[data-testid="stSidebar"] [data-baseweb="select"] * {
     background: white !important; color: #0f172a !important;
+}
+/* time input */
+[data-testid="stSidebar"] [data-testid="stTimeInput"] input {
+    background: white !important; color: #0f172a !important;
+    border: 1px solid #334155 !important; border-radius: 8px !important;
 }
 /* Días semana en español */
 [data-testid="stDateInput"] abbr[title="Monday"]    { visibility:hidden; } [data-testid="stDateInput"] abbr[title="Monday"]::after    { content:"Lu"; visibility:visible; }
@@ -128,6 +141,19 @@ hr { border-color: #e2e8f0 !important; }
 .badge-gray   { background:lightgray;   color:dimgray; padding:3px 10px; border-radius:99px; font-size:0.75rem; font-weight:600; }
 </style>
 """, unsafe_allow_html=True)
+
+# ──────────────────────────────────────────────────────────────────────────────
+def _safe_df(df):
+    """Sanitiza un DataFrame para evitar errores de serialización con PyArrow.
+    - Convierte nombres de columnas a str.
+    - Convierte columnas de tipo object a str para evitar mixed-type failures.
+    """
+    df = df.copy()
+    df.columns = [str(c) for c in df.columns]
+    for col in df.columns:
+        if df[col].dtype == object:
+            df[col] = df[col].astype(str)
+    return df
 
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -742,7 +768,7 @@ with st.sidebar:
                 _resp_str = _arec["responsable"] or "sin especificar"
                 st.caption(f"Cargado: {_arec['cargado_en']}  |  Por: {_resp_str}")
                 if _arec.get("preview") is not None:
-                    st.dataframe(_arec["preview"], use_container_width=True, hide_index=True)
+                    st.dataframe(_safe_df(_arec["preview"]), use_container_width=True, hide_index=True)
                 _del_key = f"_del_{_i}"
                 if not st.session_state.get(_del_key):
                     if st.button("Eliminar este archivo", key=f"btn_del_{_i}",
@@ -779,8 +805,8 @@ with st.sidebar:
     if _s["historial"]:
         st.divider()
         with st.expander("Historial de cargas"):
-            st.dataframe(pd.DataFrame(_s["historial"]),
-                         use_container_width=True, hide_index=True)
+            _hist_df = pd.DataFrame(_s["historial"]).iloc[::-1].reset_index(drop=True)
+            st.dataframe(_safe_df(_hist_df), use_container_width=True, hide_index=True)
 
     st.divider()
     st.header("Registro")
@@ -1227,7 +1253,7 @@ with tab1:
                 Productos=("stock_total", "count"),
                 Unidades_totales=("stock_total", "sum"),
             ).reset_index().rename(columns={"_estado_cob": "Estado"})
-            st.dataframe(desglose, use_container_width=True, hide_index=True)
+            st.dataframe(_safe_df(desglose), use_container_width=True, hide_index=True)
         else:
             st.info("Selecciona al menos un estado para ver los KPIs.")
 
@@ -1304,7 +1330,7 @@ with tab2:
     })
 
     st.caption(f"{len(tabla)} producto(s)")
-    st.dataframe(tabla, use_container_width=True, hide_index=True, height=500)
+    st.dataframe(_safe_df(tabla), use_container_width=True, hide_index=True, height=500)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 3 — ABASTECIMIENTO Y SIMULACIÓN
@@ -1375,7 +1401,7 @@ with tab3:
                 if busq_t3.strip():
                     df_vis = df_vis[df_vis["Medicamento"].str.contains(busq_t3.strip(), case=False, na=False)]
                 st.caption(f"{len(df_vis)} producto(s)")
-                st.dataframe(df_vis, use_container_width=True, hide_index=True, height=400)
+                st.dataframe(_safe_df(df_vis), use_container_width=True, hide_index=True, height=400)
                 st.info("**Guía:** *Pedir cuando queden menos de X* = punto de reorden. *Cuánto pedir* = cantidad más económica (EOQ). *Reserva de seguridad* = colchón para imprevistos.")
 
             # ── SECCIÓN 2: frecuencia de revisión ──────────────────────────────
@@ -1477,7 +1503,7 @@ with tab3:
                         "Costo anual ($)":    f"{resultado_pol[1]:,}",
                         "Evaluación":         etiqueta_resultado,
                     })
-                st.dataframe(pd.DataFrame(filas_comparacion), use_container_width=True, hide_index=True)
+                st.dataframe(_safe_df(pd.DataFrame(filas_comparacion)), use_container_width=True, hide_index=True)
 
                 razon_mejor = []
                 if min_quiebres == 0:
@@ -1635,7 +1661,7 @@ with tab3:
                      "Recomendado": str(p_opt["s"]) + " u",
                      "Evaluación": evaluacion(desviacion(reorden_actual, p_opt["s"]))},
                 ])
-                st.dataframe(df_eval, use_container_width=True, hide_index=True)
+                st.dataframe(_safe_df(df_eval), use_container_width=True, hide_index=True)
 
                 # Simular ambas políticas con el MISMO período de revisión (revision_actual)
                 # Diferencia: parámetros Q y s del usuario vs los calculados como óptimos
@@ -1717,7 +1743,7 @@ with tab4:
             if "costo_unitario" in fila_det and fila_det["costo_unitario"] > 0:
                 info_rows.append({"Campo": "Precio unitario", "Valor": f"${fila_det['costo_unitario']:,.0f} CLP"})
                 info_rows.append({"Campo": "Valor en existencias", "Valor": f"${fila_det['valor_inventario']:,.0f} CLP"})
-            st.dataframe(pd.DataFrame(info_rows), use_container_width=True, hide_index=True)
+            st.dataframe(_safe_df(pd.DataFrame(info_rows)), use_container_width=True, hide_index=True)
         else:
             st.markdown("**Lotes (orden FEFO: primero en vencer, primero en salir)**")
             # Incluir solo las columnas de lotes que existen en el archivo
@@ -1731,7 +1757,7 @@ with tab4:
             lotes_detalle = lotes_detalle.sort_values("dias_vencer")
             if COL_VENCIMIENTO in lotes_detalle.columns:
                 lotes_detalle[COL_VENCIMIENTO] = lotes_detalle[COL_VENCIMIENTO].dt.strftime("%d/%m/%Y")
-            st.dataframe(lotes_detalle, use_container_width=True, hide_index=True)
+            st.dataframe(_safe_df(lotes_detalle), use_container_width=True, hide_index=True)
 
     with col_der:
         if tiene_movimientos:
