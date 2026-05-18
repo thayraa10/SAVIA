@@ -17,8 +17,8 @@ st.set_page_config(page_title="SAVIA — Abastecimiento de Medi"
 
 # ── Keep-alive triple: WebSocket + HTTP browser + HTTP server-side ───────────
 
-# 1) Autorefresh cada 2 min → mantiene WebSocket activo con un rerun real.
-st_autorefresh(interval=2 * 60 * 1000, limit=None, key="keepalive")
+# 1) Autorefresh cada 4 min → mantiene WebSocket activo sin interrumpir cargas de archivos.
+st_autorefresh(interval=4 * 60 * 1000, limit=None, key="keepalive")
 
 # 2) Ping HTTP desde el browser cada 2.5 min (funciona mientras el tab está abierto).
 _components.html("""
@@ -633,6 +633,19 @@ def _guardar_params(fecha, hora, resp, c_orden, c_mant, lt, pr):
     store["lead_time"]        = lt
     store["periodo_revision"] = pr
 
+def _df_a_preview(df):
+    """Convierte un DataFrame de hasta 8 filas a lista de dicts con tipos básicos.
+    Evita guardar DataFrames con tipos exóticos (datetime64, etc.) en el store global,
+    lo que causaba fallos de serialización PyArrow al renderizar st.dataframe().
+    """
+    preview_df = _safe_df(df.head(8))
+    # Convertir datetime/timedelta a str para que sean JSON-serializables
+    for col in preview_df.columns:
+        if pd.api.types.is_datetime64_any_dtype(preview_df[col]) or \
+           pd.api.types.is_timedelta64_dtype(preview_df[col]):
+            preview_df[col] = preview_df[col].astype(str)
+    return preview_df.to_dict(orient="records")
+
 def _parsear_archivo(nombre, contenido):
     """Parsea los bytes de un archivo y retorna sus DataFrames, o None si falla.
     NO guarda nada en el store; los DataFrames viven solo mientras se necesitan.
@@ -641,8 +654,10 @@ def _parsear_archivo(nombre, contenido):
     try:
         if nombre.lower().endswith(".csv"):
             df = pd.read_csv(io.BytesIO(contenido))
-            return {"mov": None, "inv_extra": None, "inv_directo": df,
-                    "preview": df.head(8), "n_productos": len(df)}
+            result = {"mov": None, "inv_extra": None, "inv_directo": df,
+                      "preview": _df_a_preview(df), "n_productos": len(df)}
+            del df
+            return result
         xls    = pd.ExcelFile(io.BytesIO(contenido))
         hojas  = xls.sheet_names
         df_pri = leer_con_encabezado_correcto(contenido, hojas[0])
@@ -653,6 +668,7 @@ def _parsear_archivo(nombre, contenido):
                 if not detectar_formato_hospital(df_h):
                     continue
                 mov_h, inv_h = transformar_formato_ancho(df_h)
+                del df_h
                 if mov_h is None:
                     continue
                 nuevos = mov_h[~mov_h["CODIGO"].isin(cods)]
@@ -663,15 +679,21 @@ def _parsear_archivo(nombre, contenido):
                     n  = inv_h[~inv_h["CODIGO"].isin(ya)]
                     if len(n):
                         todos_inv_e.append(n)
+                del mov_h, inv_h
             if not todos_mov:
                 return None
             mov_df = pd.concat(todos_mov, ignore_index=True)
+            del todos_mov
             ie_df  = pd.concat(todos_inv_e, ignore_index=True).drop_duplicates("CODIGO") if todos_inv_e else None
-            prev   = mov_df[["CODIGO","NOMBRE"]].drop_duplicates().head(8)
-            return {"mov": mov_df, "inv_extra": ie_df, "inv_directo": None,
-                    "preview": prev, "n_productos": mov_df["CODIGO"].nunique()}
-        return {"mov": None, "inv_extra": None, "inv_directo": df_pri,
-                "preview": df_pri.head(8), "n_productos": len(df_pri)}
+            del todos_inv_e
+            prev = _df_a_preview(mov_df[["CODIGO","NOMBRE"]].drop_duplicates())
+            result = {"mov": mov_df, "inv_extra": ie_df, "inv_directo": None,
+                      "preview": prev, "n_productos": mov_df["CODIGO"].nunique()}
+            gc.collect()
+            return result
+        result = {"mov": None, "inv_extra": None, "inv_directo": df_pri,
+                  "preview": _df_a_preview(df_pri), "n_productos": len(df_pri)}
+        return result
     except Exception:
         return None
 
@@ -713,6 +735,7 @@ def _recompute():
         inv_comb = pd.concat(inv_dirs, ignore_index=True)
         inv_comb.columns = [str(c) for c in inv_comb.columns]
         store["inv"] = inv_comb;  store["mov"] = None;  store["formato_hospital"] = False
+    gc.collect()
 
 # Los DataFrames grandes (inv, mov) se leen siempre desde _store_global()
 # y NUNCA se guardan en st.session_state para evitar serialización WebSocket.
@@ -824,8 +847,8 @@ with st.sidebar:
             with st.expander(f"{_arec['nombre']}  ({_arec['n_productos']} productos)"):
                 _resp_str = _arec["responsable"] or "sin especificar"
                 st.caption(f"Cargado: {_arec['cargado_en']}  |  Por: {_resp_str}")
-                if _arec.get("preview") is not None:
-                    st.dataframe(_safe_df(_arec["preview"]), use_container_width=True, hide_index=True)
+                if _arec.get("preview"):
+                    st.dataframe(pd.DataFrame(_arec["preview"]), use_container_width=True, hide_index=True)
                 _del_key = f"_del_{_i}"
                 if not st.session_state.get(_del_key):
                     if st.button("Eliminar este archivo", key=f"btn_del_{_i}",
