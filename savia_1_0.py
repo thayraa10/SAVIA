@@ -131,11 +131,14 @@ html, body { font-family: sans-serif; } .stApp { background-color: #f0f4f8; } /*
     font-weight: 600 !important; color: #0f172a !important;
     padding: 14px 18px !important;
 }
-/* Expanders dentro del sidebar: texto negro (override del * blanco del sidebar) */
+/* Expanders dentro del sidebar: todo el contenido en negro */
+[data-testid="stSidebar"] [data-testid="stExpander"],
+[data-testid="stSidebar"] [data-testid="stExpander"] *,
 [data-testid="stSidebar"] [data-testid="stExpander"] summary,
 [data-testid="stSidebar"] [data-testid="stExpander"] summary *,
-[data-testid="stSidebar"] [data-testid="stExpander"] summary p,
-[data-testid="stSidebar"] [data-testid="stExpander"] summary span {
+[data-testid="stSidebar"] [data-testid="stExpander"] p,
+[data-testid="stSidebar"] [data-testid="stExpander"] span,
+[data-testid="stSidebar"] [data-testid="stExpander"] small {
     color: #0f172a !important;
 }
 
@@ -1767,7 +1770,11 @@ with tab4:
         meds_det_filt = meds_det_ord
     med_detalle = st.selectbox("Medicamento:", meds_det_filt if meds_det_filt else meds_det_ord, key="det")
 
-    fila_det = resumen[resumen[COL_NOMBRE] == med_detalle].iloc[0]
+    _filas_det = resumen[resumen[COL_NOMBRE] == med_detalle]
+    if _filas_det.empty:
+        st.warning("El medicamento seleccionado ya no está en los datos. Elige otro.")
+        st.stop()
+    fila_det = _filas_det.iloc[0]
     codigo_det = fila_det[COL_CODIGO]
 
     # ── Métricas rápidas ────────────────────────────────────────────────────
