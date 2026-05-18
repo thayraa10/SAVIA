@@ -8,25 +8,27 @@ import re
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import date, timedelta
+import pytz
 from streamlit_autorefresh import st_autorefresh
 st.set_page_config(page_title="SAVIA — Abastecimiento de Medi"
                               "camentos", layout="wide")
 
 # Refresca silenciosamente cada 4 min para evitar el timeout de WebSocket
-st_autorefresh(interval=4 * 60 * 1000, limit=None, key="keepalive")
+st_autorefresh(interval=90 * 1000, limit=None, key="keepalive")
 
 st.markdown("""
 <style>
 html, body { font-family: sans-serif; } .stApp { background-color: #f0f4f8; } /* fondo gris */
 
-[data-testid="stSidebar"] { background: #f8fafc; } /* fondo claro */
-[data-testid="stSidebar"] * { color: #0f172a !important; }
+[data-testid="stSidebar"] { background: #0a0f2c; } /* fondo azul oscuro */
+[data-testid="stSidebar"] * { color: #f0f4f8 !important; }
 /* botones dentro del sidebar mantienen texto blanco */
 [data-testid="stSidebar"] .stButton > button { color: white !important; }
+/* texto negro solo dentro de los cuadros de input blancos */
 [data-testid="stSidebar"] .stTextInput input,
 [data-testid="stSidebar"] .stNumberInput input,
 [data-testid="stSidebar"] .stDateInput input {
-    background: white !important; border: 1px solid #cbd5e1 !important;
+    background: white !important; border: 1px solid #334155 !important;
     color: #0f172a !important; border-radius: 8px !important;
 }
 [data-testid="stSidebar"] [data-baseweb="select"] div {
@@ -40,7 +42,7 @@ html, body { font-family: sans-serif; } .stApp { background-color: #f0f4f8; } /*
 [data-testid="stDateInput"] abbr[title="Friday"]    { visibility:hidden; } [data-testid="stDateInput"] abbr[title="Friday"]::after    { content:"Vi"; visibility:visible; }
 [data-testid="stDateInput"] abbr[title="Saturday"]  { visibility:hidden; } [data-testid="stDateInput"] abbr[title="Saturday"]::after  { content:"Sá"; visibility:visible; }
 [data-testid="stDateInput"] abbr[title="Sunday"]    { visibility:hidden; } [data-testid="stDateInput"] abbr[title="Sunday"]::after    { content:"Do"; visibility:visible; }
-[data-testid="stSidebar"] hr { border-color: #e2e8f0 !important; }
+[data-testid="stSidebar"] hr { border-color: #334155 !important; }
 
 /* ── Tabs ────────────────────────────────────────────────── */
 .stTabs [data-baseweb="tab-list"] {
@@ -598,8 +600,9 @@ def _recompute():
 
 def _procesar_un_archivo(nombre, contenido):
     """Procesa un archivo y retorna un dict con sus datos, o None si falla."""
+    _tz   = pytz.timezone("America/Santiago")
     resp  = _store_global().get("responsable", "")
-    ahora = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M")
+    ahora = pd.Timestamp.now(tz=_tz).strftime("%Y-%m-%d %H:%M")
     base  = {"nombre": nombre, "size": len(contenido), "cargado_en": ahora, "responsable": resp}
     if nombre.lower().endswith(".csv"):
         df = pd.read_csv(io.BytesIO(contenido))
@@ -754,7 +757,7 @@ with st.sidebar:
                                      use_container_width=True):
                             _eliminado = _s["archivos"].pop(_i)
                             _s["historial"].append({
-                                "Fecha":       pd.Timestamp.now().strftime("%Y-%m-%d %H:%M"),
+                                "Fecha":       pd.Timestamp.now(tz=pytz.timezone("America/Santiago")).strftime("%Y-%m-%d %H:%M"),
                                 "Responsable": _s.get("responsable", "") or "sin especificar",
                                 "Accion":      "Eliminacion",
                                 "Archivo":     _eliminado["nombre"],
