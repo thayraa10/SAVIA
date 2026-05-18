@@ -9,8 +9,13 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import date, timedelta
 import pytz
+from streamlit_autorefresh import st_autorefresh
 st.set_page_config(page_title="SAVIA — Abastecimiento de Medi"
                               "camentos", layout="wide")
+
+# Ping silencioso cada 4 min para que Streamlit Cloud no duerma el proceso.
+# Es seguro ahora porque los DataFrames grandes ya no están en session_state.
+st_autorefresh(interval=4 * 60 * 1000, limit=None, key="keepalive")
 
 st.markdown("""
 <style>
