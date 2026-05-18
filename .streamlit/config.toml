@@ -3,3 +3,4 @@ primaryColor = "royalblue"
 
 [server]
 fileWatcherType = "none"
+maxMessageSize = 200

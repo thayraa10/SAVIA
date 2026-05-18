@@ -144,15 +144,22 @@ hr { border-color: #e2e8f0 !important; }
 
 # ──────────────────────────────────────────────────────────────────────────────
 def _safe_df(df):
-    """Sanitiza un DataFrame para evitar errores de serialización con PyArrow.
-    - Convierte nombres de columnas a str.
-    - Convierte columnas de tipo object a str para evitar mixed-type failures.
+    """Sanitiza un DataFrame para st.dataframe():
+    - Normaliza nombres de columna a str.
+    - Convierte a str SOLO las columnas object que mezclan tipos Python
+      (e.g., ints y strings en la misma columna), que son las que fallan
+      en PyArrow. Las columnas que ya son uniformemente str se dejan intactas
+      para no inflar el tamaño del mensaje WebSocket.
     """
     df = df.copy()
     df.columns = [str(c) for c in df.columns]
     for col in df.columns:
         if df[col].dtype == object:
-            df[col] = df[col].astype(str)
+            muestra = df[col].dropna().head(200)
+            if len(muestra) == 0:
+                continue
+            if any(not isinstance(v, str) for v in muestra):
+                df[col] = df[col].astype(str)
     return df
 
 # ──────────────────────────────────────────────────────────────────────────────
