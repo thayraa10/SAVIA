@@ -618,7 +618,7 @@ def _store_global():
         "inv": None, "mov": None, "fuente": None, "formato_hospital": False,
         "costo_orden": 40000, "costo_mantener": 10, "lead_time": 7, "periodo_revision": 7,
         "fecha_revision": date.today(), "hora_revision": None, "responsable": "",
-        "archivos":  [],  # [{nombre, size, cargado_en, responsable, mov, inv_extra, inv_directo, preview, n_productos}]
+        "archivos":  [],  # [{nombre, size, cargado_en, responsable, preview, n_productos, mov, inv_extra, inv_directo}]
         "historial": [],  # [{Fecha, Responsable, Accion, Archivo, Productos}]
     }
 
@@ -647,9 +647,9 @@ def _df_a_preview(df):
     return preview_df.to_dict(orient="records")
 
 def _parsear_archivo(nombre, contenido):
-    """Parsea los bytes de un archivo y retorna sus DataFrames, o None si falla.
-    NO guarda nada en el store; los DataFrames viven solo mientras se necesitan.
-    Esto permite que _recompute() los use y los descarte, manteniendo memoria baja.
+    """Parsea los bytes de un archivo UNA SOLA VEZ y retorna sus DataFrames.
+    Los DataFrames resultantes se guardan en el store (no los bytes crudos),
+    para que _recompute() solo combine sin necesitar re-parsear con openpyxl.
     """
     try:
         if nombre.lower().endswith(".csv"):
@@ -698,9 +698,8 @@ def _parsear_archivo(nombre, contenido):
         return None
 
 def _recompute():
-    """Reconstruye inv/mov combinados re-parseando los bytes de cada archivo.
-    Los DataFrames temporales de cada archivo se descartan tras combinarlos.
-    El store solo guarda: inv (combinado), mov (combinado) y bytes crudos en archivos[].
+    """Combina los DataFrames ya parseados de cada archivo en inv/mov globales.
+    NO re-parsea bytes (openpyxl ya corrió al subir); solo concatena DataFrames.
     """
     store    = _store_global()
     archivos = store["archivos"]
@@ -712,12 +711,9 @@ def _recompute():
     store["fuente"] = " + ".join(a["nombre"] for a in archivos)
     movs = [];  inv_exts = [];  inv_dirs = []
     for arec in archivos:
-        rec = _parsear_archivo(arec["nombre"], arec["contenido"])
-        if rec is None:
-            continue
-        if rec["mov"]       is not None: movs.append(rec["mov"])
-        if rec["inv_extra"] is not None: inv_exts.append(rec["inv_extra"])
-        if rec["inv_directo"] is not None: inv_dirs.append(rec["inv_directo"])
+        if arec.get("mov")        is not None: movs.append(arec["mov"])
+        if arec.get("inv_extra")  is not None: inv_exts.append(arec["inv_extra"])
+        if arec.get("inv_directo") is not None: inv_dirs.append(arec["inv_directo"])
     if movs:
         mov_comb  = pd.concat(movs, ignore_index=True).drop_duplicates()
         productos = mov_comb.groupby("CODIGO").agg(NOMBRE=("NOMBRE","first")).reset_index()
@@ -814,15 +810,18 @@ with st.sidebar:
         _n_ok  = 0
         for _nom, _siz, _cont in _pend:
             _rec = _parsear_archivo(_nom, _cont)
+            del _cont   # liberar bytes crudos inmediatamente tras parsear
             if _rec is not None:
-                # Guardar solo bytes + metadatos ligeros (NO DataFrames)
+                # Guardar DataFrames parseados (no bytes): openpyxl solo corre una vez
                 _s["archivos"].append({
-                    "nombre":     _nom,
-                    "size":       _siz,
-                    "contenido":  _cont,   # bytes crudos (~1-5 MB); DataFrames se descartan
-                    "cargado_en": _ahora,
+                    "nombre":      _nom,
+                    "size":        _siz,
+                    "mov":         _rec["mov"],
+                    "inv_extra":   _rec["inv_extra"],
+                    "inv_directo": _rec["inv_directo"],
+                    "cargado_en":  _ahora,
                     "responsable": _resp,
-                    "preview":    _rec["preview"],
+                    "preview":     _rec["preview"],
                     "n_productos": _rec["n_productos"],
                 })
                 _s["historial"].append({
@@ -833,7 +832,10 @@ with st.sidebar:
                     "Productos":   _rec["n_productos"],
                 })
                 _n_ok += 1
-        _recompute()   # re-parsea bytes → construye combined → descarta DataFrames temp.
+            gc.collect()
+        del _pend   # liberar toda la lista de bytes antes de combinar
+        gc.collect()
+        _recompute()   # combina DataFrames ya parseados → construye inv/mov globales
         if _n_ok:
             st.success(f"{_n_ok} archivo(s) procesado(s) correctamente.")
         else:
