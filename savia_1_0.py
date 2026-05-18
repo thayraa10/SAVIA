@@ -532,21 +532,20 @@ def transformar_formato_ancho(df):
     return mov_largo, inv_extra
 
 # ── Datos compartidos entre todos los usuarios ────────────────────────────────
-# st.cache_resource crea un dict global único para todos los usuarios conectados.
-# Cualquier usuario que suba un archivo lo deja disponible para los demás.
 @st.cache_resource
 def _store_global():
     return {
         "inv": None, "mov": None, "fuente": None, "formato_hospital": False,
         "costo_orden": 40000, "costo_mantener": 10, "lead_time": 7, "periodo_revision": 7,
         "fecha_revision": date.today(), "hora_revision": None, "responsable": "",
+        "archivos":  [],  # [{nombre, size, cargado_en, responsable, mov, inv_extra, inv_directo, preview, n_productos}]
+        "historial": [],  # [{Fecha, Responsable, Accion, Archivo, Productos}]
     }
 
 def _guardar_sesion():
     store = _store_global()
     store["inv"]              = st.session_state.get("inv")
     store["mov"]              = st.session_state.get("mov")
-    store["fuente"]           = st.session_state.get("fuente")
     store["formato_hospital"] = st.session_state.get("formato_hospital", False)
 
 def _guardar_params(fecha, hora, resp, c_orden, c_mant, lt, pr):
@@ -559,12 +558,87 @@ def _guardar_params(fecha, hora, resp, c_orden, c_mant, lt, pr):
     store["lead_time"]        = lt
     store["periodo_revision"] = pr
 
+def _recompute():
+    """Recalcula inv y mov combinados desde la lista de archivos del store."""
+    store    = _store_global()
+    archivos = store["archivos"]
+    if not archivos:
+        for k in ("inv","mov","fuente"):
+            store[k] = None
+            st.session_state[k] = None
+        store["formato_hospital"] = False
+        st.session_state["formato_hospital"] = False
+        return
+    store["fuente"] = " + ".join(a["nombre"] for a in archivos)
+    st.session_state["fuente"] = store["fuente"]
+    movs     = [a["mov"]        for a in archivos if a.get("mov")        is not None]
+    inv_exts = [a["inv_extra"]  for a in archivos if a.get("inv_extra")  is not None]
+    inv_dirs = [a["inv_directo"] for a in archivos if a.get("inv_directo") is not None]
+    if movs:
+        mov_comb  = pd.concat(movs, ignore_index=True).drop_duplicates()
+        productos = mov_comb.groupby("CODIGO").agg(NOMBRE=("NOMBRE","first")).reset_index()
+        if inv_exts:
+            inv_e = pd.concat(inv_exts, ignore_index=True).drop_duplicates("CODIGO")
+            productos = productos.merge(inv_e, on="CODIGO", how="left")
+            productos["STOCK"] = productos["STOCK_TOTAL"].fillna(0) if "STOCK_TOTAL" in productos.columns else 0
+            productos["COSTO"] = productos["COSTO"].fillna(0)       if "COSTO"       in productos.columns else 0
+        else:
+            productos["STOCK"] = 0;  productos["COSTO"] = 0
+        productos["VENCIMIENTO"] = pd.NaT
+        store["inv"] = productos;  store["mov"] = mov_comb;  store["formato_hospital"] = True
+        st.session_state["inv"] = productos;  st.session_state["mov"] = mov_comb
+        st.session_state["formato_hospital"] = True
+    elif inv_dirs:
+        inv_comb = pd.concat(inv_dirs, ignore_index=True)
+        store["inv"] = inv_comb;  store["mov"] = None;  store["formato_hospital"] = False
+        st.session_state["inv"] = inv_comb;  st.session_state["mov"] = None
+        st.session_state["formato_hospital"] = False
+
+def _procesar_un_archivo(nombre, contenido):
+    """Procesa un archivo y retorna un dict con sus datos, o None si falla."""
+    resp  = _store_global().get("responsable", "")
+    ahora = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M")
+    base  = {"nombre": nombre, "size": len(contenido), "cargado_en": ahora, "responsable": resp}
+    if nombre.lower().endswith(".csv"):
+        df = pd.read_csv(io.BytesIO(contenido))
+        return {**base, "mov": None, "inv_extra": None, "inv_directo": df,
+                "preview": df.head(8), "n_productos": len(df)}
+    xls    = pd.ExcelFile(io.BytesIO(contenido))
+    hojas  = xls.sheet_names
+    df_pri = leer_con_encabezado_correcto(contenido, hojas[0])
+    if detectar_formato_hospital(df_pri):
+        todos_mov = [];  todos_inv_e = [];  cods = set()
+        for hoja in hojas:
+            df_h = leer_con_encabezado_correcto(contenido, hoja)
+            if not detectar_formato_hospital(df_h):
+                continue
+            mov_h, inv_h = transformar_formato_ancho(df_h)
+            if mov_h is None:
+                continue
+            nuevos = mov_h[~mov_h["CODIGO"].isin(cods)]
+            if len(nuevos):
+                todos_mov.append(nuevos);  cods.update(nuevos["CODIGO"].unique())
+            if inv_h is not None:
+                ya = {c for ie in todos_inv_e for c in ie["CODIGO"]}
+                n  = inv_h[~inv_h["CODIGO"].isin(ya)]
+                if len(n):
+                    todos_inv_e.append(n)
+        if not todos_mov:
+            return None
+        mov_df = pd.concat(todos_mov, ignore_index=True)
+        ie_df  = pd.concat(todos_inv_e, ignore_index=True).drop_duplicates("CODIGO") if todos_inv_e else None
+        prev   = mov_df[["CODIGO","NOMBRE"]].drop_duplicates().head(8)
+        return {**base, "mov": mov_df, "inv_extra": ie_df, "inv_directo": None,
+                "preview": prev, "n_productos": mov_df["CODIGO"].nunique()}
+    return {**base, "mov": None, "inv_extra": None, "inv_directo": df_pri,
+            "preview": df_pri.head(8), "n_productos": len(df_pri)}
+
 # Al cargar la página, restaurar los datos compartidos si existen.
 if "inv" not in st.session_state:
     _cache = _store_global()
     st.session_state["inv"]              = _cache["inv"]
     st.session_state["mov"]              = _cache["mov"]
-    st.session_state["fuente"]           = _cache["fuente"]
+    st.session_state["fuente"]           = _cache.get("fuente")
     st.session_state["formato_hospital"] = _cache.get("formato_hospital", False)
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -581,45 +655,128 @@ st.markdown("""
 # SIDEBAR: CARGA DE DATOS Y PARÁMETROS
 # ──────────────────────────────────────────────────────────────────────────────
 with st.sidebar:
+    _s = _store_global()
+
+    # ── Cargar datos ──────────────────────────────────────────────────────────
     st.header("Cargar datos")
+    st.caption("Para seleccionar varios archivos a la vez: Cmd+clic (Mac) o Ctrl+clic (Windows).")
     archivos = st.file_uploader("Archivos Excel o CSV", type=["xlsx", "csv"],
-                                accept_multiple_files=True)
-    _fuente_actual = st.session_state.get("fuente")
-    if not archivos and _fuente_actual:
-        for _nombre in _fuente_actual.split(" + "):
-            st.caption(f"Cargado: **{_nombre.strip()}**")
-        # ── Botón eliminar con confirmación ───────────────────────────────
-        if not st.session_state.get("_confirmar_eliminar"):
-            if st.button("Eliminar datos cargados", use_container_width=True):
-                st.session_state["_confirmar_eliminar"] = True
+                                accept_multiple_files=True, label_visibility="collapsed")
+
+    # ── Detectar archivos nuevos y filtrar duplicados ─────────────────────────
+    if archivos:
+        _key = tuple(sorted((a.name, a.size) for a in archivos))
+        if _key != st.session_state.get("_archivos_key"):
+            st.session_state["_archivos_key"] = _key
+            _ya     = {(a["nombre"], a["size"]) for a in _s["archivos"]}
+            _nuevos = [(a.name, a.size, a.getvalue()) for a in archivos
+                       if (a.name, a.size) not in _ya]
+            _dups   = [a.name for a in archivos if (a.name, a.size) in _ya]
+            if _dups:
+                st.warning(f"Ya estaba(n) cargado(s): {', '.join(_dups)}")
+            if _nuevos:
+                st.session_state["_pendientes"] = _nuevos
+                if _s["archivos"]:
+                    st.session_state["_esperando_modo"] = True
+                else:
+                    st.session_state["_modo_pendiente"] = "reemplazar"
+
+    # ── Preguntar Agregar / Reemplazar ────────────────────────────────────────
+    if st.session_state.get("_esperando_modo"):
+        _pnames = [p[0] for p in st.session_state.get("_pendientes", [])]
+        st.info(f"Nuevos archivos: {', '.join(_pnames)}")
+        st.write("Ya hay archivos cargados. ¿Que deseas hacer?")
+        _c1, _c2 = st.columns(2)
+        with _c1:
+            if st.button("Agregar", use_container_width=True):
+                st.session_state["_modo_pendiente"] = "agregar"
+                st.session_state["_esperando_modo"] = False
                 st.rerun()
+        with _c2:
+            if st.button("Reemplazar todo", use_container_width=True):
+                st.session_state["_modo_pendiente"] = "reemplazar"
+                st.session_state["_esperando_modo"] = False
+                st.rerun()
+
+    # ── Procesar archivos pendientes ──────────────────────────────────────────
+    if st.session_state.get("_modo_pendiente"):
+        _modo = st.session_state["_modo_pendiente"]
+        del st.session_state["_modo_pendiente"]
+        _pend = st.session_state.get("_pendientes", [])
+        st.session_state["_pendientes"] = []
+        if _modo == "reemplazar":
+            _s["archivos"] = []
+        _n_ok = 0
+        for _nom, _siz, _cont in _pend:
+            _rec = _procesar_un_archivo(_nom, _cont)
+            if _rec:
+                _s["archivos"].append(_rec)
+                _s["historial"].append({
+                    "Fecha":       _rec["cargado_en"],
+                    "Responsable": _rec["responsable"] or "sin especificar",
+                    "Accion":      "Carga",
+                    "Archivo":     _rec["nombre"],
+                    "Productos":   _rec["n_productos"],
+                })
+                _n_ok += 1
+        _recompute()
+        if _n_ok:
+            st.success(f"{_n_ok} archivo(s) procesado(s) correctamente.")
         else:
-            st.warning("¿Seguro que quieres eliminar los datos cargados?")
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("Si, eliminar", use_container_width=True):
-                    store = _store_global()
-                    store["inv"] = None;  store["mov"] = None
-                    store["fuente"] = None; store["formato_hospital"] = False
-                    st.session_state["inv"]              = None
-                    st.session_state["mov"]              = None
-                    st.session_state["fuente"]           = None
-                    st.session_state["formato_hospital"] = False
-                    st.session_state["_archivos_key"]    = None
-                    st.session_state["_confirmar_eliminar"] = False
-                    st.rerun()
-            with col2:
-                if st.button("Cancelar", use_container_width=True):
-                    st.session_state["_confirmar_eliminar"] = False
-                    st.rerun()
+            st.error("No se pudo procesar ningún archivo. Verifica el formato.")
+
+    # ── Archivos cargados ─────────────────────────────────────────────────────
+    if _s["archivos"]:
+        st.divider()
+        st.subheader("Archivos cargados")
+        for _i, _arec in enumerate(list(_s["archivos"])):
+            with st.expander(f"{_arec['nombre']}  ({_arec['n_productos']} productos)"):
+                _resp_str = _arec["responsable"] or "sin especificar"
+                st.caption(f"Cargado: {_arec['cargado_en']}  |  Por: {_resp_str}")
+                if _arec.get("preview") is not None:
+                    st.dataframe(_arec["preview"], use_container_width=True, hide_index=True)
+                _del_key = f"_del_{_i}"
+                if not st.session_state.get(_del_key):
+                    if st.button("Eliminar este archivo", key=f"btn_del_{_i}",
+                                 use_container_width=True):
+                        st.session_state[_del_key] = True
+                        st.rerun()
+                else:
+                    st.warning("¿Seguro que deseas eliminar este archivo?")
+                    _d1, _d2 = st.columns(2)
+                    with _d1:
+                        if st.button("Si, eliminar", key=f"si_{_i}",
+                                     use_container_width=True):
+                            _eliminado = _s["archivos"].pop(_i)
+                            _s["historial"].append({
+                                "Fecha":       pd.Timestamp.now().strftime("%Y-%m-%d %H:%M"),
+                                "Responsable": _s.get("responsable", "") or "sin especificar",
+                                "Accion":      "Eliminacion",
+                                "Archivo":     _eliminado["nombre"],
+                                "Productos":   _eliminado["n_productos"],
+                            })
+                            _recompute()
+                            st.session_state[_del_key] = False
+                            st.rerun()
+                    with _d2:
+                        if st.button("Cancelar", key=f"no_{_i}",
+                                     use_container_width=True):
+                            st.session_state[_del_key] = False
+                            st.rerun()
+
+    # ── Historial de cargas ───────────────────────────────────────────────────
+    if _s["historial"]:
+        st.divider()
+        with st.expander("Historial de cargas"):
+            st.dataframe(pd.DataFrame(_s["historial"]),
+                         use_container_width=True, hide_index=True)
 
     st.divider()
     st.header("Registro")
-    _s = _store_global()
     fecha_revision   = st.date_input("Fecha última revisión", value=_s["fecha_revision"])
     hora_revision    = st.time_input("Hora de la revisión",   value=_s["hora_revision"])
-    responsable      = st.text_input("Responsable", value=_s["responsable"], placeholder="Nombre o cargo")
-
+    responsable      = st.text_input("Responsable", value=_s["responsable"],
+                                     placeholder="Nombre o cargo")
     st.divider()
     st.header("Parámetros configurables")
     costo_orden      = st.number_input("Costo por orden (CLP $)",           value=_s["costo_orden"],      step=1000)
@@ -632,95 +789,13 @@ _guardar_params(fecha_revision, hora_revision, responsable,
                 costo_orden, costo_mantener, lead_time, periodo_revision)
 
 # ──────────────────────────────────────────────────────────────────────────────
-# CARGA DE DATOS
+# CARGA DE DATOS (función auxiliar para ejemplo)
 # ──────────────────────────────────────────────────────────────────────────────
 @st.cache_data
 def cargar_ejemplo():
     inv = pd.read_excel("inventario_centro_salud.xlsx", sheet_name="Inventario")
     mov = pd.read_excel("inventario_centro_salud.xlsx", sheet_name="Movimientos")
     return inv, mov
-
-if archivos:
-    _key = tuple(sorted((a.name, a.size) for a in archivos))
-    if _key != st.session_state.get("_archivos_key"):
-        st.session_state["_archivos_key"] = _key
-
-        todos_movimientos = []
-        todos_inv_extra   = []
-        codigos_cargados  = set()
-        nombres_ok        = []
-        nombres_extra     = []
-
-        for archivo in archivos:
-            contenido = archivo.getvalue()
-
-            # ── CSV ────────────────────────────────────────────────────────────
-            if archivo.name.lower().endswith(".csv"):
-                st.session_state["inv"]              = pd.read_csv(io.BytesIO(contenido))
-                st.session_state["mov"]              = None
-                st.session_state["fuente"]           = archivo.name
-                st.session_state["formato_hospital"] = False
-                _guardar_sesion()
-                nombres_ok.append(archivo.name)
-                continue
-
-            # ── Excel ──────────────────────────────────────────────────────────
-            xls        = pd.ExcelFile(io.BytesIO(contenido))
-            hojas      = xls.sheet_names
-            df_primera = leer_con_encabezado_correcto(contenido, hojas[0])
-
-            if detectar_formato_hospital(df_primera):
-                # Formato hospital: consumos mensuales por columna
-                for nombre_hoja in hojas:
-                    df_hoja = leer_con_encabezado_correcto(contenido, nombre_hoja)
-                    if not detectar_formato_hospital(df_hoja):
-                        continue
-                    mov_hoja, inv_hoja = transformar_formato_ancho(df_hoja)
-                    if mov_hoja is None:
-                        continue
-                    nuevos = mov_hoja[~mov_hoja["CODIGO"].isin(codigos_cargados)]
-                    if len(nuevos) > 0:
-                        todos_movimientos.append(nuevos)
-                        codigos_cargados.update(nuevos["CODIGO"].unique())
-                    if inv_hoja is not None:
-                        cods_inv = {c for df_e in todos_inv_extra for c in df_e["CODIGO"]}
-                        nuevos_inv = inv_hoja[~inv_hoja["CODIGO"].isin(cods_inv)]
-                        if len(nuevos_inv) > 0:
-                            todos_inv_extra.append(nuevos_inv)
-                nombres_ok.append(archivo.name)
-
-            else:
-                # Formato no reconocido aún → se recibe pero no se integra todavía
-                nombres_extra.append(archivo.name)
-
-        # ── Combinar todo lo recopilado ────────────────────────────────────────
-        if todos_movimientos:
-            mov_combinado = pd.concat(todos_movimientos, ignore_index=True)
-            productos = mov_combinado.groupby("CODIGO").agg(
-                NOMBRE=("NOMBRE", "first")
-            ).reset_index()
-
-            if todos_inv_extra:
-                inv_extra_comb = pd.concat(todos_inv_extra, ignore_index=True).drop_duplicates("CODIGO")
-                productos = productos.merge(inv_extra_comb, on="CODIGO", how="left")
-                productos["STOCK"] = productos["STOCK_TOTAL"].fillna(0)
-                productos["COSTO"] = productos["COSTO"].fillna(0)
-            else:
-                productos["STOCK"] = 0
-                productos["COSTO"] = 0
-
-            productos["VENCIMIENTO"]             = pd.NaT
-            st.session_state["inv"]              = productos
-            st.session_state["mov"]              = mov_combinado
-            st.session_state["fuente"]           = " + ".join(nombres_ok + nombres_extra)
-            st.session_state["formato_hospital"] = True
-            _guardar_sesion()
-            n = len(productos)
-            st.sidebar.success(f"{n} productos cargados desde {len(nombres_ok)} archivo(s).")
-            if nombres_extra:
-                st.sidebar.info(f"Recibidos (pendientes de integrar): {', '.join(nombres_extra)}")
-        elif nombres_extra and not nombres_ok:
-            st.sidebar.warning(f"Formato no reconocido: {', '.join(nombres_extra)}")
 
 if st.session_state["inv"] is None:
     st.info("Sube un archivo en el panel izquierdo")
