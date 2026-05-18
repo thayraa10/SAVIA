@@ -131,6 +131,13 @@ html, body { font-family: sans-serif; } .stApp { background-color: #f0f4f8; } /*
     font-weight: 600 !important; color: #0f172a !important;
     padding: 14px 18px !important;
 }
+/* Expanders dentro del sidebar: texto negro (override del * blanco del sidebar) */
+[data-testid="stSidebar"] [data-testid="stExpander"] summary,
+[data-testid="stSidebar"] [data-testid="stExpander"] summary *,
+[data-testid="stSidebar"] [data-testid="stExpander"] summary p,
+[data-testid="stSidebar"] [data-testid="stExpander"] summary span {
+    color: #0f172a !important;
+}
 
 /* ── Botones +/- number input ────────────────────────────── */
 [data-testid="stNumberInput"] button { background: royalblue !important; color: white !important; border: none !important; }
