@@ -1556,158 +1556,127 @@ with tab3:
 """)
                 st.divider()
 
-                with st.spinner("Ejecutando simulaciones..."):
-                    resultado_rsq = simular_rsq(media_sim, var_sim, costo_orden, costo_mantener, lead_time, periodo_revision, s_sim, Q_sim, S_rsq)
-                    resultado_rs  = simular_rs( media_sim, var_sim, costo_orden, costo_mantener, lead_time, periodo_revision, s_sim, Q_sim, S_rs)
-                    resultado_rss = simular_rss(media_sim, var_sim, costo_orden, costo_mantener, lead_time, periodo_revision, s_sim, Q_sim, S_rss)
+                # Limpiar resultados si el usuario cambia de medicamento
+                if st.session_state.get("_sim_med") != med_sim:
+                    st.session_state.pop("_sim_cache", None)
 
-                # Comparar políticas por QUIEBRES primero, luego por COSTO
-                costos_anuales  = {"(R,s,Q)": resultado_rsq[1], "(R,S)": resultado_rs[1], "(R,s,S)": resultado_rss[1]}
-                quiebres_pol    = {"(R,s,Q)": resultado_rsq[4], "(R,S)": resultado_rs[4], "(R,s,S)": resultado_rss[4]}
+                if st.button("Ejecutar simulación", key="btn_sim", use_container_width=True):
+                    def _recortar_sim(resultado, n_dias):
+                        t_fin   = resultado[2][-1] if resultado[2] else 360
+                        t_ini   = max(0.0, t_fin - n_dias)
+                        idx_ini = next((i for i, t in enumerate(resultado[2]) if t >= t_ini), 0)
+                        x  = resultado[2][idx_ini:]
+                        oh = resultado[3][idx_ini:]
+                        ip = resultado[5][idx_ini:]
+                        if len(x) > 5000:           # limitar a 5000 puntos para no saturar WebSocket
+                            step = len(x) // 5000
+                            x, oh, ip = x[::step], oh[::step], ip[::step]
+                        return x, oh, ip
 
-                min_quiebres = min(quiebres_pol.values())
-                # Candidatas: las que tienen el menor número de quiebres
-                candidatas   = [p for p, q in quiebres_pol.items() if q == min_quiebres]
-                # Entre las candidatas, elegir la de menor costo
-                mejor = min(candidatas, key=lambda p: costos_anuales[p])
+                    _n_dias = max(periodo_revision * 4,
+                                  min(max(float(periodo_revision), params_sim["Q"] / max(media_sim, 0.001)) * 15, 360.0))
+                    with st.spinner("Ejecutando simulaciones..."):
+                        r_rsq = simular_rsq(media_sim, var_sim, costo_orden, costo_mantener, lead_time, periodo_revision, s_sim, Q_sim, S_rsq)
+                        r_rs  = simular_rs( media_sim, var_sim, costo_orden, costo_mantener, lead_time, periodo_revision, s_sim, Q_sim, S_rs)
+                        r_rss = simular_rss(media_sim, var_sim, costo_orden, costo_mantener, lead_time, periodo_revision, s_sim, Q_sim, S_rss)
+                    st.session_state["_sim_med"]   = med_sim
+                    st.session_state["_sim_cache"] = {
+                        "rsq": (_recortar_sim(r_rsq, _n_dias), r_rsq[0], r_rsq[1], r_rsq[4]),
+                        "rs":  (_recortar_sim(r_rs,  _n_dias), r_rs[0],  r_rs[1],  r_rs[4]),
+                        "rss": (_recortar_sim(r_rss, _n_dias), r_rss[0], r_rss[1], r_rss[4]),
+                    }
 
-                filas_comparacion = []
-                for pol, resultado_pol in [("(R,s,Q)", resultado_rsq), ("(R,S)", resultado_rs), ("(R,s,S)", resultado_rss)]:
-                    q = quiebres_pol[pol]
-                    disponibilidad = "Sin quiebres" if q == 0 else f"{q} u. sin atender"
-                    if pol == mejor:
-                        etiqueta_resultado = "RECOMENDADA"
-                    elif quiebres_pol[pol] > min_quiebres:
-                        etiqueta_resultado = f"Quiebres de stock"
-                    else:
-                        diferencia_pct = round((costos_anuales[pol] - costos_anuales[mejor]) / max(costos_anuales[mejor], 1) * 100, 1)
-                        etiqueta_resultado = f"Más cara (+{diferencia_pct} %)"
-                    filas_comparacion.append({
-                        "Estrategia":         NOMBRES[pol],
-                        "Cómo funciona":      DESCRIPCION[pol],
-                        "Quiebres de stock":  disponibilidad,
-                        "Costo diario ($)":   f"{resultado_pol[0]:,}",
-                        "Costo anual ($)":    f"{resultado_pol[1]:,}",
-                        "Evaluación":         etiqueta_resultado,
-                    })
-                st.dataframe(_safe_df(pd.DataFrame(filas_comparacion)), use_container_width=True, hide_index=True)
-
-                razon_mejor = []
-                if min_quiebres == 0:
-                    razon_mejor.append("sin quiebres de stock")
+                if "_sim_cache" not in st.session_state:
+                    st.info("Selecciona un medicamento y haz clic en **Ejecutar simulación**.")
                 else:
-                    razon_mejor.append(f"menor cantidad de quiebres ({min_quiebres} u.)")
-                razon_mejor.append(f"menor costo entre las de igual disponibilidad")
-                st.success(
-                    f"Estrategia recomendada: **{NOMBRES[mejor]}** ({mejor}) — {DESCRIPCION[mejor]}  \n"
-                    f"Criterio: {' y '.join(razon_mejor)}.  \n"
-                    f"Costo anual estimado: **${costos_anuales[mejor]:,.0f} CLP** · "
-                    f"Quiebres promedio: **{quiebres_pol[mejor]} u.**"
-                )
+                    _sc = st.session_state["_sim_cache"]
+                    costos_anuales  = {"(R,s,Q)": _sc["rsq"][2], "(R,S)": _sc["rs"][2], "(R,s,S)": _sc["rss"][2]}
+                    quiebres_pol    = {"(R,s,Q)": _sc["rsq"][3], "(R,S)": _sc["rs"][3], "(R,s,S)": _sc["rss"][3]}
+                    costos_diarios  = {"(R,s,Q)": _sc["rsq"][1], "(R,S)": _sc["rs"][1], "(R,s,S)": _sc["rss"][1]}
 
-                st.divider()
-                st.markdown("**Evolución de existencias en bodega — últimos 90 días de simulación:**")
+                    min_quiebres = min(quiebres_pol.values())
+                    candidatas   = [p for p, q in quiebres_pol.items() if q == min_quiebres]
+                    mejor        = min(candidatas, key=lambda p: costos_anuales[p])
 
-                # Mostrar los últimos ~15 ciclos de pedido (ventana temporal, no por eventos)
-                dias_por_ciclo = max(float(periodo_revision), params_sim["Q"] / max(media_sim, 0.001))
-                dias_mostrar   = max(periodo_revision * 4, min(dias_por_ciclo * 15, 360.0))
+                    filas_comparacion = []
+                    for pol in ["(R,s,Q)", "(R,S)", "(R,s,S)"]:
+                        q = quiebres_pol[pol]
+                        disponibilidad = "Sin quiebres" if q == 0 else f"{q} u. sin atender"
+                        if pol == mejor:
+                            etiqueta = "RECOMENDADA"
+                        elif q > min_quiebres:
+                            etiqueta = "Quiebres de stock"
+                        else:
+                            dif = round((costos_anuales[pol] - costos_anuales[mejor]) / max(costos_anuales[mejor], 1) * 100, 1)
+                            etiqueta = f"Más cara (+{dif} %)"
+                        filas_comparacion.append({
+                            "Estrategia":        NOMBRES[pol],
+                            "Cómo funciona":     DESCRIPCION[pol],
+                            "Quiebres de stock": disponibilidad,
+                            "Costo diario ($)":  f"{costos_diarios[pol]:,}",
+                            "Costo anual ($)":   f"{costos_anuales[pol]:,}",
+                            "Evaluación":        etiqueta,
+                        })
+                    st.dataframe(_safe_df(pd.DataFrame(filas_comparacion)), use_container_width=True, hide_index=True)
 
-                titulos_estrategias = [
-                    f"Política (R,s,Q) — {NOMBRES['(R,s,Q)']}",
-                    f"Política (R,S) — {NOMBRES['(R,S)']}",
-                    f"Política (R,s,S) — {NOMBRES['(R,s,S)']}",
-                ]
-                fig_sim = make_subplots(rows=3, cols=1, shared_xaxes=True,
-                                        subplot_titles=titulos_estrategias, vertical_spacing=0.12)
-
-                # Líneas de referencia por política — cada una muestra su propio S:
-                #   (R,s,Q)  → s (rojo),  SS (naranja)
-                #   (R,S)    → S = s (verde, el inventario máximo = punto de reorden), SS (naranja)
-                #   (R,s,S)  → s (rojo), S = s+Q (verde), SS (naranja)
-                refs_por_politica = {
-                    "(R,s,Q)": [
-                        (s_sim,            "#dc2626", "s = punto reorden"),
-                        (params_sim["SS"], "#d97706", "SS = seg."),
-                    ],
-                    "(R,S)": [
-                        (S_rs,             "#16a34a", "S = s (nivel máx.)"),
-                        (params_sim["SS"], "#d97706", "SS = seg."),
-                    ],
-                    "(R,s,S)": [
-                        (s_sim,            "#dc2626", "s = punto reorden"),
-                        (S_rss,            "#16a34a", "S = s+Q (nivel máx.)"),
-                        (params_sim["SS"], "#d97706", "SS = seg."),
-                    ],
-                }
-
-                estrategias_datos = [
-                    ("(R,s,Q)", resultado_rsq, "#1a3a5c"),
-                    ("(R,S)",   resultado_rs,  "#2563eb"),
-                    ("(R,s,S)", resultado_rss, "#16a34a"),
-                ]
-                for num_fila, (pol, resultado_sim, color_linea) in enumerate(estrategias_datos, start=1):
-                    # Recortar al final por ventana temporal (la sim por eventos tiene tiempo continuo)
-                    t_fin   = resultado_sim[2][-1] if resultado_sim[2] else 360
-                    t_ini   = max(0.0, t_fin - dias_mostrar)
-                    idx_ini = next((i for i, t in enumerate(resultado_sim[2]) if t >= t_ini), 0)
-                    x_datos  = resultado_sim[2][idx_ini:]
-                    y_oh     = resultado_sim[3][idx_ini:]   # OH: inventario físico en bodega
-                    y_ip     = resultado_sim[5][idx_ini:]   # IP: posición de inventario (OH + pedidos en tránsito)
-
-                    # Traza principal: inventario físico (OH) — línea sólida
-                    fig_sim.add_trace(go.Scatter(
-                        x=x_datos, y=y_oh, mode="lines",
-                        name=f"OH {NOMBRES[pol]}",
-                        legendgroup=pol,
-                        line=dict(color=color_linea, width=1.8),
-                        showlegend=True),
-                        row=num_fila, col=1)
-
-                    # Traza secundaria: posición de inventario (IP = OH + IT) — línea punteada
-                    # IP es lo que controla cuándo se activa una orden; cuando IP baja de 's', se pide.
-                    fig_sim.add_trace(go.Scatter(
-                        x=x_datos, y=y_ip, mode="lines",
-                        name=f"IP {NOMBRES[pol]}",
-                        legendgroup=pol,
-                        line=dict(color=color_linea, width=1, dash="dot"),
-                        opacity=0.55,
-                        showlegend=True),
-                        row=num_fila, col=1)
-
-                    # Líneas de referencia específicas para esta política, con etiqueta en cada fila
-                    for nivel, color_ref, etiqueta in refs_por_politica[pol]:
-                        fig_sim.add_hline(
-                            y=nivel,
-                            line_dash="dash", line_color=color_ref, line_width=1,
-                            annotation_text=etiqueta,
-                            annotation_position="right",
-                            annotation_font_size=10,
-                            row=num_fila, col=1,
-                        )
-
-                fig_sim.update_layout(
-                    height=780,
-                    margin=dict(t=50, b=30, l=80, r=130),
-                    paper_bgcolor="white",
-                    plot_bgcolor="#f8fafc",
-                )
-                fig_sim.update_xaxes(title_text="Día de simulación", row=3, col=1)
-                for num_fila in [1, 2, 3]:
-                    fig_sim.update_yaxes(
-                        title_text="Unidades en bodega",
-                        tickformat=",",
-                        title_font_size=11,
-                        row=num_fila, col=1
+                    razon_mejor = []
+                    if min_quiebres == 0:
+                        razon_mejor.append("sin quiebres de stock")
+                    else:
+                        razon_mejor.append(f"menor cantidad de quiebres ({min_quiebres} u.)")
+                    razon_mejor.append("menor costo entre las de igual disponibilidad")
+                    st.success(
+                        f"Estrategia recomendada: **{NOMBRES[mejor]}** ({mejor}) — {DESCRIPCION[mejor]}  \n"
+                        f"Criterio: {' y '.join(razon_mejor)}.  \n"
+                        f"Costo anual estimado: **${costos_anuales[mejor]:,.0f} CLP** · "
+                        f"Quiebres promedio: **{quiebres_pol[mejor]} u.**"
                     )
-                st.plotly_chart(fig_sim, use_container_width=True)
-                st.caption(
-                    "**Línea sólida (OH)** = inventario físico en bodega  |  "
-                    "**Línea punteada (IP)** = posición de inventario (OH + pedidos en tránsito) — "
-                    "la orden se activa cuando **IP** cruza el umbral **s**, no cuando lo hace OH  \n"
-                    "**Rojo** = punto de reorden (s)  |  "
-                    "**Verde** = nivel máximo (S)  |  "
-                    "**Naranja** = reserva de seguridad (SS)"
-                )
+
+                    st.divider()
+                    st.markdown("**Evolución de existencias en bodega — últimos 90 días de simulación:**")
+
+                    refs_por_politica = {
+                        "(R,s,Q)": [(s_sim, "#dc2626", "s = punto reorden"), (params_sim["SS"], "#d97706", "SS = seg.")],
+                        "(R,S)":   [(S_rs,  "#16a34a", "S = s (nivel máx.)"), (params_sim["SS"], "#d97706", "SS = seg.")],
+                        "(R,s,S)": [(s_sim, "#dc2626", "s = punto reorden"), (S_rss, "#16a34a", "S = s+Q (nivel máx.)"), (params_sim["SS"], "#d97706", "SS = seg.")],
+                    }
+                    titulos_estrategias = [
+                        f"Política (R,s,Q) — {NOMBRES['(R,s,Q)']}",
+                        f"Política (R,S) — {NOMBRES['(R,S)']}",
+                        f"Política (R,s,S) — {NOMBRES['(R,s,S)']}",
+                    ]
+                    fig_sim = make_subplots(rows=3, cols=1, shared_xaxes=True,
+                                            subplot_titles=titulos_estrategias, vertical_spacing=0.12)
+
+                    for num_fila, (pol, color_linea) in enumerate([("(R,s,Q)", "#1a3a5c"), ("(R,S)", "#2563eb"), ("(R,s,S)", "#16a34a")], start=1):
+                        x_datos, y_oh, y_ip = _sc[pol.lower().replace(",", "").replace("(", "").replace(")", "")][0]
+                        fig_sim.add_trace(go.Scatter(x=x_datos, y=y_oh, mode="lines",
+                            name=f"OH {NOMBRES[pol]}", legendgroup=pol,
+                            line=dict(color=color_linea, width=1.8), showlegend=True), row=num_fila, col=1)
+                        fig_sim.add_trace(go.Scatter(x=x_datos, y=y_ip, mode="lines",
+                            name=f"IP {NOMBRES[pol]}", legendgroup=pol,
+                            line=dict(color=color_linea, width=1, dash="dot"),
+                            opacity=0.55, showlegend=True), row=num_fila, col=1)
+                        for nivel, color_ref, etiqueta in refs_por_politica[pol]:
+                            fig_sim.add_hline(y=nivel, line_dash="dash", line_color=color_ref, line_width=1,
+                                annotation_text=etiqueta, annotation_position="right",
+                                annotation_font_size=10, row=num_fila, col=1)
+
+                    fig_sim.update_layout(height=780, margin=dict(t=50, b=30, l=80, r=130),
+                                          paper_bgcolor="white", plot_bgcolor="#f8fafc")
+                    fig_sim.update_xaxes(title_text="Día de simulación", row=3, col=1)
+                    for num_fila in [1, 2, 3]:
+                        fig_sim.update_yaxes(title_text="Unidades en bodega", tickformat=",",
+                                             title_font_size=11, row=num_fila, col=1)
+                    st.plotly_chart(fig_sim, use_container_width=True)
+                    st.caption(
+                        "**Línea sólida (OH)** = inventario físico en bodega  |  "
+                        "**Línea punteada (IP)** = posición de inventario (OH + pedidos en tránsito) — "
+                        "la orden se activa cuando **IP** cruza el umbral **s**, no cuando lo hace OH  \n"
+                        "**Rojo** = punto de reorden (s)  |  "
+                        "**Verde** = nivel máximo (S)  |  "
+                        "**Naranja** = reserva de seguridad (SS)"
+                    )
 
             # ── SECCIÓN 4: comparación actual vs óptimo ────────────────────────
             with st.expander("Que tan cerca estas del ideal"):
