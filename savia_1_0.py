@@ -19,16 +19,18 @@ st.markdown("""
 <style>
 html, body { font-family: sans-serif; } .stApp { background-color: #f0f4f8; } /* fondo gris */
 
-[data-testid="stSidebar"] { background: #0a0f2c; } /* barra izquierda */
-[data-testid="stSidebar"] * { color: #f0f4f8 !important; }
+[data-testid="stSidebar"] { background: #f8fafc; } /* fondo claro */
+[data-testid="stSidebar"] * { color: #0f172a !important; }
+/* botones dentro del sidebar mantienen texto blanco */
+[data-testid="stSidebar"] .stButton > button { color: white !important; }
 [data-testid="stSidebar"] .stTextInput input,
 [data-testid="stSidebar"] .stNumberInput input,
 [data-testid="stSidebar"] .stDateInput input {
-    background: white !important; border: 1px solid #334155 !important;
-    color: black !important; border-radius: 8px !important;
+    background: white !important; border: 1px solid #cbd5e1 !important;
+    color: #0f172a !important; border-radius: 8px !important;
 }
 [data-testid="stSidebar"] [data-baseweb="select"] div {
-    background: white !important; color: black !important;
+    background: white !important; color: #0f172a !important;
 }
 /* Días semana en español */
 [data-testid="stDateInput"] abbr[title="Monday"]    { visibility:hidden; } [data-testid="stDateInput"] abbr[title="Monday"]::after    { content:"Lu"; visibility:visible; }
@@ -38,7 +40,7 @@ html, body { font-family: sans-serif; } .stApp { background-color: #f0f4f8; } /*
 [data-testid="stDateInput"] abbr[title="Friday"]    { visibility:hidden; } [data-testid="stDateInput"] abbr[title="Friday"]::after    { content:"Vi"; visibility:visible; }
 [data-testid="stDateInput"] abbr[title="Saturday"]  { visibility:hidden; } [data-testid="stDateInput"] abbr[title="Saturday"]::after  { content:"Sá"; visibility:visible; }
 [data-testid="stDateInput"] abbr[title="Sunday"]    { visibility:hidden; } [data-testid="stDateInput"] abbr[title="Sunday"]::after    { content:"Do"; visibility:visible; }
-[data-testid="stSidebar"] hr { border-color: #334155 !important; }
+[data-testid="stSidebar"] hr { border-color: #e2e8f0 !important; }
 
 /* ── Tabs ────────────────────────────────────────────────── */
 .stTabs [data-baseweb="tab-list"] {
@@ -684,11 +686,14 @@ with st.sidebar:
     # ── Preguntar Agregar / Reemplazar ────────────────────────────────────────
     if st.session_state.get("_esperando_modo"):
         _pnames = [p[0] for p in st.session_state.get("_pendientes", [])]
-        st.info(f"Nuevos archivos: {', '.join(_pnames)}")
-        st.write("Ya hay archivos cargados. ¿Que deseas hacer?")
+        _dnames = [a["nombre"] for a in _s["archivos"]]
+        st.info(
+            f"**Nuevo(s):** {', '.join(_pnames)}  \n"
+            f"**Ya cargado(s):** {', '.join(_dnames)}"
+        )
         _c1, _c2 = st.columns(2)
         with _c1:
-            if st.button("Agregar", use_container_width=True):
+            if st.button("Solo agregar nuevo(s)", use_container_width=True):
                 st.session_state["_modo_pendiente"] = "agregar"
                 st.session_state["_esperando_modo"] = False
                 st.rerun()
@@ -757,6 +762,9 @@ with st.sidebar:
                             })
                             _recompute()
                             st.session_state[_del_key] = False
+                            # Resetear la clave para que el uploader
+                            # detecte correctamente los archivos al volver a subirlos
+                            st.session_state["_archivos_key"] = None
                             st.rerun()
                     with _d2:
                         if st.button("Cancelar", key=f"no_{_i}",
