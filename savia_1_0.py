@@ -9,12 +9,8 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import date, timedelta
 import pytz
-from streamlit_autorefresh import st_autorefresh
 st.set_page_config(page_title="SAVIA — Abastecimiento de Medi"
                               "camentos", layout="wide")
-
-# Refresca silenciosamente cada 4 min para evitar el timeout de WebSocket
-st_autorefresh(interval=90 * 1000, limit=None, key="keepalive")
 
 st.markdown("""
 <style>
