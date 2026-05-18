@@ -587,17 +587,17 @@ with st.sidebar:
     _fuente_actual = st.session_state.get("fuente")
     if not archivos and _fuente_actual:
         for _nombre in _fuente_actual.split(" + "):
-            st.caption(f"📂 **{_nombre.strip()}**")
+            st.caption(f"Cargado: **{_nombre.strip()}**")
         # ── Botón eliminar con confirmación ───────────────────────────────
         if not st.session_state.get("_confirmar_eliminar"):
-            if st.button("🗑️ Eliminar datos cargados", use_container_width=True):
+            if st.button("Eliminar datos cargados", use_container_width=True):
                 st.session_state["_confirmar_eliminar"] = True
                 st.rerun()
         else:
             st.warning("¿Seguro que quieres eliminar los datos cargados?")
             col1, col2 = st.columns(2)
             with col1:
-                if st.button("✅ Sí, eliminar", use_container_width=True):
+                if st.button("Si, eliminar", use_container_width=True):
                     store = _store_global()
                     store["inv"] = None;  store["mov"] = None
                     store["fuente"] = None; store["formato_hospital"] = False
@@ -609,7 +609,7 @@ with st.sidebar:
                     st.session_state["_confirmar_eliminar"] = False
                     st.rerun()
             with col2:
-                if st.button("❌ Cancelar", use_container_width=True):
+                if st.button("Cancelar", use_container_width=True):
                     st.session_state["_confirmar_eliminar"] = False
                     st.rerun()
 
