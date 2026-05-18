@@ -2,5 +2,7 @@
 primaryColor = "royalblue"
 
 [server]
+headless = true
 fileWatcherType = "none"
 maxMessageSize = 200
+runOnSave = false

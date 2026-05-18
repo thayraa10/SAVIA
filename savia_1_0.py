@@ -9,13 +9,29 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import date, timedelta
 import pytz
+import gc
+import streamlit.components.v1 as _components
 from streamlit_autorefresh import st_autorefresh
 st.set_page_config(page_title="SAVIA — Abastecimiento de Medi"
                               "camentos", layout="wide")
 
-# Ping silencioso cada 4 min para que Streamlit Cloud no duerma el proceso.
-# Es seguro ahora porque los DataFrames grandes ya no están en session_state.
-st_autorefresh(interval=4 * 60 * 1000, limit=None, key="keepalive")
+# ── Keep-alive doble: WebSocket + HTTP ───────────────────────────────────────
+# 1) Autorefresh cada 2 min → mantiene el WebSocket activo con un rerun real.
+st_autorefresh(interval=2 * 60 * 1000, limit=None, key="keepalive")
+# 2) Ping HTTP a /_stcore/health cada 2.5 min desde el iframe del componente.
+#    Esto genera una petición HTTP genuina que resetea el timer de inactividad
+#    del health-check de Streamlit Cloud (distinto del timer WebSocket).
+_components.html("""
+<script>
+(function ping() {
+    fetch('/_stcore/health').catch(function(){});
+    setTimeout(ping, 150000);
+})();
+</script>
+""", height=0)
+# 3) Recolección de basura explícita en cada rerun para evitar que las sesiones
+#    huérfanas de Streamlit se acumulen y expiren todas a la vez (~5 min).
+gc.collect()
 
 st.markdown("""
 <style>
