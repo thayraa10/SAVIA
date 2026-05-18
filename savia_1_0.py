@@ -759,18 +759,20 @@ with st.sidebar:
                                 accept_multiple_files=True, label_visibility="collapsed")
 
     # ── Detectar archivos nuevos y filtrar duplicados ─────────────────────────
+    # IMPORTANTE: solo guardamos (nombre, size) en session_state, NUNCA los bytes.
+    # Los bytes se leen desde `archivos` (file_uploader) en el mismo rerun donde
+    # se procesan, evitando el error WebSocket de mensaje de 120+ MB.
     if archivos:
         _key = tuple(sorted((a.name, a.size) for a in archivos))
         if _key != st.session_state.get("_archivos_key"):
             st.session_state["_archivos_key"] = _key
-            _ya     = {(a["nombre"], a["size"]) for a in _s["archivos"]}
-            _nuevos = [(a.name, a.size, a.getvalue()) for a in archivos
-                       if (a.name, a.size) not in _ya]
-            _dups   = [a.name for a in archivos if (a.name, a.size) in _ya]
+            _ya   = {(a["nombre"], a["size"]) for a in _s["archivos"]}
+            _meta = [(a.name, a.size) for a in archivos if (a.name, a.size) not in _ya]
+            _dups = [a.name for a in archivos if (a.name, a.size) in _ya]
             if _dups:
                 st.warning(f"Ya estaba(n) cargado(s): {', '.join(_dups)}")
-            if _nuevos:
-                st.session_state["_pendientes"] = _nuevos
+            if _meta:
+                st.session_state["_pendientes_meta"] = _meta   # solo nombres+tamaños
                 if _s["archivos"]:
                     st.session_state["_esperando_modo"] = True
                 else:
@@ -778,7 +780,7 @@ with st.sidebar:
 
     # ── Preguntar Agregar / Reemplazar ────────────────────────────────────────
     if st.session_state.get("_esperando_modo"):
-        _pnames = [p[0] for p in st.session_state.get("_pendientes", [])]
+        _pnames = [m[0] for m in st.session_state.get("_pendientes_meta", [])]
         _dnames = [a["nombre"] for a in _s["archivos"]]
         st.info(
             f"**Nuevo(s):** {', '.join(_pnames)}  \n"
@@ -797,22 +799,26 @@ with st.sidebar:
                 st.rerun()
 
     # ── Procesar archivos pendientes ──────────────────────────────────────────
-    if st.session_state.get("_modo_pendiente"):
-        _modo = st.session_state["_modo_pendiente"]
-        del st.session_state["_modo_pendiente"]
-        _pend = st.session_state.get("_pendientes", [])
-        st.session_state["_pendientes"] = []
+    if st.session_state.get("_modo_pendiente") and archivos:
+        _modo = st.session_state.pop("_modo_pendiente")
+        _meta = st.session_state.pop("_pendientes_meta", [])
         if _modo == "reemplazar":
             _s["archivos"] = []
+        # Construir mapa nombre→objeto para leer bytes ahora (sin guardarlos en session_state)
+        _uploader_map = {(a.name, a.size): a for a in archivos}
         _tz_cl = pytz.timezone("America/Santiago")
         _ahora = pd.Timestamp.now(tz=_tz_cl).strftime("%Y-%m-%d %H:%M")
         _resp  = _s.get("responsable", "") or "sin especificar"
         _n_ok  = 0
-        for _nom, _siz, _cont in _pend:
-            _rec = _parsear_archivo(_nom, _cont)
-            del _cont   # liberar bytes crudos inmediatamente tras parsear
+        for _nom, _siz in _meta:
+            _archivo = _uploader_map.get((_nom, _siz))
+            if _archivo is None:
+                continue
+            _cont = _archivo.read()   # leer bytes aquí, sin guardar en session_state
+            _rec  = _parsear_archivo(_nom, _cont)
+            del _cont                 # liberar bytes inmediatamente tras parsear
+            gc.collect()
             if _rec is not None:
-                # Guardar DataFrames parseados (no bytes): openpyxl solo corre una vez
                 _s["archivos"].append({
                     "nombre":      _nom,
                     "size":        _siz,
@@ -832,10 +838,8 @@ with st.sidebar:
                     "Productos":   _rec["n_productos"],
                 })
                 _n_ok += 1
-            gc.collect()
-        del _pend   # liberar toda la lista de bytes antes de combinar
         gc.collect()
-        _recompute()   # combina DataFrames ya parseados → construye inv/mov globales
+        _recompute()
         if _n_ok:
             st.success(f"{_n_ok} archivo(s) procesado(s) correctamente.")
         else:
