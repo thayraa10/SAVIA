@@ -592,19 +592,69 @@ def _guardar_params(fecha, hora, resp, c_orden, c_mant, lt, pr):
     store["lead_time"]        = lt
     store["periodo_revision"] = pr
 
+def _parsear_archivo(nombre, contenido):
+    """Parsea los bytes de un archivo y retorna sus DataFrames, o None si falla.
+    NO guarda nada en el store; los DataFrames viven solo mientras se necesitan.
+    Esto permite que _recompute() los use y los descarte, manteniendo memoria baja.
+    """
+    try:
+        if nombre.lower().endswith(".csv"):
+            df = pd.read_csv(io.BytesIO(contenido))
+            return {"mov": None, "inv_extra": None, "inv_directo": df,
+                    "preview": df.head(8), "n_productos": len(df)}
+        xls    = pd.ExcelFile(io.BytesIO(contenido))
+        hojas  = xls.sheet_names
+        df_pri = leer_con_encabezado_correcto(contenido, hojas[0])
+        if detectar_formato_hospital(df_pri):
+            todos_mov = [];  todos_inv_e = [];  cods = set()
+            for hoja in hojas:
+                df_h = leer_con_encabezado_correcto(contenido, hoja)
+                if not detectar_formato_hospital(df_h):
+                    continue
+                mov_h, inv_h = transformar_formato_ancho(df_h)
+                if mov_h is None:
+                    continue
+                nuevos = mov_h[~mov_h["CODIGO"].isin(cods)]
+                if len(nuevos):
+                    todos_mov.append(nuevos);  cods.update(nuevos["CODIGO"].unique())
+                if inv_h is not None:
+                    ya = {c for ie in todos_inv_e for c in ie["CODIGO"]}
+                    n  = inv_h[~inv_h["CODIGO"].isin(ya)]
+                    if len(n):
+                        todos_inv_e.append(n)
+            if not todos_mov:
+                return None
+            mov_df = pd.concat(todos_mov, ignore_index=True)
+            ie_df  = pd.concat(todos_inv_e, ignore_index=True).drop_duplicates("CODIGO") if todos_inv_e else None
+            prev   = mov_df[["CODIGO","NOMBRE"]].drop_duplicates().head(8)
+            return {"mov": mov_df, "inv_extra": ie_df, "inv_directo": None,
+                    "preview": prev, "n_productos": mov_df["CODIGO"].nunique()}
+        return {"mov": None, "inv_extra": None, "inv_directo": df_pri,
+                "preview": df_pri.head(8), "n_productos": len(df_pri)}
+    except Exception:
+        return None
+
 def _recompute():
-    """Recalcula inv y mov combinados desde la lista de archivos del store."""
+    """Reconstruye inv/mov combinados re-parseando los bytes de cada archivo.
+    Los DataFrames temporales de cada archivo se descartan tras combinarlos.
+    El store solo guarda: inv (combinado), mov (combinado) y bytes crudos en archivos[].
+    """
     store    = _store_global()
     archivos = store["archivos"]
     if not archivos:
-        for k in ("inv","mov","fuente"):
+        for k in ("inv", "mov", "fuente"):
             store[k] = None
         store["formato_hospital"] = False
         return
     store["fuente"] = " + ".join(a["nombre"] for a in archivos)
-    movs     = [a["mov"]        for a in archivos if a.get("mov")        is not None]
-    inv_exts = [a["inv_extra"]  for a in archivos if a.get("inv_extra")  is not None]
-    inv_dirs = [a["inv_directo"] for a in archivos if a.get("inv_directo") is not None]
+    movs = [];  inv_exts = [];  inv_dirs = []
+    for arec in archivos:
+        rec = _parsear_archivo(arec["nombre"], arec["contenido"])
+        if rec is None:
+            continue
+        if rec["mov"]       is not None: movs.append(rec["mov"])
+        if rec["inv_extra"] is not None: inv_exts.append(rec["inv_extra"])
+        if rec["inv_directo"] is not None: inv_dirs.append(rec["inv_directo"])
     if movs:
         mov_comb  = pd.concat(movs, ignore_index=True).drop_duplicates()
         productos = mov_comb.groupby("CODIGO").agg(NOMBRE=("NOMBRE","first")).reset_index()
@@ -622,46 +672,6 @@ def _recompute():
         inv_comb = pd.concat(inv_dirs, ignore_index=True)
         inv_comb.columns = [str(c) for c in inv_comb.columns]
         store["inv"] = inv_comb;  store["mov"] = None;  store["formato_hospital"] = False
-
-def _procesar_un_archivo(nombre, contenido):
-    """Procesa un archivo y retorna un dict con sus datos, o None si falla."""
-    _tz   = pytz.timezone("America/Santiago")
-    resp  = _store_global().get("responsable", "")
-    ahora = pd.Timestamp.now(tz=_tz).strftime("%Y-%m-%d %H:%M")
-    base  = {"nombre": nombre, "size": len(contenido), "cargado_en": ahora, "responsable": resp}
-    if nombre.lower().endswith(".csv"):
-        df = pd.read_csv(io.BytesIO(contenido))
-        return {**base, "mov": None, "inv_extra": None, "inv_directo": df,
-                "preview": df.head(8), "n_productos": len(df)}
-    xls    = pd.ExcelFile(io.BytesIO(contenido))
-    hojas  = xls.sheet_names
-    df_pri = leer_con_encabezado_correcto(contenido, hojas[0])
-    if detectar_formato_hospital(df_pri):
-        todos_mov = [];  todos_inv_e = [];  cods = set()
-        for hoja in hojas:
-            df_h = leer_con_encabezado_correcto(contenido, hoja)
-            if not detectar_formato_hospital(df_h):
-                continue
-            mov_h, inv_h = transformar_formato_ancho(df_h)
-            if mov_h is None:
-                continue
-            nuevos = mov_h[~mov_h["CODIGO"].isin(cods)]
-            if len(nuevos):
-                todos_mov.append(nuevos);  cods.update(nuevos["CODIGO"].unique())
-            if inv_h is not None:
-                ya = {c for ie in todos_inv_e for c in ie["CODIGO"]}
-                n  = inv_h[~inv_h["CODIGO"].isin(ya)]
-                if len(n):
-                    todos_inv_e.append(n)
-        if not todos_mov:
-            return None
-        mov_df = pd.concat(todos_mov, ignore_index=True)
-        ie_df  = pd.concat(todos_inv_e, ignore_index=True).drop_duplicates("CODIGO") if todos_inv_e else None
-        prev   = mov_df[["CODIGO","NOMBRE"]].drop_duplicates().head(8)
-        return {**base, "mov": mov_df, "inv_extra": ie_df, "inv_directo": None,
-                "preview": prev, "n_productos": mov_df["CODIGO"].nunique()}
-    return {**base, "mov": None, "inv_extra": None, "inv_directo": df_pri,
-            "preview": df_pri.head(8), "n_productos": len(df_pri)}
 
 # Los DataFrames grandes (inv, mov) se leen siempre desde _store_global()
 # y NUNCA se guardan en st.session_state para evitar serialización WebSocket.
@@ -734,20 +744,32 @@ with st.sidebar:
         st.session_state["_pendientes"] = []
         if _modo == "reemplazar":
             _s["archivos"] = []
-        _n_ok = 0
+        _tz_cl = pytz.timezone("America/Santiago")
+        _ahora = pd.Timestamp.now(tz=_tz_cl).strftime("%Y-%m-%d %H:%M")
+        _resp  = _s.get("responsable", "") or "sin especificar"
+        _n_ok  = 0
         for _nom, _siz, _cont in _pend:
-            _rec = _procesar_un_archivo(_nom, _cont)
-            if _rec:
-                _s["archivos"].append(_rec)
+            _rec = _parsear_archivo(_nom, _cont)
+            if _rec is not None:
+                # Guardar solo bytes + metadatos ligeros (NO DataFrames)
+                _s["archivos"].append({
+                    "nombre":     _nom,
+                    "size":       _siz,
+                    "contenido":  _cont,   # bytes crudos (~1-5 MB); DataFrames se descartan
+                    "cargado_en": _ahora,
+                    "responsable": _resp,
+                    "preview":    _rec["preview"],
+                    "n_productos": _rec["n_productos"],
+                })
                 _s["historial"].append({
-                    "Fecha":       _rec["cargado_en"],
-                    "Responsable": _rec["responsable"] or "sin especificar",
+                    "Fecha":       _ahora,
+                    "Responsable": _resp,
                     "Accion":      "Carga",
-                    "Archivo":     _rec["nombre"],
+                    "Archivo":     _nom,
                     "Productos":   _rec["n_productos"],
                 })
                 _n_ok += 1
-        _recompute()
+        _recompute()   # re-parsea bytes → construye combined → descarta DataFrames temp.
         if _n_ok:
             st.success(f"{_n_ok} archivo(s) procesado(s) correctamente.")
         else:
