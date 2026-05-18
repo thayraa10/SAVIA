@@ -581,11 +581,6 @@ def _store_global():
         "historial": [],  # [{Fecha, Responsable, Accion, Archivo, Productos}]
     }
 
-def _guardar_sesion():
-    store = _store_global()
-    store["inv"]              = st.session_state.get("inv")
-    store["mov"]              = st.session_state.get("mov")
-    store["formato_hospital"] = st.session_state.get("formato_hospital", False)
 
 def _guardar_params(fecha, hora, resp, c_orden, c_mant, lt, pr):
     store = _store_global()
@@ -604,12 +599,9 @@ def _recompute():
     if not archivos:
         for k in ("inv","mov","fuente"):
             store[k] = None
-            st.session_state[k] = None
         store["formato_hospital"] = False
-        st.session_state["formato_hospital"] = False
         return
     store["fuente"] = " + ".join(a["nombre"] for a in archivos)
-    st.session_state["fuente"] = store["fuente"]
     movs     = [a["mov"]        for a in archivos if a.get("mov")        is not None]
     inv_exts = [a["inv_extra"]  for a in archivos if a.get("inv_extra")  is not None]
     inv_dirs = [a["inv_directo"] for a in archivos if a.get("inv_directo") is not None]
@@ -624,16 +616,12 @@ def _recompute():
         else:
             productos["STOCK"] = 0;  productos["COSTO"] = 0
         productos["VENCIMIENTO"] = pd.NaT
-        productos.columns = [str(c) for c in productos.columns]  # normalizar nombres de columna
+        productos.columns = [str(c) for c in productos.columns]
         store["inv"] = productos;  store["mov"] = mov_comb;  store["formato_hospital"] = True
-        st.session_state["inv"] = productos;  st.session_state["mov"] = mov_comb
-        st.session_state["formato_hospital"] = True
     elif inv_dirs:
         inv_comb = pd.concat(inv_dirs, ignore_index=True)
-        inv_comb.columns = [str(c) for c in inv_comb.columns]  # normalizar nombres de columna
+        inv_comb.columns = [str(c) for c in inv_comb.columns]
         store["inv"] = inv_comb;  store["mov"] = None;  store["formato_hospital"] = False
-        st.session_state["inv"] = inv_comb;  st.session_state["mov"] = None
-        st.session_state["formato_hospital"] = False
 
 def _procesar_un_archivo(nombre, contenido):
     """Procesa un archivo y retorna un dict con sus datos, o None si falla."""
@@ -675,13 +663,8 @@ def _procesar_un_archivo(nombre, contenido):
     return {**base, "mov": None, "inv_extra": None, "inv_directo": df_pri,
             "preview": df_pri.head(8), "n_productos": len(df_pri)}
 
-# Al cargar la página, restaurar los datos compartidos si existen.
-if "inv" not in st.session_state:
-    _cache = _store_global()
-    st.session_state["inv"]              = _cache["inv"]
-    st.session_state["mov"]              = _cache["mov"]
-    st.session_state["fuente"]           = _cache.get("fuente")
-    st.session_state["formato_hospital"] = _cache.get("formato_hospital", False)
+# Los DataFrames grandes (inv, mov) se leen siempre desde _store_global()
+# y NUNCA se guardan en st.session_state para evitar serialización WebSocket.
 
 # ──────────────────────────────────────────────────────────────────────────────
 # ENCABEZADO DE LA APP
@@ -845,21 +828,22 @@ def cargar_ejemplo():
     mov = pd.read_excel("inventario_centro_salud.xlsx", sheet_name="Movimientos")
     return inv, mov
 
-if st.session_state["inv"] is None:
+_g = _store_global()
+if _g["inv"] is None:
     st.info("Sube un archivo en el panel izquierdo")
     st.stop()
 
 # Aviso cuando se cargó un archivo de consumos del hospital (sin stock ni vencimiento)
-if st.session_state.get("formato_hospital", False):
+if _g.get("formato_hospital", False):
     st.info(
         "Archivo de consumos del hospital cargado correctamente.  \n"
         "Los datos de **existencias actuales** y **fecha de vencimiento** no están en este tipo de archivo, "
         "por lo que las alertas de vencimiento no estarán disponibles.  \n"
     )
 
-# Obtener los datos cargados desde el estado de sesión
-datos_inventario = st.session_state["inv"]
-datos_movimientos = st.session_state["mov"]
+# Leer DataFrames directamente desde el store compartido (nunca desde session_state)
+datos_inventario  = _g["inv"]
+datos_movimientos = _g["mov"]
 
 # ──────────────────────────────────────────────────────────────────────────────
 # DETECCIÓN DE COLUMNAS
@@ -1035,7 +1019,7 @@ n_advertencia = (resumen["estado"] == "ADVERTENCIA").sum()
 n_normales    = (resumen["estado"] == "NORMAL").sum()
 
 # KPIs adicionales para formato hospital (basados en ALCANCE y SUGERIDO)
-formato_hospital = st.session_state.get("formato_hospital", False)
+formato_hospital = _store_global().get("formato_hospital", False)
 if formato_hospital:
     tiene_alcance  = "ALCANCE"  in resumen.columns
     tiene_sugerido = "SUGERIDO" in resumen.columns
