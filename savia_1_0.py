@@ -1150,8 +1150,7 @@ tab1, tab2, tab3, tab4 = st.tabs([
 # MÓDULO 1 — PANEL PRINCIPAL
 # ══════════════════════════════════════════════════════════════════════════════
 with tab1:
-    # _estado_cob es necesario para tab2 (se calcula aquí porque Streamlit corre
-    # todos los bloques with tab: en cada rerun, independiente de la tab activa)
+    # _estado_cob requerido por tab2; se calcula en cada rerun
     if formato_hospital:
         _alc_all = pd.to_numeric(resumen.get("ALCANCE", pd.Series(dtype=float)), errors="coerce")
         _sug_all = pd.to_numeric(resumen.get("SUGERIDO", pd.Series(dtype=float)), errors="coerce").fillna(0)
@@ -1164,7 +1163,10 @@ with tab1:
         resumen["_estado_cob"]      = [_clasificar_cob(resumen.iloc[i], _alc_all.iloc[i]) for i in range(len(resumen))]
         resumen["_requiere_pedido"] = _sug_all > 0
 
-    # ── Valores del semáforo ──────────────────────────────────────────────────
+    # ── Datos auxiliares ──────────────────────────────────────────────────────
+    PALETA = {"sin_stock": "#E53E3E", "critico": "#DD6B20", "bajo": "#D69E2E",
+              "adecuado": "#38A169", "normal": "#3182CE", "gris": "#94a3b8"}
+
     _tiene_alc = formato_hospital and "ALCANCE" in resumen.columns
     if _tiene_alc:
         _alc_sem   = pd.to_numeric(resumen["ALCANCE"], errors="coerce")
@@ -1176,124 +1178,126 @@ with tab1:
         _sem_amari = int(n_advertencia)
         _sem_verde = int(n_normales)
 
-    # ── 1. Banner de vencimientos ─────────────────────────────────────────────
-    _n_crit_banner = _sem_rojo  if _tiene_alc else int(n_vencidos + n_criticos)
-    _n_adv_banner  = _sem_amari if _tiene_alc else int(n_advertencia)
+    _valor_vencido = float(resumen[resumen["estado"] == "VENCIDO"]["valor_inventario"].sum())
+    _pct_perdida   = round(_valor_vencido / valor_total * 100, 1) if valor_total > 0 else 0.0
+    _n_quiebre     = int((resumen["stock_total"] == 0).sum())
+    _n_prox_ven    = int(n_criticos + n_advertencia)
 
-    if _n_crit_banner > 0:
+    _dias_rev = (date.today() - fecha_revision).days
+    _prox_rev = fecha_revision + timedelta(days=int(periodo_revision))
+    _resp_str = responsable if responsable else "No especificado"
+    if _dias_rev <= periodo_revision:
+        _dot_color = "#38A169"
+    elif _dias_rev <= periodo_revision * 2:
+        _dot_color = "#D69E2E"
+    else:
+        _dot_color = "#E53E3E"
+
+    # ── 1. Banner ─────────────────────────────────────────────────────────────
+    _n_crit_b = _sem_rojo  if _tiene_alc else int(n_vencidos + n_criticos)
+    _n_adv_b  = _sem_amari if _tiene_alc else int(n_advertencia)
+    if _n_crit_b > 0:
         _bn_bg, _bn_border, _bn_color = "#FED7D7", "#E53E3E", "#C53030"
         _bn_label = "ALERTA CRITICA"
-        _bn_msg   = f"{_n_crit_banner} medicamento(s) vencido(s) o con vencimiento crítico (menos de 30 días)"
-    elif _n_adv_banner > 0:
+        _bn_msg   = f"{_n_crit_b} medicamento(s) vencido(s) o con vencimiento crítico (menos de 30 días)"
+    elif _n_adv_b > 0:
         _bn_bg, _bn_border, _bn_color = "#FEFCBF", "#D69E2E", "#B7791F"
         _bn_label = "ADVERTENCIA"
-        _bn_msg   = f"{_n_adv_banner} medicamento(s) con vencimiento próximo (31 a 90 días)"
+        _bn_msg   = f"{_n_adv_b} medicamento(s) con vencimiento próximo (31 a 90 días)"
     else:
         _bn_bg, _bn_border, _bn_color = "#C6F6D5", "#38A169", "#276749"
         _bn_label = "ESTADO OK"
         _bn_msg   = "Sin alertas de vencimiento activas. Todos los medicamentos se encuentran dentro del rango normal."
 
     st.markdown(f"""
-    <div style="background:{_bn_bg};border-left:6px solid {_bn_border};
-                border-radius:10px;padding:18px 24px;margin-bottom:24px;">
-      <div style="font-weight:700;font-size:0.82rem;color:{_bn_color};
-                  text-transform:uppercase;letter-spacing:0.06em;margin-bottom:4px">{_bn_label}</div>
-      <div style="color:#1a202c;font-size:0.95rem">{_bn_msg}</div>
+    <div style="background:{_bn_bg};border-left:6px solid {_bn_border};border-radius:10px;
+                padding:12px 22px;margin-bottom:16px;display:flex;align-items:center;gap:12px;">
+      <span style="font-weight:700;font-size:0.78rem;color:{_bn_color};text-transform:uppercase;
+                   letter-spacing:0.06em;white-space:nowrap">{_bn_label}</span>
+      <span style="color:#1a202c;font-size:0.9rem">{_bn_msg}</span>
     </div>
     """, unsafe_allow_html=True)
 
-    # ── 2. Semáforo general ───────────────────────────────────────────────────
+    # ── 2. Fila superior: info revisión + 3 KPIs ──────────────────────────────
+    _fc1, _fc2, _fc3, _fc4 = st.columns([2.4, 1, 1, 1])
+    with _fc1:
+        st.markdown(f"""
+        <div style="background:white;border-radius:12px;padding:14px 20px;height:90px;
+                    box-shadow:0 1px 3px rgba(0,0,0,0.07);border-left:4px solid #3182CE;
+                    display:flex;gap:28px;align-items:center;">
+          <div>
+            <div style="font-size:0.65rem;color:#64748b;font-weight:600;text-transform:uppercase">Última revisión</div>
+            <div style="font-size:0.98rem;font-weight:700;color:#0f172a">{fecha_revision.strftime("%d/%m/%Y")}</div>
+            <div style="font-size:0.67rem;color:#94a3b8">Hace {_dias_rev} día(s)</div>
+          </div>
+          <div>
+            <div style="font-size:0.65rem;color:#64748b;font-weight:600;text-transform:uppercase">Próxima revisión</div>
+            <div style="font-size:0.98rem;font-weight:700;color:#0f172a">
+              <span style="display:inline-block;width:8px;height:8px;border-radius:50%;
+                           background:{_dot_color};margin-right:4px;vertical-align:middle"></span>
+              {_prox_rev.strftime("%d/%m/%Y")}
+            </div>
+            <div style="font-size:0.67rem;color:#94a3b8">En {periodo_revision} días</div>
+          </div>
+          <div>
+            <div style="font-size:0.65rem;color:#64748b;font-weight:600;text-transform:uppercase">Responsable</div>
+            <div style="font-size:0.98rem;font-weight:700;color:#0f172a">{_resp_str}</div>
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
+    _fc2.metric("Valor en existencias",  f"${valor_total:,.0f} CLP")
+    _fc3.metric("Total productos",       f"{len(resumen):,}")
+    _fc4.metric("Pérdida estimada",      f"{_pct_perdida:.1f}%",
+                help="Valor de medicamentos vencidos / inventario total")
+
+    st.markdown("<div style='margin:12px 0'></div>", unsafe_allow_html=True)
+
+    # ── 3. Semáforo ───────────────────────────────────────────────────────────
     if _tiene_alc:
-        _lbl_rojo  = "Sin stock o cobertura crítica"
-        _lbl_amari = "Cobertura baja (1–3 meses)"
-        _lbl_verde = "Cobertura adecuada (>3 meses)"
+        _lbl_r = "Sin stock o cobertura crítica"
+        _lbl_a = "Cobertura baja (1–3 meses)"
+        _lbl_v = "Cobertura adecuada (>3 meses)"
     else:
-        _lbl_rojo  = "Quiebre o vencimiento crítico"
-        _lbl_amari = "Próximo a vencer o stock bajo"
-        _lbl_verde = "Stock adecuado"
+        _lbl_r = "Quiebre o vencimiento crítico"
+        _lbl_a = "Próximo a vencer o stock bajo"
+        _lbl_v = "Stock adecuado"
 
     st.markdown(f"""
-    <div style="display:flex;justify-content:center;gap:48px;
-                background:white;border-radius:14px;padding:28px 0;
-                box-shadow:0 1px 4px rgba(0,0,0,0.07);margin-bottom:24px;">
+    <div style="display:flex;justify-content:center;gap:48px;background:white;
+                border-radius:14px;padding:20px 0;box-shadow:0 1px 4px rgba(0,0,0,0.07);
+                margin-bottom:20px;">
       <div style="text-align:center;">
-        <div style="width:96px;height:96px;border-radius:50%;background:#E53E3E;
-                    display:flex;align-items:center;justify-content:center;
-                    margin:0 auto 10px;box-shadow:0 4px 14px rgba(229,62,62,0.35);">
-          <span style="font-size:2rem;font-weight:800;color:white">{_sem_rojo}</span>
+        <div style="width:88px;height:88px;border-radius:50%;background:#E53E3E;display:flex;
+                    align-items:center;justify-content:center;margin:0 auto 8px;
+                    box-shadow:0 4px 12px rgba(229,62,62,0.35);">
+          <span style="font-size:1.75rem;font-weight:800;color:white">{_sem_rojo}</span>
         </div>
-        <div style="font-size:0.78rem;color:#4A5568;font-weight:600;max-width:120px;line-height:1.4">{_lbl_rojo}</div>
+        <div style="font-size:0.75rem;color:#4A5568;font-weight:600;max-width:115px;line-height:1.4">{_lbl_r}</div>
       </div>
       <div style="text-align:center;">
-        <div style="width:96px;height:96px;border-radius:50%;background:#D69E2E;
-                    display:flex;align-items:center;justify-content:center;
-                    margin:0 auto 10px;box-shadow:0 4px 14px rgba(214,158,46,0.35);">
-          <span style="font-size:2rem;font-weight:800;color:white">{_sem_amari}</span>
+        <div style="width:88px;height:88px;border-radius:50%;background:#D69E2E;display:flex;
+                    align-items:center;justify-content:center;margin:0 auto 8px;
+                    box-shadow:0 4px 12px rgba(214,158,46,0.35);">
+          <span style="font-size:1.75rem;font-weight:800;color:white">{_sem_amari}</span>
         </div>
-        <div style="font-size:0.78rem;color:#4A5568;font-weight:600;max-width:120px;line-height:1.4">{_lbl_amari}</div>
+        <div style="font-size:0.75rem;color:#4A5568;font-weight:600;max-width:115px;line-height:1.4">{_lbl_a}</div>
       </div>
       <div style="text-align:center;">
-        <div style="width:96px;height:96px;border-radius:50%;background:#38A169;
-                    display:flex;align-items:center;justify-content:center;
-                    margin:0 auto 10px;box-shadow:0 4px 14px rgba(56,161,105,0.35);">
-          <span style="font-size:2rem;font-weight:800;color:white">{_sem_verde}</span>
+        <div style="width:88px;height:88px;border-radius:50%;background:#38A169;display:flex;
+                    align-items:center;justify-content:center;margin:0 auto 8px;
+                    box-shadow:0 4px 12px rgba(56,161,105,0.35);">
+          <span style="font-size:1.75rem;font-weight:800;color:white">{_sem_verde}</span>
         </div>
-        <div style="font-size:0.78rem;color:#4A5568;font-weight:600;max-width:120px;line-height:1.4">{_lbl_verde}</div>
+        <div style="font-size:0.75rem;color:#4A5568;font-weight:600;max-width:115px;line-height:1.4">{_lbl_v}</div>
       </div>
     </div>
     """, unsafe_allow_html=True)
 
-    # ── 3. Info de revisión ───────────────────────────────────────────────────
-    _dias_rev   = (date.today() - fecha_revision).days
-    _prox_rev   = fecha_revision + timedelta(days=int(periodo_revision))
-    _resp_str   = responsable if responsable else "No especificado"
-    if _dias_rev <= periodo_revision:
-        _dot_rev = '<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:#38A169;margin-right:5px;vertical-align:middle"></span>'
-    elif _dias_rev <= periodo_revision * 2:
-        _dot_rev = '<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:#D69E2E;margin-right:5px;vertical-align:middle"></span>'
-    else:
-        _dot_rev = '<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:#E53E3E;margin-right:5px;vertical-align:middle"></span>'
+    # ── 4. Contenido principal: [donut interactivo + tabla | top 10 + alertas] ─
+    _col_L, _col_R = st.columns([55, 45])
 
-    st.markdown(f"""
-    <div style="display:flex;gap:16px;margin-bottom:20px;flex-wrap:wrap;">
-      <div style="background:white;border-radius:12px;padding:14px 22px;
-                  box-shadow:0 1px 3px rgba(0,0,0,0.07);border-left:4px solid #3182CE;
-                  display:flex;gap:32px;align-items:center;flex:1;min-width:300px;">
-        <div>
-          <div style="font-size:0.72rem;color:#64748b;font-weight:500;text-transform:uppercase">Última revisión</div>
-          <div style="font-size:1.05rem;font-weight:700;color:#0f172a">{fecha_revision.strftime("%d/%m/%Y")}</div>
-          <div style="font-size:0.72rem;color:#94a3b8">Hace {_dias_rev} día(s)</div>
-        </div>
-        <div>
-          <div style="font-size:0.72rem;color:#64748b;font-weight:500;text-transform:uppercase">Próxima revisión</div>
-          <div style="font-size:1.05rem;font-weight:700;color:#0f172a">{_dot_rev}{_prox_rev.strftime("%d/%m/%Y")}</div>
-          <div style="font-size:0.72rem;color:#94a3b8">En {periodo_revision} días</div>
-        </div>
-        <div>
-          <div style="font-size:0.72rem;color:#64748b;font-weight:500;text-transform:uppercase">Responsable</div>
-          <div style="font-size:1.05rem;font-weight:700;color:#0f172a">{_resp_str}</div>
-        </div>
-      </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    # ── 4. KPIs ───────────────────────────────────────────────────────────────
-    _valor_vencido = float(resumen[resumen["estado"] == "VENCIDO"]["valor_inventario"].sum())
-    _pct_perdida   = round(_valor_vencido / valor_total * 100, 1) if valor_total > 0 else 0.0
-
-    _kc1, _kc2, _kc3 = st.columns(3)
-    _kc1.metric("Valor total en existencias",     f"${valor_total:,.0f} CLP")
-    _kc2.metric("Total productos en existencias", f"{len(resumen):,}")
-    _kc3.metric("Pérdida estimada (vencidos)",     f"{_pct_perdida:.1f}%",
-                help="Valor de medicamentos vencidos como porcentaje del inventario total")
-
-    # ── 5. Gráficos ───────────────────────────────────────────────────────────
-    PALETA = {"sin_stock": "#E53E3E", "critico": "#DD6B20", "bajo": "#D69E2E",
-              "adecuado": "#38A169", "normal": "#3182CE", "gris": "#94a3b8"}
-
-    _gc1, _gc2 = st.columns(2)
-
-    with _gc1:
+    with _col_L:
+        # Datos del donut
         if formato_hospital and _tiene_alc:
             _alc_n  = pd.to_numeric(resumen["ALCANCE"], errors="coerce")
             _cats_d = ["Sin existencias", "Crítica (<1 mes)", "Baja (1–3 meses)", "Adecuada (>3 meses)"]
@@ -1303,47 +1307,104 @@ with tab1:
                 int(((_alc_n > 1) & (_alc_n <= 3)).sum()),
                 int((_alc_n > 3).sum()),
             ]
-            _col_d  = [PALETA["sin_stock"], PALETA["critico"], PALETA["bajo"], PALETA["adecuado"]]
+            _col_d = [PALETA["sin_stock"], PALETA["critico"], PALETA["bajo"], PALETA["adecuado"]]
+            _cat_map = {
+                "Sin existencias":     "Sin existencias",
+                "Crítica (<1 mes)":    "Crítico (≤1 mes)",
+                "Baja (1–3 meses)":    "Bajo (1–3 meses)",
+                "Adecuada (>3 meses)": "Adecuado (>3 meses)",
+            }
         else:
             _orden_e = ["VENCIDO", "CRITICO", "ADVERTENCIA", "NORMAL", "Sin fecha"]
             _vc      = resumen["estado"].value_counts()
             _cats_d  = [e for e in _orden_e if e in _vc.index]
             _cont_d  = [int(_vc[e]) for e in _cats_d]
-            _col_map = {"VENCIDO": PALETA["sin_stock"], "CRITICO": PALETA["critico"],
-                        "ADVERTENCIA": PALETA["bajo"], "NORMAL": PALETA["adecuado"],
-                        "Sin fecha": PALETA["gris"]}
-            _col_d   = [_col_map.get(e, PALETA["gris"]) for e in _cats_d]
+            _col_map_e = {"VENCIDO": PALETA["sin_stock"], "CRITICO": PALETA["critico"],
+                          "ADVERTENCIA": PALETA["bajo"], "NORMAL": PALETA["adecuado"],
+                          "Sin fecha": PALETA["gris"]}
+            _col_d   = [_col_map_e.get(e, PALETA["gris"]) for e in _cats_d]
+            _cat_map = None
 
+        # Selector de estado (con "Todos")
+        _opts = ["Todos"] + _cats_d
+        _sel  = st.radio("Cobertura de stock — filtrar por estado:",
+                         _opts, horizontal=True, key="donut_filter")
+
+        # Donut con slice resaltado
+        _pull = [0.09 if c == _sel else 0 for c in _cats_d]
         _fig_pie = go.Figure(go.Pie(
-            labels=_cats_d, values=_cont_d, marker_colors=_col_d,
-            textinfo="percent+value", hole=0.5,
-            hovertemplate="<b>%{label}</b><br>%{value} productos<br>%{percent}<extra></extra>",
+            labels=_cats_d, values=_cont_d, marker_colors=_col_d, pull=_pull,
+            textinfo="percent+value", hole=0.45,
+            hovertemplate="<b>%{label}</b><br>%{value} productos (%{percent})<extra></extra>",
         ))
         _fig_pie.update_layout(
-            title=dict(text="Cobertura de stock", font=dict(size=14, color="#0f172a")),
-            height=300, margin=dict(t=40, b=10, l=10, r=10),
-            legend=dict(orientation="h", y=-0.15),
+            height=270, margin=dict(t=6, b=0, l=6, r=6),
+            legend=dict(orientation="h", y=-0.14, font=dict(size=11)),
             paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
         )
         st.plotly_chart(_fig_pie, use_container_width=True)
 
-    with _gc2:
+        # Tabla filtrada por estado seleccionado
+        if _sel != "Todos":
+            if formato_hospital and _cat_map and "_estado_cob" in resumen.columns:
+                _cob_val  = _cat_map.get(_sel, _sel)
+                _tbl_filt = resumen[resumen["_estado_cob"] == _cob_val].copy()
+            else:
+                _tbl_filt = resumen[resumen["estado"] == _sel].copy()
+
+            _c_show = [COL_CODIGO, COL_NOMBRE, "stock_total"]
+            if not formato_hospital:
+                for _c in ["min_dias_vencer", "estado"]:
+                    if _c in _tbl_filt.columns: _c_show.append(_c)
+            else:
+                for _c in ["ALCANCE", "SUGERIDO"]:
+                    if _c in _tbl_filt.columns: _c_show.append(_c)
+            _c_show   = [c for c in _c_show if c in _tbl_filt.columns]
+            _tbl_show = _tbl_filt[_c_show].rename(columns={
+                COL_CODIGO: "Código", COL_NOMBRE: "Medicamento",
+                "stock_total": "Stock", "min_dias_vencer": "Días p/Vencer",
+                "estado": "Estado", "ALCANCE": "Cobertura (meses)", "SUGERIDO": "Cant. sugerida",
+            }).reset_index(drop=True)
+            st.caption(f"{len(_tbl_show)} producto(s) en estado '{_sel}'")
+            st.dataframe(_safe_df(_tbl_show), use_container_width=True, hide_index=True, height=260)
+        else:
+            # Sin filtro: mostrar top 10 más urgentes (sin stock → más días vencidos)
+            if not formato_hospital:
+                _urg = resumen[resumen["estado"].isin(["VENCIDO", "CRITICO"])].head(10)
+            elif "_estado_cob" in resumen.columns:
+                _urg = resumen[resumen["_estado_cob"].isin(["Sin existencias", "Crítico (≤1 mes)"])].head(10)
+            else:
+                _urg = pd.DataFrame()
+            if len(_urg) > 0:
+                _uc = [COL_CODIGO, COL_NOMBRE, "stock_total"]
+                if "min_dias_vencer" in _urg.columns and not formato_hospital: _uc.append("min_dias_vencer")
+                if "ALCANCE" in _urg.columns: _uc.append("ALCANCE")
+                _uc = [c for c in _uc if c in _urg.columns]
+                _urg_show = _urg[_uc].rename(columns={
+                    COL_CODIGO: "Código", COL_NOMBRE: "Medicamento",
+                    "stock_total": "Stock", "min_dias_vencer": "Días p/Vencer",
+                    "ALCANCE": "Cobertura (meses)",
+                }).reset_index(drop=True)
+                st.caption("Productos sin stock / más urgentes")
+                st.dataframe(_safe_df(_urg_show), use_container_width=True, hide_index=True, height=220)
+
+    with _col_R:
+        # Top 10 consumo mensual
         if tiene_movimientos:
             _top10 = resumen[resumen["media_diaria"] > 0].nlargest(10, "media_diaria").copy()
             _top10["consumo_mensual"] = (_top10["media_diaria"] * 30).round(0)
-            _n10   = len(_top10)
-            _noms  = [n[:32] + "…" if len(n) > 32 else n for n in _top10[COL_NOMBRE]]
-            _cols  = [f"rgba(49,130,206,{1 - i * 0.06})" for i in range(_n10)]
-            _lbls  = [f"{int(v):,}" for v in _top10["consumo_mensual"]]
+            _n10  = len(_top10)
+            _noms = [n[:30] + "…" if len(n) > 30 else n for n in _top10[COL_NOMBRE]]
+            _cb   = [f"rgba(49,130,206,{1 - i * 0.06})" for i in range(_n10)]
+            _lb   = [f"{int(v):,}" for v in _top10["consumo_mensual"]]
             _fig_bar = go.Figure(go.Bar(
                 x=_top10["consumo_mensual"], y=_noms,
-                orientation="h", marker_color=_cols,
-                text=_lbls, textposition="outside",
+                orientation="h", marker_color=_cb, text=_lb, textposition="outside",
                 hovertemplate="<b>%{y}</b><br>%{x:,} u/mes<extra></extra>",
             ))
             _fig_bar.update_layout(
-                title=dict(text="Top 10 — Mayor consumo mensual", font=dict(size=14, color="#0f172a")),
-                height=300, margin=dict(t=40, b=10, l=10, r=60),
+                title=dict(text="Top 10 — Mayor consumo mensual", font=dict(size=13, color="#0f172a")),
+                height=290, margin=dict(t=32, b=8, l=8, r=50),
                 xaxis_title="Unidades / mes", yaxis=dict(autorange="reversed"),
                 paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
             )
@@ -1351,54 +1412,49 @@ with tab1:
         else:
             st.info("Sube el archivo de movimientos para ver el consumo mensual.")
 
-    # ── 6. Tarjetas de alertas activas ────────────────────────────────────────
-    st.divider()
-    st.subheader("Alertas activas")
+        # Alertas activas (columna derecha, debajo del top10)
+        st.markdown("<div style='font-weight:700;font-size:0.88rem;color:#0f172a;"
+                    "margin:4px 0 10px'>Alertas activas</div>", unsafe_allow_html=True)
 
-    _n_quiebre  = int((resumen["stock_total"] == 0).sum())
-    _n_prox_ven = int(n_criticos + n_advertencia)
+        def _card_alerta(color, titulo, valor, desc):
+            return (
+                f'<div style="background:white;border-radius:10px;padding:10px 14px;'
+                f'box-shadow:0 1px 3px rgba(0,0,0,0.07);border-left:4px solid {color};'
+                f'display:flex;align-items:center;gap:10px;margin-bottom:7px;">'
+                f'<div style="width:9px;height:9px;border-radius:50%;background:{color};flex-shrink:0"></div>'
+                f'<div style="flex:1"><div style="font-weight:700;font-size:0.82rem;color:#0f172a">{titulo}</div>'
+                f'<div style="font-size:0.71rem;color:#64748b;margin-top:1px">{desc}</div></div>'
+                f'<div style="font-size:1.1rem;font-weight:800;color:{color};margin-left:auto">{valor}</div>'
+                f'</div>'
+            )
 
-    def _card_alerta(color, titulo, valor, desc):
-        return (
-            f'<div style="background:white;border-radius:12px;padding:14px 18px;'
-            f'box-shadow:0 1px 3px rgba(0,0,0,0.07);border-left:4px solid {color};'
-            f'display:flex;align-items:center;gap:14px;margin-bottom:10px;">'
-            f'<div style="width:10px;height:10px;border-radius:50%;background:{color};flex-shrink:0"></div>'
-            f'<div style="flex:1"><div style="font-weight:700;font-size:0.88rem;color:#0f172a">{titulo}</div>'
-            f'<div style="font-size:0.77rem;color:#64748b;margin-top:2px">{desc}</div></div>'
-            f'<div style="font-size:1.35rem;font-weight:800;color:{color};margin-left:auto">{valor}</div>'
-            f'</div>'
+        st.markdown(
+            _card_alerta("#E53E3E", "Quiebre de stock",              _n_quiebre,
+                         "Productos con existencias en cero") +
+            _card_alerta("#D69E2E", "Próximo a vencer",              _n_prox_ven,
+                         "Vencimiento en los próximos 90 días") +
+            _card_alerta("#DD6B20", "OC vencida sin recibir",        "N/D",
+                         "Requiere módulo de órdenes de compra") +
+            _card_alerta("#3182CE", "Lotes rechazados sobre umbral", "N/D",
+                         "Requiere registro de recepciones"),
+            unsafe_allow_html=True
         )
 
-    st.markdown(
-        _card_alerta("#E53E3E", "Quiebre de stock",              _n_quiebre,
-                     "Productos con existencias en cero") +
-        _card_alerta("#D69E2E", "Próximo a vencer",              _n_prox_ven,
-                     "Medicamentos con vencimiento en los próximos 90 días") +
-        _card_alerta("#DD6B20", "OC vencida sin recibir",        "N/D",
-                     "Requiere módulo de órdenes de compra") +
-        _card_alerta("#3182CE", "Lotes rechazados sobre umbral", "N/D",
-                     "Requiere registro de recepciones"),
-        unsafe_allow_html=True
-    )
-
-    # ── 7. Resumen por estado (formato hospital) ──────────────────────────────
+    # ── 5. Resumen por estado (formato hospital) ──────────────────────────────
     if formato_hospital and "_estado_cob" in resumen.columns:
-        _alc_all2  = pd.to_numeric(resumen.get("ALCANCE",  pd.Series(dtype=float)), errors="coerce")
-        _sug_all2  = pd.to_numeric(resumen.get("SUGERIDO", pd.Series(dtype=float)), errors="coerce").fillna(0)
+        _alc_all2 = pd.to_numeric(resumen.get("ALCANCE",  pd.Series(dtype=float)), errors="coerce")
+        _sug_all2 = pd.to_numeric(resumen.get("SUGERIDO", pd.Series(dtype=float)), errors="coerce").fillna(0)
 
         st.divider()
         st.subheader("Resumen por estado")
 
-        _est_opciones = ["Sin existencias", "Crítico (≤1 mes)", "Bajo (1–3 meses)", "Adecuado (>3 meses)"]
-        _est_disp = [e for e in _est_opciones if e in resumen["_estado_cob"].values]
+        _est_opc  = ["Sin existencias", "Crítico (≤1 mes)", "Bajo (1–3 meses)", "Adecuado (>3 meses)"]
+        _est_disp = [e for e in _est_opc if e in resumen["_estado_cob"].values]
         _est_def  = [e for e in ["Sin existencias", "Crítico (≤1 mes)"] if e in _est_disp]
 
         _est_sel = st.multiselect(
             "Seleccionar estados a visualizar:",
-            _est_disp,
-            default=_est_def,
-            key="kpi_estados"
+            _est_disp, default=_est_def, key="kpi_estados"
         )
 
         if _est_sel:
