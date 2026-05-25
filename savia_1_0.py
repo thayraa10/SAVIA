@@ -1140,219 +1140,216 @@ if formato_hospital:
 # TABS
 # ──────────────────────────────────────────────────────────────────────────────
 tab1, tab2, tab3, tab4 = st.tabs([
-    "Alertas y KPIs",
+    "Panel Principal",
     "Inventario y Pronóstico",
     "Abastecimiento",
     "Detalle por Medicamento",
 ])
 
 # ══════════════════════════════════════════════════════════════════════════════
-# TAB 1 — ALERTAS Y KPIs
+# MÓDULO 1 — PANEL PRINCIPAL
 # ══════════════════════════════════════════════════════════════════════════════
 with tab1:
-    dias_desde_revision = (date.today() - fecha_revision).days
-    proxima_revision    = fecha_revision + timedelta(days=int(periodo_revision))
+    # _estado_cob es necesario para tab2 (se calcula aquí porque Streamlit corre
+    # todos los bloques with tab: en cada rerun, independiente de la tab activa)
+    if formato_hospital:
+        _alc_all = pd.to_numeric(resumen.get("ALCANCE", pd.Series(dtype=float)), errors="coerce")
+        _sug_all = pd.to_numeric(resumen.get("SUGERIDO", pd.Series(dtype=float)), errors="coerce").fillna(0)
+        def _clasificar_cob(row, alc):
+            if row["stock_total"] == 0:        return "Sin existencias"
+            if not pd.isna(alc) and alc <= 1:  return "Crítico (≤1 mes)"
+            if not pd.isna(alc) and alc <= 3:  return "Bajo (1–3 meses)"
+            if not pd.isna(alc) and alc > 3:   return "Adecuado (>3 meses)"
+            return "Sin datos"
+        resumen["_estado_cob"]      = [_clasificar_cob(resumen.iloc[i], _alc_all.iloc[i]) for i in range(len(resumen))]
+        resumen["_requiere_pedido"] = _sug_all > 0
 
-
-    resp_str = responsable if responsable else "No especificado"
-    if dias_desde_revision <= periodo_revision:
-        alerta_rev = '<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#16a34a;margin-right:6px;vertical-align:middle"></span>'
-    elif dias_desde_revision <= periodo_revision * 2:
-        alerta_rev = '<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#eab308;margin-right:6px;vertical-align:middle"></span>'
+    # ── Valores del semáforo ──────────────────────────────────────────────────
+    _tiene_alc = formato_hospital and "ALCANCE" in resumen.columns
+    if _tiene_alc:
+        _alc_sem   = pd.to_numeric(resumen["ALCANCE"], errors="coerce")
+        _sem_rojo  = int((resumen["stock_total"] == 0).sum() + ((_alc_sem > 0) & (_alc_sem <= 1)).sum())
+        _sem_amari = int(((_alc_sem > 1) & (_alc_sem <= 3)).sum())
+        _sem_verde = int((_alc_sem > 3).sum())
     else:
-        alerta_rev = '<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#dc2626;margin-right:6px;vertical-align:middle"></span>'
+        _sem_rojo  = int(n_vencidos + n_criticos)
+        _sem_amari = int(n_advertencia)
+        _sem_verde = int(n_normales)
+
+    # ── 1. Banner de vencimientos ─────────────────────────────────────────────
+    _n_crit_banner = _sem_rojo  if _tiene_alc else int(n_vencidos + n_criticos)
+    _n_adv_banner  = _sem_amari if _tiene_alc else int(n_advertencia)
+
+    if _n_crit_banner > 0:
+        _bn_bg, _bn_border, _bn_color = "#FED7D7", "#E53E3E", "#C53030"
+        _bn_label = "ALERTA CRITICA"
+        _bn_msg   = f"{_n_crit_banner} medicamento(s) vencido(s) o con vencimiento crítico (menos de 30 días)"
+    elif _n_adv_banner > 0:
+        _bn_bg, _bn_border, _bn_color = "#FEFCBF", "#D69E2E", "#B7791F"
+        _bn_label = "ADVERTENCIA"
+        _bn_msg   = f"{_n_adv_banner} medicamento(s) con vencimiento próximo (31 a 90 días)"
+    else:
+        _bn_bg, _bn_border, _bn_color = "#C6F6D5", "#38A169", "#276749"
+        _bn_label = "ESTADO OK"
+        _bn_msg   = "Sin alertas de vencimiento activas. Todos los medicamentos se encuentran dentro del rango normal."
+
     st.markdown(f"""
-    <div style="display:flex;gap:16px;margin-bottom:20px;">
-      <!-- Tarjeta Registro -->
-      <div style="background:white;border-radius:12px;padding:16px 24px;
-                  box-shadow:0 1px 3px rgba(0,0,0,0.07);border-left:4px solid #2563eb;
-                  display:flex;gap:32px;align-items:center;">
-        <div><div style="font-size:0.75rem;color:#64748b;font-weight:500">ÚLTIMA REVISIÓN</div>
-             <div style="font-size:1.1rem;font-weight:700;color:#0f172a">{fecha_revision.strftime("%d/%m/%Y")}</div>
-             <div style="font-size:0.75rem;color:#94a3b8">Hace {dias_desde_revision} días</div></div>
-        <div><div style="font-size:0.75rem;color:#64748b;font-weight:500">PRÓXIMA REVISIÓN</div>
-             <div style="font-size:1.1rem;font-weight:700;color:#0f172a">{alerta_rev} {proxima_revision.strftime("%d/%m/%Y")}</div>
-             <div style="font-size:0.75rem;color:#94a3b8">En {periodo_revision} días</div></div>
-        <div><div style="font-size:0.75rem;color:#64748b;font-weight:500">RESPONSABLE</div>
-             <div style="font-size:1.1rem;font-weight:700;color:#0f172a">{resp_str}</div></div>
+    <div style="background:{_bn_bg};border-left:6px solid {_bn_border};
+                border-radius:10px;padding:18px 24px;margin-bottom:24px;">
+      <div style="font-weight:700;font-size:0.82rem;color:{_bn_color};
+                  text-transform:uppercase;letter-spacing:0.06em;margin-bottom:4px">{_bn_label}</div>
+      <div style="color:#1a202c;font-size:0.95rem">{_bn_msg}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── 2. Semáforo general ───────────────────────────────────────────────────
+    if _tiene_alc:
+        _lbl_rojo  = "Sin stock o cobertura crítica"
+        _lbl_amari = "Cobertura baja (1–3 meses)"
+        _lbl_verde = "Cobertura adecuada (>3 meses)"
+    else:
+        _lbl_rojo  = "Quiebre o vencimiento crítico"
+        _lbl_amari = "Próximo a vencer o stock bajo"
+        _lbl_verde = "Stock adecuado"
+
+    st.markdown(f"""
+    <div style="display:flex;justify-content:center;gap:48px;
+                background:white;border-radius:14px;padding:28px 0;
+                box-shadow:0 1px 4px rgba(0,0,0,0.07);margin-bottom:24px;">
+      <div style="text-align:center;">
+        <div style="width:96px;height:96px;border-radius:50%;background:#E53E3E;
+                    display:flex;align-items:center;justify-content:center;
+                    margin:0 auto 10px;box-shadow:0 4px 14px rgba(229,62,62,0.35);">
+          <span style="font-size:2rem;font-weight:800;color:white">{_sem_rojo}</span>
+        </div>
+        <div style="font-size:0.78rem;color:#4A5568;font-weight:600;max-width:120px;line-height:1.4">{_lbl_rojo}</div>
       </div>
-      <!-- Tarjeta Valor total -->
-      <div style="background:white;border-radius:12px;padding:16px 24px;flex:1;
-                  box-shadow:0 1px 3px rgba(0,0,0,0.07);text-align:center;
-                  display:flex;flex-direction:column;justify-content:center;">
-        <div style="font-size:0.75rem;color:#64748b;font-weight:500">VALOR TOTAL EN EXISTENCIAS</div>
-        <div style="font-size:1.8rem;font-weight:800;color:#0f172a">${valor_total:,.0f} CLP</div>
+      <div style="text-align:center;">
+        <div style="width:96px;height:96px;border-radius:50%;background:#D69E2E;
+                    display:flex;align-items:center;justify-content:center;
+                    margin:0 auto 10px;box-shadow:0 4px 14px rgba(214,158,46,0.35);">
+          <span style="font-size:2rem;font-weight:800;color:white">{_sem_amari}</span>
+        </div>
+        <div style="font-size:0.78rem;color:#4A5568;font-weight:600;max-width:120px;line-height:1.4">{_lbl_amari}</div>
       </div>
-      <!-- Tarjeta Total productos -->
-      <div style="background:white;border-radius:12px;padding:16px 24px;
-                  box-shadow:0 1px 3px rgba(0,0,0,0.07);text-align:center;
-                  display:flex;flex-direction:column;justify-content:center;">
-        <div style="font-size:0.75rem;color:#64748b;font-weight:500">TOTAL PRODUCTOS EN EXISTENCIAS</div>
-        <div style="font-size:1.8rem;font-weight:800;color:#0f172a">{len(resumen):,}</div>
+      <div style="text-align:center;">
+        <div style="width:96px;height:96px;border-radius:50%;background:#38A169;
+                    display:flex;align-items:center;justify-content:center;
+                    margin:0 auto 10px;box-shadow:0 4px 14px rgba(56,161,105,0.35);">
+          <span style="font-size:2rem;font-weight:800;color:white">{_sem_verde}</span>
+        </div>
+        <div style="font-size:0.78rem;color:#4A5568;font-weight:600;max-width:120px;line-height:1.4">{_lbl_verde}</div>
       </div>
     </div>
     """, unsafe_allow_html=True)
 
-    # ── KPIs principales (formato sin hospital) ───────────────────────────────
-    if not formato_hospital:
-        kpi1, kpi2, kpi3, kpi4, kpi5 = st.columns(5)
-        kpi1.metric("Valor total", f"${valor_total:,.0f} CLP")
-        kpi2.metric("Vencidos",    int(n_vencidos))
-        kpi3.metric("Críticos",    int(n_criticos))
-        kpi4.metric("Advertencia", int(n_advertencia))
-        kpi5.metric("Normales",    int(n_normales))
+    # ── 3. KPIs ───────────────────────────────────────────────────────────────
+    _valor_vencido = float(resumen[resumen["estado"] == "VENCIDO"]["valor_inventario"].sum())
+    _pct_perdida   = round(_valor_vencido / valor_total * 100, 1) if valor_total > 0 else 0.0
 
-    # ── GRÁFICOS DE RESUMEN ────────────────────────────────────────────────────
-    graf1, graf2 = st.columns(2)
+    _kc1, _kc2, _kc3, _kc4 = st.columns(4)
+    _kc1.metric("Valor total en existencias",     f"${valor_total:,.0f} CLP")
+    _kc2.metric("Total productos en existencias", f"{len(resumen):,}")
+    _kc3.metric("OC pendientes o vencidas",        "N/D",
+                help="Requiere módulo de órdenes de compra")
+    _kc4.metric("Pérdida estimada (vencidos)",     f"{_pct_perdida:.1f}%",
+                help="Valor de medicamentos vencidos como porcentaje del inventario total")
 
-    PALETA = {"sin_stock": "#dc2626", "critico": "#f97316", "bajo": "#eab308",
-              "adecuado": "#16a34a", "normal": "#2563eb", "gris": "#94a3b8"}
+    # ── 4. Gráficos ───────────────────────────────────────────────────────────
+    PALETA = {"sin_stock": "#E53E3E", "critico": "#DD6B20", "bajo": "#D69E2E",
+              "adecuado": "#38A169", "normal": "#3182CE", "gris": "#94a3b8"}
 
-    with graf1:
-        if formato_hospital and tiene_alcance:
-            alcance_num = pd.to_numeric(resumen["ALCANCE"], errors="coerce")
-            categorias  = ["Sin existencias", "Crítica (≤1 mes)", "Baja (1–3 meses)", "Adecuada (>3 meses)"]
-            conteos = [
+    _gc1, _gc2 = st.columns(2)
+
+    with _gc1:
+        if formato_hospital and _tiene_alc:
+            _alc_n  = pd.to_numeric(resumen["ALCANCE"], errors="coerce")
+            _cats_d = ["Sin existencias", "Crítica (<1 mes)", "Baja (1–3 meses)", "Adecuada (>3 meses)"]
+            _cont_d = [
                 int((resumen["stock_total"] == 0).sum()),
-                int(((alcance_num > 0) & (alcance_num <= 1)).sum()),
-                int(((alcance_num > 1) & (alcance_num <= 3)).sum()),
-                int((alcance_num > 3).sum()),
+                int(((_alc_n > 0) & (_alc_n <= 1)).sum()),
+                int(((_alc_n > 1) & (_alc_n <= 3)).sum()),
+                int((_alc_n > 3).sum()),
             ]
-            colores_cob = [PALETA["sin_stock"], PALETA["critico"], PALETA["bajo"], PALETA["adecuado"]]
-            fig_pie = go.Figure(go.Pie(
-                labels=categorias, values=conteos, marker_colors=colores_cob,
-                textinfo="percent+value", hole=0.5,
-                hovertemplate="<b>%{label}</b><br>%{value} productos<br>%{percent}<extra></extra>",
-            ))
-            fig_pie.update_layout(
-                title=dict(text="Cobertura de stock", font=dict(size=14, color="#0f172a")),
-                height=300, margin=dict(t=40, b=10, l=10, r=10),
-                legend=dict(orientation="h", y=-0.15),
-                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-            )
-            st.plotly_chart(fig_pie, use_container_width=True)
+            _col_d  = [PALETA["sin_stock"], PALETA["critico"], PALETA["bajo"], PALETA["adecuado"]]
         else:
-            colores_estado = {"VENCIDO": PALETA["sin_stock"], "CRITICO": PALETA["critico"],
-                              "ADVERTENCIA": PALETA["bajo"], "NORMAL": PALETA["adecuado"], "Sin fecha": PALETA["gris"]}
-            estados_counts = resumen["estado"].value_counts().reset_index()
-            estados_counts.columns = ["Estado", "Cantidad"]
-            # Construir la lista de colores para cada estado del gráfico de torta
-            colores_torta = []
-            for estado_nombre in estados_counts["Estado"]:
-                colores_torta.append(colores_estado.get(estado_nombre, PALETA["gris"]))
-            fig_pie = go.Figure(go.Pie(
-                labels=estados_counts["Estado"], values=estados_counts["Cantidad"],
-                marker_colors=colores_torta,
-                textinfo="percent+value", hole=0.5,
-            ))
-            fig_pie.update_layout(
-                title=dict(text="Estado del inventario", font=dict(size=14, color="#0f172a")),
-                height=300, margin=dict(t=40, b=10, l=10, r=10),
-                legend=dict(orientation="h", y=-0.15),
-                paper_bgcolor="rgba(0,0,0,0)",
-            )
-            st.plotly_chart(fig_pie, use_container_width=True)
+            _orden_e = ["VENCIDO", "CRITICO", "ADVERTENCIA", "NORMAL", "Sin fecha"]
+            _vc      = resumen["estado"].value_counts()
+            _cats_d  = [e for e in _orden_e if e in _vc.index]
+            _cont_d  = [int(_vc[e]) for e in _cats_d]
+            _col_map = {"VENCIDO": PALETA["sin_stock"], "CRITICO": PALETA["critico"],
+                        "ADVERTENCIA": PALETA["bajo"], "NORMAL": PALETA["adecuado"],
+                        "Sin fecha": PALETA["gris"]}
+            _col_d   = [_col_map.get(e, PALETA["gris"]) for e in _cats_d]
 
-    with graf2:
+        _fig_pie = go.Figure(go.Pie(
+            labels=_cats_d, values=_cont_d, marker_colors=_col_d,
+            textinfo="percent+value", hole=0.5,
+            hovertemplate="<b>%{label}</b><br>%{value} productos<br>%{percent}<extra></extra>",
+        ))
+        _fig_pie.update_layout(
+            title=dict(text="Cobertura de stock", font=dict(size=14, color="#0f172a")),
+            height=300, margin=dict(t=40, b=10, l=10, r=10),
+            legend=dict(orientation="h", y=-0.15),
+            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        )
+        st.plotly_chart(_fig_pie, use_container_width=True)
+
+    with _gc2:
         if tiene_movimientos:
-            top_consumo = resumen[resumen["media_diaria"] > 0].nlargest(10, "media_diaria").copy()
-            top_consumo["consumo_mensual"] = (top_consumo["media_diaria"] * 30).round(0)
-            # Acortar nombres largos para que quepan en el gráfico
-            nombres_cortos = []
-            for nombre_med in top_consumo[COL_NOMBRE]:
-                if len(nombre_med) > 32:
-                    nombres_cortos.append(nombre_med[:32] + "…")
-                else:
-                    nombres_cortos.append(nombre_med)
-            # Crear gradiente de azul oscuro a azul claro para las barras
-            n_bars = len(top_consumo)
-            colores_grad = []
-            for i in range(n_bars):
-                opacidad = 1 - i * 0.06
-                colores_grad.append(f"rgba(37,99,235,{opacidad})")
-            # Crear las etiquetas de texto de cada barra
-            etiquetas_barras = []
-            for valor_consumo in top_consumo["consumo_mensual"]:
-                etiquetas_barras.append(f"{int(valor_consumo):,}")
-            fig_bar = go.Figure(go.Bar(
-                x=top_consumo["consumo_mensual"], y=nombres_cortos,
-                orientation="h", marker_color=colores_grad,
-                text=etiquetas_barras,
-                textposition="outside",
+            _top10 = resumen[resumen["media_diaria"] > 0].nlargest(10, "media_diaria").copy()
+            _top10["consumo_mensual"] = (_top10["media_diaria"] * 30).round(0)
+            _n10   = len(_top10)
+            _noms  = [n[:32] + "…" if len(n) > 32 else n for n in _top10[COL_NOMBRE]]
+            _cols  = [f"rgba(49,130,206,{1 - i * 0.06})" for i in range(_n10)]
+            _lbls  = [f"{int(v):,}" for v in _top10["consumo_mensual"]]
+            _fig_bar = go.Figure(go.Bar(
+                x=_top10["consumo_mensual"], y=_noms,
+                orientation="h", marker_color=_cols,
+                text=_lbls, textposition="outside",
                 hovertemplate="<b>%{y}</b><br>%{x:,} u/mes<extra></extra>",
             ))
-            fig_bar.update_layout(
+            _fig_bar.update_layout(
                 title=dict(text="Top 10 — Mayor consumo mensual", font=dict(size=14, color="#0f172a")),
                 height=300, margin=dict(t=40, b=10, l=10, r=60),
                 xaxis_title="Unidades / mes", yaxis=dict(autorange="reversed"),
                 paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
             )
-            st.plotly_chart(fig_bar, use_container_width=True)
+            st.plotly_chart(_fig_bar, use_container_width=True)
+        else:
+            st.info("Sube el archivo de movimientos para ver el consumo mensual.")
 
-    # ── KPIs interactivos por estado ───────────────────────────────────────────
-    if formato_hospital:
-        alcance_num_all  = pd.to_numeric(resumen.get("ALCANCE",  pd.Series(dtype=float)), errors="coerce")
-        sugerido_num_all = pd.to_numeric(resumen.get("SUGERIDO", pd.Series(dtype=float)), errors="coerce").fillna(0)
+    # ── 5. Tarjetas de alertas activas ────────────────────────────────────────
+    st.divider()
+    st.subheader("Alertas activas")
 
-        def clasificar(row, alc):
-            if row["stock_total"] == 0:       return "Sin existencias"
-            if not pd.isna(alc) and alc <= 1: return "Crítico (≤1 mes)"
-            if not pd.isna(alc) and alc <= 3: return "Bajo (1–3 meses)"
-            if not pd.isna(alc) and alc > 3:  return "Adecuado (>3 meses)"
-            return "Sin datos"
+    _n_quiebre  = int((resumen["stock_total"] == 0).sum())
+    _n_prox_ven = int(n_criticos + n_advertencia)
 
-        # Asignar el estado de cobertura a cada fila del resumen usando la función clasificar
-        lista_estados_cob = []
-        for i in range(len(resumen)):
-            estado_fila = clasificar(resumen.iloc[i], alcance_num_all.iloc[i])
-            lista_estados_cob.append(estado_fila)
-        resumen["_estado_cob"]    = lista_estados_cob
-        resumen["_requiere_pedido"] = sugerido_num_all > 0
-
-        st.divider()
-        st.subheader("Resumen por estado")
-
-        estados_opciones = ["Sin existencias", "Crítico (≤1 mes)", "Bajo (1–3 meses)", "Adecuado (>3 meses)"]
-        # Filtrar solo los estados que realmente existen en los datos
-        estados_disponibles = []
-        for estado_op in estados_opciones:
-            if estado_op in resumen["_estado_cob"].values:
-                estados_disponibles.append(estado_op)
-
-        # Seleccionar por defecto los estados más críticos
-        estados_default = []
-        for estado_op in ["Sin existencias", "Crítico (≤1 mes)"]:
-            if estado_op in estados_disponibles:
-                estados_default.append(estado_op)
-
-        estados_sel = st.multiselect(
-            "Seleccionar estados a visualizar:",
-            estados_disponibles,
-            default=estados_default,
-            key="kpi_estados"
+    def _card_alerta(color, titulo, valor, desc):
+        return (
+            f'<div style="background:white;border-radius:12px;padding:14px 18px;'
+            f'box-shadow:0 1px 3px rgba(0,0,0,0.07);border-left:4px solid {color};'
+            f'display:flex;align-items:center;gap:14px;margin-bottom:10px;">'
+            f'<div style="width:10px;height:10px;border-radius:50%;background:{color};flex-shrink:0"></div>'
+            f'<div style="flex:1"><div style="font-weight:700;font-size:0.88rem;color:#0f172a">{titulo}</div>'
+            f'<div style="font-size:0.77rem;color:#64748b;margin-top:2px">{desc}</div></div>'
+            f'<div style="font-size:1.35rem;font-weight:800;color:{color};margin-left:auto">{valor}</div>'
+            f'</div>'
         )
 
-        if estados_sel:
-            df_sel = resumen[resumen["_estado_cob"].isin(estados_sel)]
-            n_productos   = len(df_sel)
-            n_pedir       = int((sugerido_num_all[df_sel.index] > 0).sum())
-            valor_sel     = float((df_sel["stock_total"] * df_sel["costo_unitario"]).sum()) if "costo_unitario" in df_sel.columns else 0
-            valor_pedido_sel = float((sugerido_num_all[df_sel.index] * df_sel["costo_unitario"]).sum()) if "costo_unitario" in df_sel.columns else 0
+    st.markdown(
+        _card_alerta("#E53E3E", "Quiebre de stock",              _n_quiebre,
+                     "Productos con existencias en cero") +
+        _card_alerta("#D69E2E", "Próximo a vencer",              _n_prox_ven,
+                     "Medicamentos con vencimiento en los próximos 90 días") +
+        _card_alerta("#DD6B20", "OC vencida sin recibir",        "N/D",
+                     "Requiere módulo de órdenes de compra") +
+        _card_alerta("#3182CE", "Lotes rechazados sobre umbral", "N/D",
+                     "Requiere registro de recepciones"),
+        unsafe_allow_html=True
+    )
 
-            k1, k2, k3, k4 = st.columns(4)
-            k1.metric("Productos en estado seleccionado", f"{n_productos:,}")
-            k2.metric("Requieren pedido",                 f"{n_pedir:,}")
-            k3.metric("Valor en existencias (selección)", f"${valor_sel:,.0f} CLP")
-            k4.metric("Valor estimado a pedir",           f"${valor_pedido_sel:,.0f} CLP")
-
-            # Desglose por estado
-            desglose = df_sel.groupby("_estado_cob").agg(
-                Productos=("stock_total", "count"),
-                Unidades_totales=("stock_total", "sum"),
-            ).reset_index().rename(columns={"_estado_cob": "Estado"})
-            st.dataframe(_safe_df(desglose), use_container_width=True, hide_index=True)
-        else:
-            st.info("Selecciona al menos un estado para ver los KPIs.")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 2 — INVENTARIO
