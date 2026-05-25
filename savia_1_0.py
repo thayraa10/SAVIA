@@ -1243,19 +1243,51 @@ with tab1:
     </div>
     """, unsafe_allow_html=True)
 
-    # ── 3. KPIs ───────────────────────────────────────────────────────────────
+    # ── 3. Info de revisión ───────────────────────────────────────────────────
+    _dias_rev   = (date.today() - fecha_revision).days
+    _prox_rev   = fecha_revision + timedelta(days=int(periodo_revision))
+    _resp_str   = responsable if responsable else "No especificado"
+    if _dias_rev <= periodo_revision:
+        _dot_rev = '<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:#38A169;margin-right:5px;vertical-align:middle"></span>'
+    elif _dias_rev <= periodo_revision * 2:
+        _dot_rev = '<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:#D69E2E;margin-right:5px;vertical-align:middle"></span>'
+    else:
+        _dot_rev = '<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:#E53E3E;margin-right:5px;vertical-align:middle"></span>'
+
+    st.markdown(f"""
+    <div style="display:flex;gap:16px;margin-bottom:20px;flex-wrap:wrap;">
+      <div style="background:white;border-radius:12px;padding:14px 22px;
+                  box-shadow:0 1px 3px rgba(0,0,0,0.07);border-left:4px solid #3182CE;
+                  display:flex;gap:32px;align-items:center;flex:1;min-width:300px;">
+        <div>
+          <div style="font-size:0.72rem;color:#64748b;font-weight:500;text-transform:uppercase">Última revisión</div>
+          <div style="font-size:1.05rem;font-weight:700;color:#0f172a">{fecha_revision.strftime("%d/%m/%Y")}</div>
+          <div style="font-size:0.72rem;color:#94a3b8">Hace {_dias_rev} día(s)</div>
+        </div>
+        <div>
+          <div style="font-size:0.72rem;color:#64748b;font-weight:500;text-transform:uppercase">Próxima revisión</div>
+          <div style="font-size:1.05rem;font-weight:700;color:#0f172a">{_dot_rev}{_prox_rev.strftime("%d/%m/%Y")}</div>
+          <div style="font-size:0.72rem;color:#94a3b8">En {periodo_revision} días</div>
+        </div>
+        <div>
+          <div style="font-size:0.72rem;color:#64748b;font-weight:500;text-transform:uppercase">Responsable</div>
+          <div style="font-size:1.05rem;font-weight:700;color:#0f172a">{_resp_str}</div>
+        </div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── 4. KPIs ───────────────────────────────────────────────────────────────
     _valor_vencido = float(resumen[resumen["estado"] == "VENCIDO"]["valor_inventario"].sum())
     _pct_perdida   = round(_valor_vencido / valor_total * 100, 1) if valor_total > 0 else 0.0
 
-    _kc1, _kc2, _kc3, _kc4 = st.columns(4)
+    _kc1, _kc2, _kc3 = st.columns(3)
     _kc1.metric("Valor total en existencias",     f"${valor_total:,.0f} CLP")
     _kc2.metric("Total productos en existencias", f"{len(resumen):,}")
-    _kc3.metric("OC pendientes o vencidas",        "N/D",
-                help="Requiere módulo de órdenes de compra")
-    _kc4.metric("Pérdida estimada (vencidos)",     f"{_pct_perdida:.1f}%",
+    _kc3.metric("Pérdida estimada (vencidos)",     f"{_pct_perdida:.1f}%",
                 help="Valor de medicamentos vencidos como porcentaje del inventario total")
 
-    # ── 4. Gráficos ───────────────────────────────────────────────────────────
+    # ── 5. Gráficos ───────────────────────────────────────────────────────────
     PALETA = {"sin_stock": "#E53E3E", "critico": "#DD6B20", "bajo": "#D69E2E",
               "adecuado": "#38A169", "normal": "#3182CE", "gris": "#94a3b8"}
 
@@ -1319,7 +1351,7 @@ with tab1:
         else:
             st.info("Sube el archivo de movimientos para ver el consumo mensual.")
 
-    # ── 5. Tarjetas de alertas activas ────────────────────────────────────────
+    # ── 6. Tarjetas de alertas activas ────────────────────────────────────────
     st.divider()
     st.subheader("Alertas activas")
 
@@ -1350,6 +1382,45 @@ with tab1:
         unsafe_allow_html=True
     )
 
+    # ── 7. Resumen por estado (formato hospital) ──────────────────────────────
+    if formato_hospital and "_estado_cob" in resumen.columns:
+        _alc_all2  = pd.to_numeric(resumen.get("ALCANCE",  pd.Series(dtype=float)), errors="coerce")
+        _sug_all2  = pd.to_numeric(resumen.get("SUGERIDO", pd.Series(dtype=float)), errors="coerce").fillna(0)
+
+        st.divider()
+        st.subheader("Resumen por estado")
+
+        _est_opciones = ["Sin existencias", "Crítico (≤1 mes)", "Bajo (1–3 meses)", "Adecuado (>3 meses)"]
+        _est_disp = [e for e in _est_opciones if e in resumen["_estado_cob"].values]
+        _est_def  = [e for e in ["Sin existencias", "Crítico (≤1 mes)"] if e in _est_disp]
+
+        _est_sel = st.multiselect(
+            "Seleccionar estados a visualizar:",
+            _est_disp,
+            default=_est_def,
+            key="kpi_estados"
+        )
+
+        if _est_sel:
+            _df_sel  = resumen[resumen["_estado_cob"].isin(_est_sel)]
+            _n_prod  = len(_df_sel)
+            _n_pedir = int((_sug_all2[_df_sel.index] > 0).sum())
+            _val_sel = float((_df_sel["stock_total"] * _df_sel["costo_unitario"]).sum()) if "costo_unitario" in _df_sel.columns else 0
+            _val_ped = float((_sug_all2[_df_sel.index] * _df_sel["costo_unitario"]).sum()) if "costo_unitario" in _df_sel.columns else 0
+
+            _rk1, _rk2, _rk3, _rk4 = st.columns(4)
+            _rk1.metric("Productos en estado seleccionado", f"{_n_prod:,}")
+            _rk2.metric("Requieren pedido",                 f"{_n_pedir:,}")
+            _rk3.metric("Valor en existencias (selección)", f"${_val_sel:,.0f} CLP")
+            _rk4.metric("Valor estimado a pedir",           f"${_val_ped:,.0f} CLP")
+
+            _desglose = _df_sel.groupby("_estado_cob").agg(
+                Productos=("stock_total", "count"),
+                Unidades_totales=("stock_total", "sum"),
+            ).reset_index().rename(columns={"_estado_cob": "Estado"})
+            st.dataframe(_safe_df(_desglose), use_container_width=True, hide_index=True)
+        else:
+            st.info("Selecciona al menos un estado para ver los KPIs.")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 2 — INVENTARIO
