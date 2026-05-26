@@ -1426,86 +1426,108 @@ with tab1:
         else:
             st.info("Sube el archivo de movimientos para ver el consumo mensual.")
 
-        # ── Medicamentos que requieren atención inmediata ──────────────────────
-        st.markdown(
-            '<div style="font-size:0.82rem;font-weight:700;color:#64748b;'
-            'text-transform:uppercase;letter-spacing:0.06em;margin:4px 0 8px 0">'
-            'Atención inmediata</div>',
-            unsafe_allow_html=True,
-        )
+        # ── Riesgo próximo de quiebre / distribución de stock ─────────────────
+        if tiene_movimientos and "media_diaria" in resumen.columns and "dias_cobertura" in resumen.columns:
+            # Productos con stock > 0 pero que se agotan en ≤30 días al ritmo actual
+            _riesgo = resumen[
+                (resumen["stock_total"] > 0) &
+                (resumen["media_diaria"] > 0) &
+                (resumen["dias_cobertura"] <= 30)
+            ].copy().sort_values("dias_cobertura").head(9)
 
-        # Construir lista de urgentes según formato
-        if formato_hospital and "_estado_cob" in resumen.columns:
-            _orden_urg = {"Sin existencias": 0, "Crítico (≤1 mes)": 1,
-                          "Bajo (1–3 meses)": 2, "Adecuado (>3 meses)": 3}
-            _urg_src = resumen[resumen["_estado_cob"].isin(
-                ["Sin existencias", "Crítico (≤1 mes)", "Bajo (1–3 meses)"]
-            )].copy()
-            _urg_src["_ord"] = _urg_src["_estado_cob"].map(_orden_urg).fillna(9)
-            _urg_src = _urg_src.sort_values(["_ord", "stock_total"]).head(9)
-            _badge_u = {
-                "Sin existencias":  ("#FED7D7", "#C53030"),
-                "Crítico (≤1 mes)": ("#FEEBC8", "#C05621"),
-                "Bajo (1–3 meses)": ("#FEFCBF", "#B7791F"),
-            }
-            _col_estado_u = "_estado_cob"
-            _col_extra_u  = "ALCANCE" if "ALCANCE" in _urg_src.columns else None
-            _extra_hdr    = "Cob."
-        else:
-            _orden_urg2 = {"VENCIDO": 0, "CRITICO": 1, "ADVERTENCIA": 2}
-            _urg_src = resumen[resumen["estado"].isin(["VENCIDO", "CRITICO", "ADVERTENCIA"])].copy() \
-                if "estado" in resumen.columns else pd.DataFrame()
-            if len(_urg_src) > 0:
-                _urg_src["_ord"] = _urg_src["estado"].map(_orden_urg2).fillna(9)
-                _urg_src = _urg_src.sort_values(["_ord", "min_dias_vencer" if "min_dias_vencer" in _urg_src.columns else "stock_total"]).head(9)
-            _badge_u = {
-                "VENCIDO":     ("#FED7D7", "#C53030"),
-                "CRITICO":     ("#FEEBC8", "#C05621"),
-                "ADVERTENCIA": ("#FEFCBF", "#B7791F"),
-            }
-            _col_estado_u = "estado"
-            _col_extra_u  = "min_dias_vencer" if "min_dias_vencer" in (_urg_src.columns if len(_urg_src) > 0 else []) else None
-            _extra_hdr    = "Días"
-
-        if len(_urg_src) > 0:
-            _extra_th = (f'<th style="padding:6px 10px;text-align:right;color:#64748b;'
-                         f'font-weight:600;white-space:nowrap">{_extra_hdr}</th>') if _col_extra_u else ""
-            _ut_html = (
-                '<table style="width:100%;border-collapse:collapse;font-size:0.80rem;">'
-                '<thead><tr style="background:#f8fafc;border-bottom:2px solid #e2e8f0;">'
-                '<th style="padding:6px 10px;text-align:left;color:#64748b;font-weight:600">Medicamento</th>'
-                '<th style="padding:6px 10px;text-align:right;color:#64748b;font-weight:600">Stock</th>'
-                + _extra_th +
-                '<th style="padding:6px 10px;text-align:left;color:#64748b;font-weight:600">Estado</th>'
-                '</tr></thead><tbody>'
+            st.markdown(
+                '<div style="font-size:0.82rem;font-weight:700;color:#64748b;'
+                'text-transform:uppercase;letter-spacing:0.06em;margin:4px 0 8px 0">'
+                'Próximos a agotarse</div>',
+                unsafe_allow_html=True,
             )
-            for _, _ur in _urg_src.iterrows():
-                _nom_u  = str(_ur.get(COL_NOMBRE, ""))
-                _nom_u  = (_nom_u[:28] + "…") if len(_nom_u) > 28 else _nom_u
-                _stk_u  = int(_ur.get("stock_total", 0))
-                _est_u  = str(_ur.get(_col_estado_u, ""))
-                _bg_u, _fg_u = _badge_u.get(_est_u, ("#EDF2F7", "#718096"))
-                _badge_span = (f'<span style="background:{_bg_u};color:{_fg_u};border-radius:4px;'
-                               f'padding:2px 7px;font-weight:600;font-size:0.72rem">{_est_u}</span>')
-                _extra_td = ""
-                if _col_extra_u and _col_extra_u in _ur.index:
-                    _xv = _ur[_col_extra_u]
-                    try:    _xv = f"{float(_xv):.1f}"
-                    except: _xv = str(_xv) if pd.notna(_xv) else "—"
-                    _extra_td = f'<td style="padding:6px 10px;text-align:right;color:#475569">{_xv}</td>'
-                _ut_html += (
-                    f'<tr style="border-bottom:1px solid #f1f5f9;">'
-                    f'<td style="padding:6px 10px;color:#0f172a" title="{_ur.get(COL_NOMBRE,"")}">{_nom_u}</td>'
-                    f'<td style="padding:6px 10px;text-align:right;font-weight:600;'
-                    f'color:{"#E53E3E" if _stk_u == 0 else "#0f172a"}">{_stk_u:,}</td>'
-                    + _extra_td +
-                    f'<td style="padding:6px 10px">{_badge_span}</td>'
-                    f'</tr>'
+
+            if len(_riesgo) > 0:
+                _rg_html = (
+                    '<table style="width:100%;border-collapse:collapse;font-size:0.80rem;">'
+                    '<thead><tr style="background:#f8fafc;border-bottom:2px solid #e2e8f0;">'
+                    '<th style="padding:6px 10px;text-align:left;color:#64748b;font-weight:600">Medicamento</th>'
+                    '<th style="padding:6px 10px;text-align:right;color:#64748b;font-weight:600">Stock</th>'
+                    '<th style="padding:6px 10px;text-align:right;color:#64748b;font-weight:600">Días restantes</th>'
+                    '</tr></thead><tbody>'
                 )
-            _ut_html += '</tbody></table>'
-            st.markdown(_ut_html, unsafe_allow_html=True)
+                for _, _rr in _riesgo.iterrows():
+                    _nom_r = str(_rr.get(COL_NOMBRE, ""))
+                    _nom_r = (_nom_r[:26] + "…") if len(_nom_r) > 26 else _nom_r
+                    _stk_r = int(_rr.get("stock_total", 0))
+                    _dias_r = float(_rr.get("dias_cobertura", 0))
+                    # Color según urgencia del tiempo restante
+                    if _dias_r <= 7:
+                        _dias_color, _dias_bg = "#C53030", "#FED7D7"
+                    elif _dias_r <= 15:
+                        _dias_color, _dias_bg = "#C05621", "#FEEBC8"
+                    else:
+                        _dias_color, _dias_bg = "#B7791F", "#FEFCBF"
+                    _badge_dias = (
+                        f'<span style="background:{_dias_bg};color:{_dias_color};border-radius:4px;'
+                        f'padding:2px 8px;font-weight:700;font-size:0.78rem">{_dias_r:.0f} d</span>'
+                    )
+                    _rg_html += (
+                        f'<tr style="border-bottom:1px solid #f1f5f9;">'
+                        f'<td style="padding:6px 10px;color:#0f172a" title="{_rr.get(COL_NOMBRE,"")}">{_nom_r}</td>'
+                        f'<td style="padding:6px 10px;text-align:right;font-weight:600;color:#0f172a">{_stk_r:,}</td>'
+                        f'<td style="padding:6px 10px;text-align:right">{_badge_dias}</td>'
+                        f'</tr>'
+                    )
+                _rg_html += '</tbody></table>'
+                st.markdown(_rg_html, unsafe_allow_html=True)
+            else:
+                st.success("Ningún producto con stock se agota en los próximos 30 días.")
+
         else:
-            st.success("Sin productos que requieran atención inmediata.")
+            # Sin movimientos: mostrar distribución de unidades por estado
+            st.markdown(
+                '<div style="font-size:0.82rem;font-weight:700;color:#64748b;'
+                'text-transform:uppercase;letter-spacing:0.06em;margin:4px 0 6px 0">'
+                'Stock total por estado</div>',
+                unsafe_allow_html=True,
+            )
+            if formato_hospital and "_estado_cob" in resumen.columns:
+                _dist_col = "_estado_cob"
+                _pal_dist = {
+                    "Sin existencias":     "#E53E3E",
+                    "Crítico (≤1 mes)":    "#DD6B20",
+                    "Bajo (1–3 meses)":    "#D69E2E",
+                    "Adecuado (>3 meses)": "#38A169",
+                }
+            elif "estado" in resumen.columns:
+                _dist_col = "estado"
+                _pal_dist = {
+                    "VENCIDO":     "#E53E3E",
+                    "CRITICO":     "#DD6B20",
+                    "ADVERTENCIA": "#D69E2E",
+                    "NORMAL":      "#38A169",
+                }
+            else:
+                _dist_col = None
+                _pal_dist = {}
+
+            if _dist_col:
+                _dist_df = (
+                    resumen.groupby(_dist_col)["stock_total"]
+                    .sum().reset_index()
+                    .rename(columns={_dist_col: "Estado", "stock_total": "Unidades"})
+                    .sort_values("Unidades", ascending=True)
+                )
+                _dist_colors = [_pal_dist.get(e, "#A0AEC0") for e in _dist_df["Estado"]]
+                _fig_dist = go.Figure(go.Bar(
+                    x=_dist_df["Unidades"], y=_dist_df["Estado"],
+                    orientation="h", marker_color=_dist_colors,
+                    text=[f"{int(v):,}" for v in _dist_df["Unidades"]],
+                    textposition="outside",
+                    hovertemplate="<b>%{y}</b><br>%{x:,} unidades<extra></extra>",
+                ))
+                _fig_dist.update_layout(
+                    height=200, margin=dict(t=4, b=4, l=4, r=60),
+                    xaxis_title="Unidades en stock",
+                    paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                )
+                st.plotly_chart(_fig_dist, use_container_width=True)
 
 
     # ── 5. Resumen por estado (formato hospital) ──────────────────────────────
