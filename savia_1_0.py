@@ -1426,108 +1426,75 @@ with tab1:
         else:
             st.info("Sube el archivo de movimientos para ver el consumo mensual.")
 
-        # ── Riesgo próximo de quiebre / distribución de stock ─────────────────
-        if tiene_movimientos and "media_diaria" in resumen.columns and "dias_cobertura" in resumen.columns:
-            # Productos con stock > 0 pero que se agotan en ≤30 días al ritmo actual
-            _riesgo = resumen[
-                (resumen["stock_total"] > 0) &
-                (resumen["media_diaria"] > 0) &
-                (resumen["dias_cobertura"] <= 30)
-            ].copy().sort_values("dias_cobertura").head(9)
-
-            st.markdown(
-                '<div style="font-size:0.82rem;font-weight:700;color:#64748b;'
-                'text-transform:uppercase;letter-spacing:0.06em;margin:4px 0 8px 0">'
-                'Próximos a agotarse</div>',
-                unsafe_allow_html=True,
-            )
-
-            if len(_riesgo) > 0:
-                _rg_html = (
-                    '<table style="width:100%;border-collapse:collapse;font-size:0.80rem;">'
-                    '<thead><tr style="background:#f8fafc;border-bottom:2px solid #e2e8f0;">'
-                    '<th style="padding:6px 10px;text-align:left;color:#64748b;font-weight:600">Medicamento</th>'
-                    '<th style="padding:6px 10px;text-align:right;color:#64748b;font-weight:600">Stock</th>'
-                    '<th style="padding:6px 10px;text-align:right;color:#64748b;font-weight:600">Días restantes</th>'
-                    '</tr></thead><tbody>'
-                )
-                for _, _rr in _riesgo.iterrows():
-                    _nom_r = str(_rr.get(COL_NOMBRE, ""))
-                    _nom_r = (_nom_r[:26] + "…") if len(_nom_r) > 26 else _nom_r
-                    _stk_r = int(_rr.get("stock_total", 0))
-                    _dias_r = float(_rr.get("dias_cobertura", 0))
-                    # Color según urgencia del tiempo restante
-                    if _dias_r <= 7:
-                        _dias_color, _dias_bg = "#C53030", "#FED7D7"
-                    elif _dias_r <= 15:
-                        _dias_color, _dias_bg = "#C05621", "#FEEBC8"
-                    else:
-                        _dias_color, _dias_bg = "#B7791F", "#FEFCBF"
-                    _badge_dias = (
-                        f'<span style="background:{_dias_bg};color:{_dias_color};border-radius:4px;'
-                        f'padding:2px 8px;font-weight:700;font-size:0.78rem">{_dias_r:.0f} d</span>'
-                    )
-                    _rg_html += (
-                        f'<tr style="border-bottom:1px solid #f1f5f9;">'
-                        f'<td style="padding:6px 10px;color:#0f172a" title="{_rr.get(COL_NOMBRE,"")}">{_nom_r}</td>'
-                        f'<td style="padding:6px 10px;text-align:right;font-weight:600;color:#0f172a">{_stk_r:,}</td>'
-                        f'<td style="padding:6px 10px;text-align:right">{_badge_dias}</td>'
-                        f'</tr>'
-                    )
-                _rg_html += '</tbody></table>'
-                st.markdown(_rg_html, unsafe_allow_html=True)
-            else:
-                st.success("Ningún producto con stock se agota en los próximos 30 días.")
-
+        # ── Valor económico del inventario por estado ──────────────────────────
+        if formato_hospital and "_estado_cob" in resumen.columns:
+            _vc_col = "_estado_cob"
+            _vc_pal = {
+                "Sin existencias":     "#E53E3E",
+                "Crítico (≤1 mes)":    "#DD6B20",
+                "Bajo (1–3 meses)":    "#D69E2E",
+                "Adecuado (>3 meses)": "#38A169",
+            }
+        elif "estado" in resumen.columns:
+            _vc_col = "estado"
+            _vc_pal = {
+                "VENCIDO":     "#E53E3E",
+                "CRITICO":     "#DD6B20",
+                "ADVERTENCIA": "#D69E2E",
+                "NORMAL":      "#38A169",
+            }
         else:
-            # Sin movimientos: mostrar distribución de unidades por estado
-            st.markdown(
-                '<div style="font-size:0.82rem;font-weight:700;color:#64748b;'
-                'text-transform:uppercase;letter-spacing:0.06em;margin:4px 0 6px 0">'
-                'Stock total por estado</div>',
-                unsafe_allow_html=True,
-            )
-            if formato_hospital and "_estado_cob" in resumen.columns:
-                _dist_col = "_estado_cob"
-                _pal_dist = {
-                    "Sin existencias":     "#E53E3E",
-                    "Crítico (≤1 mes)":    "#DD6B20",
-                    "Bajo (1–3 meses)":    "#D69E2E",
-                    "Adecuado (>3 meses)": "#38A169",
-                }
-            elif "estado" in resumen.columns:
-                _dist_col = "estado"
-                _pal_dist = {
-                    "VENCIDO":     "#E53E3E",
-                    "CRITICO":     "#DD6B20",
-                    "ADVERTENCIA": "#D69E2E",
-                    "NORMAL":      "#38A169",
-                }
-            else:
-                _dist_col = None
-                _pal_dist = {}
+            _vc_col = None
+            _vc_pal = {}
 
-            if _dist_col:
-                _dist_df = (
-                    resumen.groupby(_dist_col)["stock_total"]
-                    .sum().reset_index()
-                    .rename(columns={_dist_col: "Estado", "stock_total": "Unidades"})
-                    .sort_values("Unidades", ascending=True)
+        if _vc_col:
+            _tiene_costo = (
+                "costo_unitario" in resumen.columns and
+                pd.to_numeric(resumen["costo_unitario"], errors="coerce").fillna(0).sum() > 0
+            )
+            if _tiene_costo:
+                _res_vc = resumen.copy()
+                _res_vc["_valor"] = (
+                    pd.to_numeric(_res_vc["stock_total"],   errors="coerce").fillna(0) *
+                    pd.to_numeric(_res_vc["costo_unitario"], errors="coerce").fillna(0)
                 )
-                _dist_colors = [_pal_dist.get(e, "#A0AEC0") for e in _dist_df["Estado"]]
-                _fig_dist = go.Figure(go.Bar(
-                    x=_dist_df["Unidades"], y=_dist_df["Estado"],
-                    orientation="h", marker_color=_dist_colors,
-                    text=[f"{int(v):,}" for v in _dist_df["Unidades"]],
-                    textposition="outside",
-                    hovertemplate="<b>%{y}</b><br>%{x:,} unidades<extra></extra>",
-                ))
-                _fig_dist.update_layout(
-                    height=200, margin=dict(t=4, b=4, l=4, r=60),
-                    xaxis_title="Unidades en stock",
-                    paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                _vc_df = (
+                    _res_vc.groupby(_vc_col)["_valor"].sum()
+                    .reset_index()
+                    .rename(columns={_vc_col: "Estado", "_valor": "Valor"})
+                    .sort_values("Valor", ascending=True)
                 )
-                st.plotly_chart(_fig_dist, use_container_width=True)
+                _vc_title  = "Valor del inventario por estado (CLP)"
+                _vc_xlabel = "Valor (CLP)"
+                _vc_fmt    = [f"${v/1_000_000:.1f}M" if v >= 1_000_000 else f"${v:,.0f}" for v in _vc_df["Valor"]]
+                _vc_hover  = "<b>%{y}</b><br>$%{x:,.0f} CLP<extra></extra>"
+            else:
+                # Fallback: unidades en stock por estado
+                _vc_df = (
+                    resumen.groupby(_vc_col)["stock_total"].sum()
+                    .reset_index()
+                    .rename(columns={_vc_col: "Estado", "stock_total": "Valor"})
+                    .sort_values("Valor", ascending=True)
+                )
+                _vc_title  = "Unidades en stock por estado"
+                _vc_xlabel = "Unidades"
+                _vc_fmt    = [f"{int(v):,}" for v in _vc_df["Valor"]]
+                _vc_hover  = "<b>%{y}</b><br>%{x:,} unidades<extra></extra>"
+
+            _vc_colors = [_vc_pal.get(e, "#A0AEC0") for e in _vc_df["Estado"]]
+            _fig_vc = go.Figure(go.Bar(
+                x=_vc_df["Valor"], y=_vc_df["Estado"],
+                orientation="h", marker_color=_vc_colors,
+                text=_vc_fmt, textposition="outside",
+                hovertemplate=_vc_hover,
+            ))
+            _fig_vc.update_layout(
+                title=dict(text=_vc_title, font=dict(size=13, color="#0f172a")),
+                height=220, margin=dict(t=32, b=8, l=8, r=80),
+                xaxis=dict(title=_vc_xlabel, showticklabels=False),
+                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+            )
+            st.plotly_chart(_fig_vc, use_container_width=True)
 
 
     # ── 5. Resumen por estado (formato hospital) ──────────────────────────────
