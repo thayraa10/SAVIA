@@ -1426,51 +1426,6 @@ with tab1:
         else:
             st.info("Sube el archivo de movimientos para ver el consumo mensual.")
 
-        # Alertas activas (columna derecha, debajo del top10)
-        st.markdown("<div style='font-weight:700;font-size:0.88rem;color:#0f172a;"
-                    "margin:4px 0 10px'>Alertas activas</div>", unsafe_allow_html=True)
-
-        def _card_alerta(color, titulo, valor, desc):
-            return (
-                f'<div style="background:white;border-radius:10px;padding:10px 14px;'
-                f'box-shadow:0 1px 3px rgba(0,0,0,0.07);border-left:4px solid {color};'
-                f'display:flex;align-items:center;gap:10px;margin-bottom:7px;">'
-                f'<div style="width:9px;height:9px;border-radius:50%;background:{color};flex-shrink:0"></div>'
-                f'<div style="flex:1"><div style="font-weight:700;font-size:0.82rem;color:#0f172a">{titulo}</div>'
-                f'<div style="font-size:0.71rem;color:#64748b;margin-top:1px">{desc}</div></div>'
-                f'<div style="font-size:1.1rem;font-weight:800;color:{color};margin-left:auto">{valor}</div>'
-                f'</div>'
-            )
-
-        # Card 3: medicamentos a reponer (hospitalario) o cobertura insuficiente
-        if formato_hospital and "SUGERIDO" in resumen.columns:
-            _n_reponer   = int((pd.to_numeric(resumen["SUGERIDO"], errors="coerce").fillna(0) > 0).sum())
-            _lbl_rep     = "Medicamentos a reponer"
-            _desc_rep    = "Productos con cantidad sugerida de reposición"
-        elif tiene_movimientos and "dias_cobertura" in resumen.columns:
-            _n_reponer   = int((resumen["dias_cobertura"].fillna(float("inf")) < (lead_time + periodo_revision)).sum())
-            _lbl_rep     = "Cobertura insuficiente"
-            _desc_rep    = "No cubren el plazo de entrega + período de revisión"
-        else:
-            _n_reponer   = _n_quiebre
-            _lbl_rep     = "Sin existencias"
-            _desc_rep    = "Productos en quiebre de stock"
-
-        # Card 4: valor en riesgo (vencidos + críticos)
-        _valor_riesgo = float(resumen[resumen["estado"].isin(["VENCIDO", "CRITICO"])]["valor_inventario"].sum())
-        _val_riesgo_str = f"${_valor_riesgo:,.0f}" if _valor_riesgo > 0 else "$0"
-
-        st.markdown(
-            _card_alerta("#E53E3E", "Quiebre de stock",   _n_quiebre,
-                         "Productos con existencias en cero") +
-            _card_alerta("#D69E2E", "Próximo a vencer",   _n_prox_ven,
-                         "Vencimiento en los próximos 90 días") +
-            _card_alerta("#DD6B20", _lbl_rep,             _n_reponer,
-                         _desc_rep) +
-            _card_alerta("#E53E3E", "Valor en riesgo",    _val_riesgo_str,
-                         "Valor CLP de medicamentos vencidos o con vencimiento crítico"),
-            unsafe_allow_html=True
-        )
 
     # ── 5. Resumen por estado (formato hospital) ──────────────────────────────
     if formato_hospital and "_estado_cob" in resumen.columns:
@@ -1488,6 +1443,45 @@ with tab1:
             "Seleccionar estados a visualizar:",
             _est_disp, default=_est_def, key="kpi_estados"
         )
+
+        # Colorear chips del multiselect según el estado
+        _components.html("""
+<script>
+(function() {
+  var cfg = {
+    'Sin existencias':     {bg:'#FED7D7', fg:'#C53030', border:'#E53E3E'},
+    'Crítico (≤1 mes)': {bg:'#FEEBC8', fg:'#C05621', border:'#DD6B20'},
+    'Bajo (1–3 meses)':  {bg:'#FEFCBF', fg:'#B7791F', border:'#D69E2E'},
+    'Adecuado (>3 meses)':{bg:'#C6F6D5', fg:'#276749', border:'#38A169'}
+  };
+  function paint() {
+    var tags = window.parent.document.querySelectorAll('[data-baseweb="tag"]');
+    tags.forEach(function(tag) {
+      var txt = tag.innerText || tag.textContent || '';
+      txt = txt.replace(/×/g,'').trim();
+      for (var k in cfg) {
+        if (txt.indexOf(k) !== -1) {
+          tag.style.background    = cfg[k].bg;
+          tag.style.borderColor   = cfg[k].border;
+          tag.style.color         = cfg[k].fg;
+          tag.querySelectorAll('span').forEach(function(s){
+            s.style.color = cfg[k].fg;
+          });
+          break;
+        }
+      }
+    });
+  }
+  paint();
+  setTimeout(paint, 200);
+  setTimeout(paint, 600);
+  new MutationObserver(paint).observe(
+    window.parent.document.body,
+    {childList:true, subtree:true, attributes:true}
+  );
+})();
+</script>
+""", height=0)
 
         if _est_sel:
             _df_sel  = resumen[resumen["_estado_cob"].isin(_est_sel)]
