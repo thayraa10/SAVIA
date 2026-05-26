@@ -1426,6 +1426,87 @@ with tab1:
         else:
             st.info("Sube el archivo de movimientos para ver el consumo mensual.")
 
+        # ── Medicamentos que requieren atención inmediata ──────────────────────
+        st.markdown(
+            '<div style="font-size:0.82rem;font-weight:700;color:#64748b;'
+            'text-transform:uppercase;letter-spacing:0.06em;margin:4px 0 8px 0">'
+            'Atención inmediata</div>',
+            unsafe_allow_html=True,
+        )
+
+        # Construir lista de urgentes según formato
+        if formato_hospital and "_estado_cob" in resumen.columns:
+            _orden_urg = {"Sin existencias": 0, "Crítico (≤1 mes)": 1,
+                          "Bajo (1–3 meses)": 2, "Adecuado (>3 meses)": 3}
+            _urg_src = resumen[resumen["_estado_cob"].isin(
+                ["Sin existencias", "Crítico (≤1 mes)", "Bajo (1–3 meses)"]
+            )].copy()
+            _urg_src["_ord"] = _urg_src["_estado_cob"].map(_orden_urg).fillna(9)
+            _urg_src = _urg_src.sort_values(["_ord", "stock_total"]).head(9)
+            _badge_u = {
+                "Sin existencias":  ("#FED7D7", "#C53030"),
+                "Crítico (≤1 mes)": ("#FEEBC8", "#C05621"),
+                "Bajo (1–3 meses)": ("#FEFCBF", "#B7791F"),
+            }
+            _col_estado_u = "_estado_cob"
+            _col_extra_u  = "ALCANCE" if "ALCANCE" in _urg_src.columns else None
+            _extra_hdr    = "Cob."
+        else:
+            _orden_urg2 = {"VENCIDO": 0, "CRITICO": 1, "ADVERTENCIA": 2}
+            _urg_src = resumen[resumen["estado"].isin(["VENCIDO", "CRITICO", "ADVERTENCIA"])].copy() \
+                if "estado" in resumen.columns else pd.DataFrame()
+            if len(_urg_src) > 0:
+                _urg_src["_ord"] = _urg_src["estado"].map(_orden_urg2).fillna(9)
+                _urg_src = _urg_src.sort_values(["_ord", "min_dias_vencer" if "min_dias_vencer" in _urg_src.columns else "stock_total"]).head(9)
+            _badge_u = {
+                "VENCIDO":     ("#FED7D7", "#C53030"),
+                "CRITICO":     ("#FEEBC8", "#C05621"),
+                "ADVERTENCIA": ("#FEFCBF", "#B7791F"),
+            }
+            _col_estado_u = "estado"
+            _col_extra_u  = "min_dias_vencer" if "min_dias_vencer" in (_urg_src.columns if len(_urg_src) > 0 else []) else None
+            _extra_hdr    = "Días"
+
+        if len(_urg_src) > 0:
+            _extra_th = (f'<th style="padding:6px 10px;text-align:right;color:#64748b;'
+                         f'font-weight:600;white-space:nowrap">{_extra_hdr}</th>') if _col_extra_u else ""
+            _ut_html = (
+                '<table style="width:100%;border-collapse:collapse;font-size:0.80rem;">'
+                '<thead><tr style="background:#f8fafc;border-bottom:2px solid #e2e8f0;">'
+                '<th style="padding:6px 10px;text-align:left;color:#64748b;font-weight:600">Medicamento</th>'
+                '<th style="padding:6px 10px;text-align:right;color:#64748b;font-weight:600">Stock</th>'
+                + _extra_th +
+                '<th style="padding:6px 10px;text-align:left;color:#64748b;font-weight:600">Estado</th>'
+                '</tr></thead><tbody>'
+            )
+            for _, _ur in _urg_src.iterrows():
+                _nom_u  = str(_ur.get(COL_NOMBRE, ""))
+                _nom_u  = (_nom_u[:28] + "…") if len(_nom_u) > 28 else _nom_u
+                _stk_u  = int(_ur.get("stock_total", 0))
+                _est_u  = str(_ur.get(_col_estado_u, ""))
+                _bg_u, _fg_u = _badge_u.get(_est_u, ("#EDF2F7", "#718096"))
+                _badge_span = (f'<span style="background:{_bg_u};color:{_fg_u};border-radius:4px;'
+                               f'padding:2px 7px;font-weight:600;font-size:0.72rem">{_est_u}</span>')
+                _extra_td = ""
+                if _col_extra_u and _col_extra_u in _ur.index:
+                    _xv = _ur[_col_extra_u]
+                    try:    _xv = f"{float(_xv):.1f}"
+                    except: _xv = str(_xv) if pd.notna(_xv) else "—"
+                    _extra_td = f'<td style="padding:6px 10px;text-align:right;color:#475569">{_xv}</td>'
+                _ut_html += (
+                    f'<tr style="border-bottom:1px solid #f1f5f9;">'
+                    f'<td style="padding:6px 10px;color:#0f172a" title="{_ur.get(COL_NOMBRE,"")}">{_nom_u}</td>'
+                    f'<td style="padding:6px 10px;text-align:right;font-weight:600;'
+                    f'color:{"#E53E3E" if _stk_u == 0 else "#0f172a"}">{_stk_u:,}</td>'
+                    + _extra_td +
+                    f'<td style="padding:6px 10px">{_badge_span}</td>'
+                    f'</tr>'
+                )
+            _ut_html += '</tbody></table>'
+            st.markdown(_ut_html, unsafe_allow_html=True)
+        else:
+            st.success("Sin productos que requieran atención inmediata.")
+
 
     # ── 5. Resumen por estado (formato hospital) ──────────────────────────────
     if formato_hospital and "_estado_cob" in resumen.columns:
