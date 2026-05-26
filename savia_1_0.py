@@ -588,13 +588,18 @@ def transformar_formato_ancho(df):
         # Datos de inventario complementarios
         # Sumar todas las columnas de existencias (puede haber una por bodega)
         stock_total = 0
+        per_bodega  = {}   # stock individual por bodega
         if cols_exist:
-            # Construir la lista de valores de existencia con un for loop explícito
             lista_existencias = []
             for c in cols_exist:
                 lista_existencias.append(row[c])
             vals = pd.to_numeric(pd.Series(lista_existencias), errors="coerce").fillna(0)
             stock_total = float(vals.sum())
+            # Guardar cada bodega como columna separada (BOD_*)
+            for c, v in zip(cols_exist, vals):
+                raw = re.sub(r'^EXIST\.?\s*', '', str(c).strip(), flags=re.IGNORECASE).strip()
+                key = "BOD_" + re.sub(r'[^A-Za-z0-9]', '_', raw).strip('_').upper()[:28]
+                per_bodega[key] = float(v)
 
         # Función auxiliar para convertir un valor de celda a número sin romper si está vacío
         def a_numero(nombre_col):
@@ -602,7 +607,7 @@ def transformar_formato_ancho(df):
             valor = pd.to_numeric(row[nombre_col], errors="coerce")
             return float(valor) if not pd.isna(valor) else None
 
-        filas_inv.append({
+        _inv_row = {
             "CODIGO":       cod,
             "STOCK_TOTAL":  stock_total,
             "COSTO":        a_numero(col_precio),
@@ -612,7 +617,9 @@ def transformar_formato_ancho(df):
             "CONS_PROM":    a_numero(col_cons_prom),
             "ALCANCE":      a_numero(col_alcance),
             "SUGERIDO":     a_numero(col_sugerido),
-        })
+        }
+        _inv_row.update(per_bodega)   # añadir columnas BOD_* al registro
+        filas_inv.append(_inv_row)
 
     if len(filas_mov) == 0:
         return None, None
@@ -626,6 +633,7 @@ def transformar_formato_ancho(df):
 def _store_global():
     return {
         "inv": None, "mov": None, "fuente": None, "formato_hospital": False,
+        "inv_lotes": None,   # DataFrame con lotes+vencimientos del archivo Inventario estándar
         "costo_orden": 40000, "costo_mantener": 10, "lead_time": 7, "periodo_revision": 7,
         "fecha_revision": date.today(), "hora_revision": None, "responsable": "",
         "archivos":  [],  # [{nombre, size, cargado_en, responsable, preview, n_productos, mov, inv_extra, inv_directo}]
@@ -737,10 +745,18 @@ def _recompute():
         productos["VENCIMIENTO"] = pd.NaT
         productos.columns = [str(c) for c in productos.columns]
         store["inv"] = productos;  store["mov"] = mov_comb;  store["formato_hospital"] = True
+        # Guardar archivos de inventario estándar (lotes + vencimientos) aunque haya formato hospital
+        if inv_dirs:
+            _il = pd.concat(inv_dirs, ignore_index=True)
+            _il.columns = [str(c) for c in _il.columns]
+            store["inv_lotes"] = _il
+        else:
+            store["inv_lotes"] = None
     elif inv_dirs:
         inv_comb = pd.concat(inv_dirs, ignore_index=True)
         inv_comb.columns = [str(c) for c in inv_comb.columns]
         store["inv"] = inv_comb;  store["mov"] = None;  store["formato_hospital"] = False
+        store["inv_lotes"] = inv_comb   # en formato estándar, inv_lotes = inv
     gc.collect()
 
 # Los DataFrames grandes (inv, mov) se leen siempre desde _store_global()
@@ -946,6 +962,20 @@ if _g.get("formato_hospital", False):
 # Leer DataFrames directamente desde el store compartido (nunca desde session_state)
 datos_inventario  = _g["inv"]
 datos_movimientos = _g["mov"]
+datos_inv_lotes   = _g.get("inv_lotes")  # lotes + vencimientos del archivo Inventario estándar
+
+# Detectar columnas del archivo de lotes/vencimientos (si existe)
+IL_COD  = None; IL_NOM  = None; IL_LOTE = None
+IL_VENC = None; IL_STK  = None; IL_PREC = None; IL_UBIC = None
+if datos_inv_lotes is not None and len(datos_inv_lotes) > 0:
+    _il_usadas = set()
+    IL_COD  = encontrar_columna(datos_inv_lotes, ["codigo", "sku", "clave"],                        _il_usadas)
+    IL_NOM  = encontrar_columna(datos_inv_lotes, ["material", "nombre", "medicamento", "descripcion"], _il_usadas)
+    IL_LOTE = encontrar_columna(datos_inv_lotes, ["lote", "lotes", "batch", "partida"],              _il_usadas)
+    IL_VENC = encontrar_columna(datos_inv_lotes, ["vencimiento", "venc", "caducidad", "expiry", "fvenv"], _il_usadas)
+    IL_STK  = encontrar_columna(datos_inv_lotes, ["existencia", "stock", "cantidad", "cantporlote"], _il_usadas)
+    IL_PREC = encontrar_columna(datos_inv_lotes, ["precio", "costo", "valor"],                       _il_usadas)
+    IL_UBIC = encontrar_columna(datos_inv_lotes, ["ubicacion", "ubicación", "lugar", "pasillo"],     _il_usadas)
 
 # ──────────────────────────────────────────────────────────────────────────────
 # DETECCIÓN DE COLUMNAS
@@ -1622,11 +1652,213 @@ with tab1:
 # TAB 2 — INVENTARIO Y PRONÓSTICO
 # ══════════════════════════════════════════════════════════════════════════════
 with tab2:
-    _t2_inv, _t2_venc, _t2_det = st.tabs([
-        "Inventario",
-        "Vencimientos",
-        "Detalle por Medicamento",
+    _t2_bod, _t2_inv, _t2_venc, _t2_det = st.tabs([
+        "📦 Stock y Bodega",
+        "📋 Inventario",
+        "⏰ Vencimientos",
+        "🔍 Detalle por Medicamento",
     ])
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # SUB-TAB 0 — STOCK Y BODEGA
+    # ══════════════════════════════════════════════════════════════════════════
+    with _t2_bod:
+        _bod_cols = [c for c in resumen.columns if c.startswith("BOD_")]
+
+        if not _bod_cols:
+            st.markdown(
+                '<div style="background:#EBF8FF;border-left:4px solid #3182CE;border-radius:8px;'
+                'padding:18px 22px;margin:12px 0">'
+                '<div style="font-size:0.88rem;font-weight:700;color:#2B6CB0;margin-bottom:6px">'
+                'Datos de bodegas no disponibles</div>'
+                '<div style="font-size:0.83rem;color:#2C5282;line-height:1.6">'
+                'Carga el <strong>Programa de compras</strong> para ver la distribución '
+                'de stock por bodega y el diagrama de red.<br>'
+                'El archivo debe contener columnas <code>EXIST.&lt;BODEGA&gt;</code> para cada bodega.'
+                '</div></div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            # ── Filtro por medicamento ────────────────────────────────────────
+            _bd_all_names = ["— Todos los medicamentos —"] + sorted(
+                resumen[COL_NOMBRE].dropna().unique().tolist()
+            )
+            _bd_col_filt, _bd_col_info = st.columns([3, 2])
+            _bd_sel = _bd_col_filt.selectbox(
+                "Filtrar por medicamento:", _bd_all_names, key="bod_med_sel"
+            )
+
+            # Helper: BOD_CARRUSEL_ABIERTA → Carrusel Abierta
+            def _bod_clean_name(k):
+                return k[4:].replace("_", " ").title()
+
+            # ── Stock por bodega según filtro ─────────────────────────────────
+            if _bd_sel and _bd_sel != "— Todos los medicamentos —":
+                _bd_row = resumen[resumen[COL_NOMBRE] == _bd_sel]
+                _bd_stk = {
+                    c: float(pd.to_numeric(
+                        _bd_row[c].iloc[0] if len(_bd_row) > 0 else 0,
+                        errors="coerce") or 0)
+                    for c in _bod_cols
+                }
+                _bd_mode = "med"
+            else:
+                _bd_stk = {
+                    c: float(pd.to_numeric(resumen[c], errors="coerce").fillna(0).sum())
+                    for c in _bod_cols
+                }
+                _bd_mode = "all"
+            _bd_total = max(sum(_bd_stk.values()), 1)
+
+            # ── Info card ─────────────────────────────────────────────────────
+            _bd_col_info.markdown(
+                f'<div style="background:white;border-radius:8px;padding:10px 14px;margin-top:24px;'
+                f'box-shadow:0 1px 3px rgba(0,0,0,0.07)">'
+                f'<div style="font-size:0.60rem;color:#94a3b8;font-weight:600;text-transform:uppercase">Total en sistema</div>'
+                f'<div style="font-size:1.15rem;font-weight:800;color:#0f172a">{int(_bd_total):,} u</div>'
+                f'<div style="font-size:0.75rem;color:#64748b">{len(_bod_cols)} bodegas activas</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+
+            # ── Posiciones (círculo): nodo central = bodega con más stock ─────
+            _bd_totals_global = {
+                c: float(pd.to_numeric(resumen[c], errors="coerce").fillna(0).sum())
+                for c in _bod_cols
+            }
+            _bd_center_key = max(_bd_totals_global, key=_bd_totals_global.get)
+            _bd_perif = [c for c in _bod_cols if c != _bd_center_key]
+            _bd_n  = max(len(_bd_perif), 1)
+            _BD_R  = 2.2
+
+            _bd_pos = {_bd_center_key: (0.0, 0.0)}
+            for _bi, _bk in enumerate(_bd_perif):
+                _bang = 2 * math.pi * _bi / _bd_n - math.pi / 2
+                _bd_pos[_bk] = (_BD_R * math.cos(_bang), _BD_R * math.sin(_bang))
+
+            # ── Colores de nodos ──────────────────────────────────────────────
+            def _bd_node_color(stk_val, total):
+                if stk_val <= 0:     return "#E53E3E"
+                r = stk_val / total
+                if r < 0.04:         return "#DD6B20"
+                if r < 0.13:         return "#D69E2E"
+                return "#38A169"
+
+            # ── Figura Plotly ─────────────────────────────────────────────────
+            _bd_fig = go.Figure()
+
+            # Aristas
+            for _bk in _bd_perif:
+                _bx0, _by0 = _bd_pos[_bd_center_key]
+                _bx1, _by1 = _bd_pos[_bk]
+                _bd_fig.add_trace(go.Scatter(
+                    x=[_bx0, _bx1, None], y=[_by0, _by1, None],
+                    mode="lines",
+                    line=dict(color="#CBD5E0", width=2.5),
+                    hoverinfo="skip", showlegend=False,
+                ))
+
+            # Nodos
+            _bd_nx   = [_bd_pos[k][0] for k in _bod_cols]
+            _bd_ny   = [_bd_pos[k][1] for k in _bod_cols]
+            _bd_nc   = [_bd_node_color(_bd_stk[k], _bd_total) for k in _bod_cols]
+            _bd_sz   = [58 if k == _bd_center_key else 44 for k in _bod_cols]
+            _bd_lbl  = [_bod_clean_name(k) for k in _bod_cols]
+            _bd_pct  = [
+                f"{_bd_stk[k] / _bd_total * 100:.1f}%" for k in _bod_cols
+            ]
+            _bd_hover = [
+                f"<b>{_bod_clean_name(k)}</b><br>"
+                f"Stock: <b>{int(_bd_stk[k]):,}</b> u<br>"
+                f"Participación: {_bd_pct[i]}<extra></extra>"
+                for i, k in enumerate(_bod_cols)
+            ]
+            _bd_tpos = [
+                "middle center" if k == _bd_center_key else "bottom center"
+                for k in _bod_cols
+            ]
+
+            _bd_fig.add_trace(go.Scatter(
+                x=_bd_nx, y=_bd_ny,
+                mode="markers+text",
+                marker=dict(
+                    color=_bd_nc, size=_bd_sz,
+                    line=dict(color="white", width=3),
+                    opacity=0.93,
+                ),
+                text=_bd_lbl,
+                textfont=dict(size=10, color="#0f172a"),
+                textposition=_bd_tpos,
+                hovertemplate=_bd_hover,
+                showlegend=False,
+            ))
+
+            # Leyenda de color
+            for _bl_color, _bl_name in [
+                ("#38A169", "Stock alto"), ("#D69E2E", "Stock medio"),
+                ("#DD6B20", "Stock bajo"), ("#E53E3E", "Sin stock"),
+            ]:
+                _bd_fig.add_trace(go.Scatter(
+                    x=[None], y=[None], mode="markers",
+                    marker=dict(color=_bl_color, size=10),
+                    name=_bl_name, showlegend=True,
+                ))
+
+            _bd_titulo = (
+                f"Distribución de stock — {_bd_sel}"
+                if _bd_mode == "med"
+                else "Distribución de stock por bodega (todos los productos)"
+            )
+            _bd_fig.update_layout(
+                title=dict(text=_bd_titulo, font=dict(size=13, color="#0f172a")),
+                height=460,
+                margin=dict(t=36, b=20, l=20, r=20),
+                xaxis=dict(showgrid=False, zeroline=False, showticklabels=False, range=[-3.4, 3.4]),
+                yaxis=dict(showgrid=False, zeroline=False, showticklabels=False, range=[-3.4, 3.4]),
+                legend=dict(orientation="h", y=-0.03, x=0.5, xanchor="center", font=dict(size=11)),
+                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+            )
+            st.plotly_chart(_bd_fig, use_container_width=True)
+
+            # ── Tabla de detalle por bodega ───────────────────────────────────
+            st.markdown(
+                '<div style="font-size:0.82rem;font-weight:700;color:#64748b;'
+                'text-transform:uppercase;letter-spacing:0.06em;margin:14px 0 8px 0">'
+                'Detalle de inventario por bodega</div>',
+                unsafe_allow_html=True,
+            )
+            _bd_det_opts   = ["— Selecciona una bodega —"] + [_bod_clean_name(k) for k in _bod_cols]
+            _bd_key_map    = {_bod_clean_name(k): k for k in _bod_cols}
+            _bd_det_sel    = st.selectbox("Seleccionar bodega:", _bd_det_opts, key="bod_det_sel")
+
+            if _bd_det_sel and _bd_det_sel != "— Selecciona una bodega —":
+                _bd_det_col = _bd_key_map[_bd_det_sel]
+                _bd_det_df  = resumen[
+                    pd.to_numeric(resumen[_bd_det_col], errors="coerce").fillna(0) > 0
+                ].copy().sort_values(_bd_det_col, ascending=False)
+
+                _bd_show_cols = [COL_NOMBRE, _bd_det_col]
+                for _bsc in ["COSTO", "costo_unitario", "STC_MIN", "STC_MAX", "ALCANCE"]:
+                    if _bsc in _bd_det_df.columns:
+                        _bd_show_cols.append(_bsc)
+                    if len(_bd_show_cols) >= 6:
+                        break
+                _bd_show = _bd_det_df[
+                    [c for c in _bd_show_cols if c in _bd_det_df.columns]
+                ].rename(columns={
+                    COL_NOMBRE: "Medicamento",
+                    _bd_det_col: f"Stock ({_bd_det_sel})",
+                    "COSTO": "Costo unit.", "costo_unitario": "Costo unit.",
+                    "STC_MIN": "Stock mín.", "STC_MAX": "Stock máx.",
+                    "ALCANCE": "Cobertura (m)",
+                }).reset_index(drop=True)
+
+                st.markdown(
+                    f'<div style="font-size:0.80rem;color:#64748b;margin-bottom:6px">'
+                    f'<b>{len(_bd_show):,}</b> productos con stock en <b>{_bd_det_sel}</b></div>',
+                    unsafe_allow_html=True,
+                )
+                st.dataframe(_safe_df(_bd_show), use_container_width=True, hide_index=True, height=320)
 
     # ══════════════════════════════════════════════════════════════════════════
     # SUB-TAB 1 — INVENTARIO
@@ -1782,11 +2014,36 @@ with tab2:
     # SUB-TAB 2 — VENCIMIENTOS
     # ══════════════════════════════════════════════════════════════════════════
     with _t2_venc:
-        _inv_venc_raw = pd.DataFrame()
-        if COL_VENCIMIENTO and "dias_vencer" in inv.columns:
-            _inv_venc_raw = inv[inv["dias_vencer"].notna()].copy()
+        # ── Origen de datos: preferir inv_lotes (tiene fechas reales de lotes) ─
+        _venc_df   = pd.DataFrame()
+        _venc_nom  = COL_NOMBRE
+        _venc_lote = COL_LOTE if COL_LOTE else None
+        _venc_stk  = ("stock_total" if inv is not None and "stock_total" in inv.columns
+                      else COL_STOCK)
 
-        if len(_inv_venc_raw) == 0:
+        if datos_inv_lotes is not None and IL_VENC and IL_NOM and len(datos_inv_lotes) > 0:
+            _vdf_il = datos_inv_lotes.copy()
+            _vdf_il[IL_VENC] = pd.to_datetime(_vdf_il[IL_VENC], dayfirst=True, errors="coerce")
+            _vdf_il["dias_vencer"] = (
+                _vdf_il[IL_VENC] - pd.Timestamp.today().normalize()
+            ).dt.days
+            _venc_df   = _vdf_il[_vdf_il[IL_VENC].notna()].copy()
+            _venc_nom  = IL_NOM
+            _venc_lote = IL_LOTE
+            # CantPorLote = stock de ese lote específico; si no existe, usar IL_STK
+            _vcpl = next(
+                (c for c in _venc_df.columns
+                 if "cantporlote" in c.lower().replace("_", "").replace(" ", "")),
+                None,
+            )
+            _venc_stk = _vcpl if _vcpl else IL_STK
+        elif COL_VENCIMIENTO and inv is not None and "dias_vencer" in inv.columns:
+            _venc_df   = inv[inv["dias_vencer"].notna()].copy()
+            _venc_nom  = COL_NOMBRE
+            _venc_lote = COL_LOTE if COL_LOTE else None
+            _venc_stk  = "stock_total" if "stock_total" in inv.columns else COL_STOCK
+
+        if len(_venc_df) == 0:
             st.markdown(
                 '<div style="background:#EBF8FF;border-left:4px solid #3182CE;border-radius:8px;'
                 'padding:18px 22px;margin:12px 0">'
@@ -1794,46 +2051,50 @@ with tab2:
                 'Datos de vencimiento no disponibles en este archivo</div>'
                 '<div style="font-size:0.83rem;color:#2C5282;line-height:1.6">'
                 'El archivo de consumos del hospital no incluye fechas de vencimiento ni lotes.<br>'
-                'Para activar esta sección, carga un <strong>archivo de inventario estándar</strong> '
-                'que tenga columnas: <code>VENCIMIENTO</code>, <code>LOTE</code>, <code>STOCK</code>.'
+                'Para activar esta sección, carga también el <strong>archivo de inventario</strong> '
+                'con columnas: <code>VENCIMIENTO / FVenvimiento</code>, <code>LOTE</code>, '
+                '<code>EXISTENCIA</code>.'
                 '</div></div>',
                 unsafe_allow_html=True,
             )
         else:
-            # KPI strip
-            _nv_venc  = int((_inv_venc_raw["dias_vencer"] < 0).sum())
-            _nv_crit  = int(((_inv_venc_raw["dias_vencer"] >= 0) & (_inv_venc_raw["dias_vencer"] < 30)).sum())
-            _nv_adv   = int(((_inv_venc_raw["dias_vencer"] >= 30) & (_inv_venc_raw["dias_vencer"] < 90)).sum())
-            _nv_ok    = int((_inv_venc_raw["dias_vencer"] >= 90).sum())
+            # ── KPI strip ─────────────────────────────────────────────────────
+            _nv_venc = int((_venc_df["dias_vencer"] < 0).sum())
+            _nv_crit = int(((_venc_df["dias_vencer"] >= 0) & (_venc_df["dias_vencer"] < 30)).sum())
+            _nv_adv  = int(((_venc_df["dias_vencer"] >= 30) & (_venc_df["dias_vencer"] < 90)).sum())
+            _nv_ok   = int((_venc_df["dias_vencer"] >= 90).sum())
             _vkc1, _vkc2, _vkc3, _vkc4 = st.columns(4)
-            for _vc, _vl, _vv, _vcolor in [
-                (_vkc1, "Vencidos",            f"{_nv_venc:,}",  "#E53E3E"),
-                (_vkc2, "Vencen en <30 días",  f"{_nv_crit:,}",  "#DD6B20"),
-                (_vkc3, "Vencen en 30–90 días", f"{_nv_adv:,}", "#D69E2E"),
-                (_vkc4, "Vencen en >90 días",  f"{_nv_ok:,}",   "#38A169"),
+            for _vc, _vl_lbl, _vv, _vcolor in [
+                (_vkc1, "Lotes vencidos",        f"{_nv_venc:,}",  "#E53E3E"),
+                (_vkc2, "Vencen en <30 días",    f"{_nv_crit:,}",  "#DD6B20"),
+                (_vkc3, "Vencen en 30–90 días",  f"{_nv_adv:,}",   "#D69E2E"),
+                (_vkc4, "Vencen en >90 días",    f"{_nv_ok:,}",    "#38A169"),
             ]:
                 _vc.markdown(
                     f'<div style="background:white;border-radius:10px;padding:12px 16px;margin:4px 0 10px 0;'
                     f'box-shadow:0 1px 3px rgba(0,0,0,0.07);border-top:3px solid {_vcolor};">'
                     f'<div style="font-size:0.60rem;color:#64748b;font-weight:600;text-transform:uppercase;'
-                    f'letter-spacing:0.05em;margin-bottom:4px">{_vl}</div>'
+                    f'letter-spacing:0.05em;margin-bottom:4px">{_vl_lbl}</div>'
                     f'<div style="font-size:1.25rem;font-weight:800;color:#0f172a">{_vv}</div>'
                     f'</div>', unsafe_allow_html=True,
                 )
 
-            # Timeline (un bar por producto, mínimo días_vencer de todos sus lotes)
-            _stk_col_v = "stock_total" if "stock_total" in _inv_venc_raw.columns else COL_STOCK
+            # ── Timeline: un bar por producto (mínimo días_vencer de sus lotes) ─
             _venc_prod = (
-                _inv_venc_raw.groupby(COL_NOMBRE)
-                .agg(dias_min=("dias_vencer", "min"), stock=(_stk_col_v, "sum"))
+                _venc_df.groupby(_venc_nom)
+                .agg(dias_min=("dias_vencer", "min"))
                 .reset_index()
                 .sort_values("dias_min")
                 .head(40)
             )
             _venc_prod["color"] = _venc_prod["dias_min"].apply(
-                lambda d: "#E53E3E" if d < 0 else "#DD6B20" if d < 30 else "#D69E2E" if d < 90 else "#38A169"
+                lambda d: "#E53E3E" if d < 0 else "#DD6B20" if d < 30
+                else "#D69E2E" if d < 90 else "#38A169"
             )
-            _noms_v = [n[:38] + "…" if len(str(n)) > 38 else str(n) for n in _venc_prod[COL_NOMBRE]]
+            _noms_v = [
+                n[:38] + "…" if len(str(n)) > 38 else str(n)
+                for n in _venc_prod[_venc_nom]
+            ]
             _fig_tl = go.Figure(go.Bar(
                 x=_venc_prod["dias_min"].clip(lower=-180),
                 y=_noms_v,
@@ -1860,29 +2121,40 @@ with tab2:
             )
             st.plotly_chart(_fig_tl, use_container_width=True)
 
-            # Tabla críticos <30 días
-            _crit_v = _inv_venc_raw[_inv_venc_raw["dias_vencer"] < 30].copy()
+            # ── Tabla de lotes críticos (<30 días) ────────────────────────────
+            _crit_v = _venc_df[_venc_df["dias_vencer"] < 30].copy().sort_values("dias_vencer")
             if len(_crit_v) > 0:
                 st.markdown(
                     '<div style="font-size:0.82rem;font-weight:700;color:#C53030;'
                     'text-transform:uppercase;letter-spacing:0.05em;margin:8px 0 6px 0">'
-                    'Medicamentos que vencen en menos de 30 días</div>',
+                    'Lotes que vencen en menos de 30 días</div>',
                     unsafe_allow_html=True,
                 )
-                _cv_cols = [COL_NOMBRE]
-                if COL_LOTE and COL_LOTE in _crit_v.columns: _cv_cols.append(COL_LOTE)
-                _cv_stk = "stock_total" if "stock_total" in _crit_v.columns else COL_STOCK
-                _cv_cols += [_cv_stk, "dias_vencer"]
+                _cv_cols = [_venc_nom]
+                if _venc_lote and _venc_lote in _crit_v.columns:
+                    _cv_cols.append(_venc_lote)
+                if _venc_stk and _venc_stk in _crit_v.columns:
+                    _cv_cols.append(_venc_stk)
+                _cv_cols.append("dias_vencer")
+                if IL_VENC and IL_VENC in _crit_v.columns and IL_VENC not in _cv_cols:
+                    _cv_cols.append(IL_VENC)
                 _crit_show = _crit_v[[c for c in _cv_cols if c in _crit_v.columns]].copy()
-                _crit_show["Acción sugerida"] = _crit_show["dias_vencer"].apply(
-                    lambda d: "Dar de baja" if d < 0 else
-                              "Consumir primero (FEFO)" if d < 15 else "Planificar devolución"
+                _crit_show["Acción"] = _crit_show["dias_vencer"].apply(
+                    lambda d: "⛔ Dar de baja" if d < 0
+                    else "🔴 Consumir primero (FEFO)" if d < 15
+                    else "🟡 Planificar devolución"
                 )
-                _crit_show = _crit_show.sort_values("dias_vencer").rename(columns={
-                    COL_NOMBRE: "Medicamento",
-                    COL_LOTE: "Lote", _cv_stk: "Stock", "dias_vencer": "Días restantes",
-                }).reset_index(drop=True)
-                st.dataframe(_safe_df(_crit_show), use_container_width=True, hide_index=True, height=280)
+                _ren_v = {
+                    _venc_nom:    "Medicamento",
+                    "dias_vencer": "Días restantes",
+                }
+                if _venc_lote:  _ren_v[_venc_lote] = "Lote"
+                if _venc_stk:   _ren_v[_venc_stk]  = "Cant. en lote"
+                if IL_VENC:     _ren_v[IL_VENC]     = "Fecha venc."
+                _crit_show = _crit_show.rename(
+                    columns={k: v for k, v in _ren_v.items() if k}
+                ).reset_index(drop=True)
+                st.dataframe(_safe_df(_crit_show), use_container_width=True, hide_index=True, height=300)
 
     # ══════════════════════════════════════════════════════════════════════════
     # SUB-TAB 3 — DETALLE POR MEDICAMENTO
