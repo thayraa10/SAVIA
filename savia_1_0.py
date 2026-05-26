@@ -1466,8 +1466,12 @@ with tab1:
                 )
                 _vc_title  = "Valor del inventario por estado (CLP)"
                 _vc_xlabel = "Valor (CLP)"
-                _vc_fmt    = [f"${v/1_000_000:.1f}M" if v >= 1_000_000 else f"${v:,.0f}" for v in _vc_df["Valor"]]
-                _vc_hover  = "<b>%{y}</b><br>$%{x:,.0f} CLP<extra></extra>"
+                def _fmt_clp(v):
+                    if v >= 1_000_000_000: return f"${v/1_000_000_000:.1f}B"
+                    if v >= 1_000_000:     return f"${v/1_000_000:.1f}M"
+                    return f"${v:,.0f}"
+                _vc_fmt   = [_fmt_clp(v) for v in _vc_df["Valor"]]
+                _vc_hover = "<b>%{y}</b><br>$%{x:,.0f} CLP<extra></extra>"
             else:
                 # Fallback: unidades en stock por estado
                 _vc_df = (
@@ -1486,12 +1490,13 @@ with tab1:
                 x=_vc_df["Valor"], y=_vc_df["Estado"],
                 orientation="h", marker_color=_vc_colors,
                 text=_vc_fmt, textposition="outside",
+                cliponaxis=False,
                 hovertemplate=_vc_hover,
             ))
             _fig_vc.update_layout(
                 title=dict(text=_vc_title, font=dict(size=13, color="#0f172a")),
-                height=220, margin=dict(t=32, b=8, l=8, r=80),
-                xaxis=dict(title=_vc_xlabel, showticklabels=False),
+                height=220, margin=dict(t=32, b=8, l=8, r=110),
+                xaxis=dict(title="", showticklabels=False, range=[0, _vc_df["Valor"].max() * 1.28]),
                 paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
             )
             st.plotly_chart(_fig_vc, use_container_width=True)
