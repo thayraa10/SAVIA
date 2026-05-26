@@ -1462,41 +1462,52 @@ with tab1:
                     _res_vc.groupby(_vc_col)["_valor"].sum()
                     .reset_index()
                     .rename(columns={_vc_col: "Estado", "_valor": "Valor"})
-                    .sort_values("Valor", ascending=True)
                 )
-                _vc_title  = "Valor del inventario por estado (CLP)"
-                _vc_xlabel = "Valor (CLP)"
+                # Quitar estados con valor 0 (ej. Sin existencias — obvio que es $0)
+                _vc_df = _vc_df[_vc_df["Valor"] > 0]
+                # Orden del semáforo: de peor a mejor (izq → der)
+                _vc_orden = {"Sin existencias": 0, "Crítico (≤1 mes)": 1,
+                             "Bajo (1–3 meses)": 2, "Adecuado (>3 meses)": 3,
+                             "VENCIDO": 0, "CRITICO": 1, "ADVERTENCIA": 2, "NORMAL": 3}
+                _vc_df["_ord"] = _vc_df["Estado"].map(_vc_orden).fillna(9)
+                _vc_df = _vc_df.sort_values("_ord").reset_index(drop=True)
+                _vc_title = "Valor del inventario por estado (CLP)"
                 def _fmt_clp(v):
                     if v >= 1_000_000_000: return f"${v/1_000_000_000:.1f}B"
                     if v >= 1_000_000:     return f"${v/1_000_000:.1f}M"
                     return f"${v:,.0f}"
                 _vc_fmt   = [_fmt_clp(v) for v in _vc_df["Valor"]]
-                _vc_hover = "<b>%{y}</b><br>$%{x:,.0f} CLP<extra></extra>"
+                _vc_hover = "<b>%{x}</b><br>$%{y:,.0f} CLP<extra></extra>"
             else:
                 # Fallback: unidades en stock por estado
                 _vc_df = (
                     resumen.groupby(_vc_col)["stock_total"].sum()
                     .reset_index()
                     .rename(columns={_vc_col: "Estado", "stock_total": "Valor"})
-                    .sort_values("Valor", ascending=True)
                 )
-                _vc_title  = "Unidades en stock por estado"
-                _vc_xlabel = "Unidades"
-                _vc_fmt    = [f"{int(v):,}" for v in _vc_df["Valor"]]
-                _vc_hover  = "<b>%{y}</b><br>%{x:,} unidades<extra></extra>"
+                _vc_df = _vc_df[_vc_df["Valor"] > 0]
+                _vc_orden = {"Sin existencias": 0, "Crítico (≤1 mes)": 1,
+                             "Bajo (1–3 meses)": 2, "Adecuado (>3 meses)": 3,
+                             "VENCIDO": 0, "CRITICO": 1, "ADVERTENCIA": 2, "NORMAL": 3}
+                _vc_df["_ord"] = _vc_df["Estado"].map(_vc_orden).fillna(9)
+                _vc_df = _vc_df.sort_values("_ord").reset_index(drop=True)
+                _vc_title = "Unidades en stock por estado"
+                _vc_fmt   = [f"{int(v):,}" for v in _vc_df["Valor"]]
+                _vc_hover = "<b>%{x}</b><br>%{y:,} unidades<extra></extra>"
 
             _vc_colors = [_vc_pal.get(e, "#A0AEC0") for e in _vc_df["Estado"]]
             _fig_vc = go.Figure(go.Bar(
-                x=_vc_df["Valor"], y=_vc_df["Estado"],
-                orientation="h", marker_color=_vc_colors,
+                x=_vc_df["Estado"], y=_vc_df["Valor"],
+                marker_color=_vc_colors,
                 text=_vc_fmt, textposition="outside",
                 cliponaxis=False,
                 hovertemplate=_vc_hover,
             ))
             _fig_vc.update_layout(
                 title=dict(text=_vc_title, font=dict(size=13, color="#0f172a")),
-                height=220, margin=dict(t=32, b=8, l=8, r=110),
-                xaxis=dict(title="", showticklabels=False, range=[0, _vc_df["Valor"].max() * 1.28]),
+                height=310, margin=dict(t=36, b=8, l=8, r=8),
+                yaxis=dict(showticklabels=False, range=[0, _vc_df["Valor"].max() * 1.22]),
+                xaxis=dict(tickfont=dict(size=11)),
                 paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
             )
             st.plotly_chart(_fig_vc, use_container_width=True)
