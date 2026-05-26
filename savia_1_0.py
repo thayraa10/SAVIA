@@ -1063,6 +1063,12 @@ for col_extra in ["ALCANCE", "SUGERIDO", "STC_MIN", "STC_MAX", "STC_CRITICO", "C
         col_mapa = datos_inventario[[COL_CODIGO, col_extra]].drop_duplicates(COL_CODIGO)
         resumen = resumen.merge(col_mapa, on=COL_CODIGO, how="left")
 
+# Merge columnas BOD_* (stock por bodega) — se pierden en el groupby.agg() de arriba
+_bod_extra_cols = [c for c in datos_inventario.columns if c.startswith("BOD_")]
+if _bod_extra_cols:
+    _bod_mapa = datos_inventario[[COL_CODIGO] + _bod_extra_cols].drop_duplicates(COL_CODIGO)
+    resumen   = resumen.merge(_bod_mapa, on=COL_CODIGO, how="left")
+
 # ──────────────────────────────────────────────────────────────────────────────
 # PROCESAR MOVIMIENTOS (DEMANDA) — enfoque de tasa de llegada Poisson
 #
