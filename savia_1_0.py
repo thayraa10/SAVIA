@@ -1619,35 +1619,41 @@ with tab1:
             st.info("Selecciona al menos un estado para ver los KPIs.")
 
 # ══════════════════════════════════════════════════════════════════════════════
-# TAB 2 — INVENTARIO
+# TAB 2 — INVENTARIO Y PRONÓSTICO
 # ══════════════════════════════════════════════════════════════════════════════
 with tab2:
+    _t2_inv, _t2_venc, _t2_det = st.tabs([
+        "Inventario",
+        "Vencimientos",
+        "Detalle por Medicamento",
+    ])
 
-    # ── Filtros ────────────────────────────────────────────────────────────────
-    t2_busq, t2_fil = st.columns([3, 2])
-    busq_inv = t2_busq.text_input(
-        "Buscar producto:", placeholder="Escribe parte del nombre...", key="busq_inv"
-    )
+    # ══════════════════════════════════════════════════════════════════════════
+    # SUB-TAB 1 — INVENTARIO
+    # ══════════════════════════════════════════════════════════════════════════
+    with _t2_inv:
 
-    if formato_hospital and "_estado_cob" in resumen.columns:
-        _cats_t2 = [c for c in ["Sin existencias", "Crítico (≤1 mes)", "Bajo (1–3 meses)", "Adecuado (>3 meses)", "Sin datos"]
-                    if c in resumen["_estado_cob"].values]
-        filtro_cob = t2_fil.multiselect(
-            "Estado de cobertura:", _cats_t2, default=_cats_t2, key="filtro_cob_inv"
+        t2_busq, t2_fil = st.columns([3, 2])
+        busq_inv = t2_busq.text_input(
+            "Buscar producto:", placeholder="Escribe parte del nombre...", key="busq_inv"
         )
-        tabla_base = resumen[resumen["_estado_cob"].isin(filtro_cob)].copy()
-        col_estado_tbl = "_estado_cob"
-    else:
-        filtro_estado = t2_fil.multiselect(
-            "Estado:", ["VENCIDO", "CRITICO", "ADVERTENCIA", "NORMAL", "Sin fecha"],
-            default=["VENCIDO", "CRITICO", "ADVERTENCIA", "NORMAL", "Sin fecha"],
-            key="filtro_est_inv"
-        )
-        tabla_base = resumen[resumen["estado"].isin(filtro_estado)].copy()
-        col_estado_tbl = "estado"
 
-    # Chips de color para multiselect (misma config que tab1)
-    _components.html("""<script>
+        if formato_hospital and "_estado_cob" in resumen.columns:
+            _cats_t2 = [c for c in ["Sin existencias", "Crítico (≤1 mes)", "Bajo (1–3 meses)", "Adecuado (>3 meses)", "Sin datos"]
+                        if c in resumen["_estado_cob"].values]
+            filtro_cob = t2_fil.multiselect(
+                "Estado de cobertura:", _cats_t2, default=_cats_t2, key="filtro_cob_inv"
+            )
+            tabla_base = resumen[resumen["_estado_cob"].isin(filtro_cob)].copy()
+        else:
+            filtro_estado = t2_fil.multiselect(
+                "Estado:", ["VENCIDO", "CRITICO", "ADVERTENCIA", "NORMAL", "Sin fecha"],
+                default=["VENCIDO", "CRITICO", "ADVERTENCIA", "NORMAL", "Sin fecha"],
+                key="filtro_est_inv"
+            )
+            tabla_base = resumen[resumen["estado"].isin(filtro_estado)].copy()
+
+        _components.html("""<script>
 (function() {
   var cfg = {
     'Sin existencias':     {bg:'#FED7D7', fg:'#C53030', border:'#E53E3E'},
@@ -1676,137 +1682,368 @@ with tab2:
 })();
 </script>""", height=0)
 
-    if busq_inv.strip():
-        tabla_base = tabla_base[
-            tabla_base[COL_NOMBRE].str.contains(busq_inv.strip(), case=False, na=False)
-        ]
+        if busq_inv.strip():
+            tabla_base = tabla_base[
+                tabla_base[COL_NOMBRE].str.contains(busq_inv.strip(), case=False, na=False)
+            ]
 
-    # ── KPI strip (reactivo al filtro activo) ──────────────────────────────────
-    _t2n    = len(tabla_base)
-    _t2_sin = int((tabla_base["stock_total"] == 0).sum())
-    _t2_pct = f"{_t2_sin / _t2n * 100:.1f}% del total" if _t2n > 0 else ""
+        _t2n    = len(tabla_base)
+        _t2_sin = int((tabla_base["stock_total"] == 0).sum())
+        _t2_pct = f"{_t2_sin / _t2n * 100:.1f}% del total" if _t2n > 0 else ""
+        _t2_ped = 0
+        if "SUGERIDO" in tabla_base.columns:
+            _t2_ped = int((pd.to_numeric(tabla_base["SUGERIDO"], errors="coerce").fillna(0) > 0).sum())
+        _t2_val = 0.0
+        if "costo_unitario" in tabla_base.columns:
+            _t2_val = float(
+                (pd.to_numeric(tabla_base["stock_total"],    errors="coerce").fillna(0) *
+                 pd.to_numeric(tabla_base["costo_unitario"], errors="coerce").fillna(0)).sum()
+            )
+        _t2_val_s = (f"${_t2_val/1e9:.1f}B" if _t2_val >= 1e9
+                     else f"${_t2_val/1e6:.1f}M" if _t2_val >= 1e6 else f"${_t2_val:,.0f}")
 
-    _t2_ped = 0
-    if "SUGERIDO" in tabla_base.columns:
-        _t2_ped = int(
-            (pd.to_numeric(tabla_base["SUGERIDO"], errors="coerce").fillna(0) > 0).sum()
+        _t2c1, _t2c2, _t2c3, _t2c4 = st.columns(4)
+        for _cx, _lx, _vx, _sx, _cxc in [
+            (_t2c1, "Productos en vista",   f"{_t2n:,}",    "según filtros activos",  "#3182CE"),
+            (_t2c2, "Sin existencias",      f"{_t2_sin:,}", _t2_pct,                  "#E53E3E"),
+            (_t2c3, "Requieren pedido",     f"{_t2_ped:,}", "cant. sugerida > 0",     "#DD6B20"),
+            (_t2c4, "Valor en existencias", _t2_val_s,      "CLP — selección actual", "#38A169"),
+        ]:
+            _cx.markdown(
+                f'<div style="background:white;border-radius:10px;padding:12px 16px;margin:4px 0 10px 0;'
+                f'box-shadow:0 1px 3px rgba(0,0,0,0.07);border-top:3px solid {_cxc};">'
+                f'<div style="font-size:0.60rem;color:#64748b;font-weight:600;text-transform:uppercase;'
+                f'letter-spacing:0.05em;margin-bottom:4px">{_lx}</div>'
+                f'<div style="font-size:1.25rem;font-weight:800;color:#0f172a">{_vx}</div>'
+                f'<div style="font-size:0.62rem;color:#94a3b8;margin-top:2px">{_sx}</div>'
+                f'</div>', unsafe_allow_html=True,
+            )
+
+        if formato_hospital and "_estado_cob" in tabla_base.columns:
+            _ord2 = {"Sin existencias": 0, "Crítico (≤1 mes)": 1, "Bajo (1–3 meses)": 2, "Adecuado (>3 meses)": 3}
+            tabla_base["_sort"] = tabla_base["_estado_cob"].map(_ord2).fillna(9)
+            tabla_base = tabla_base.sort_values(["_sort", "stock_total"]).drop(columns=["_sort"])
+        elif "estado" in tabla_base.columns:
+            _ord3 = {"VENCIDO": 0, "CRITICO": 1, "ADVERTENCIA": 2, "NORMAL": 3}
+            tabla_base["_sort"] = tabla_base["estado"].map(_ord3).fillna(9)
+            tabla_base = tabla_base.sort_values(["_sort", "stock_total"]).drop(columns=["_sort"])
+
+        if formato_hospital:
+            _cols_t2 = [COL_CODIGO, COL_NOMBRE, "stock_total", "_estado_cob"]
+            for _xc in ["ALCANCE", "SUGERIDO", "costo_unitario", "valor_inventario"]:
+                if _xc in tabla_base.columns: _cols_t2.append(_xc)
+        else:
+            _cols_t2 = [COL_CODIGO, COL_NOMBRE, "stock_total"]
+            for _xc in ["n_lotes", "min_dias_vencer", "estado", "costo_unitario", "valor_inventario"]:
+                if _xc in tabla_base.columns: _cols_t2.append(_xc)
+
+        tabla = tabla_base[[c for c in _cols_t2 if c in tabla_base.columns]].copy()
+        if "SUGERIDO" in tabla.columns:
+            tabla["SUGERIDO"] = pd.to_numeric(tabla["SUGERIDO"], errors="coerce").fillna(0).clip(lower=0)
+        if "ALCANCE" in tabla.columns:
+            tabla["ALCANCE"] = pd.to_numeric(tabla["ALCANCE"], errors="coerce")
+        if "costo_unitario" in tabla.columns:
+            tabla["costo_unitario"] = pd.to_numeric(tabla["costo_unitario"], errors="coerce").fillna(0)
+        if "valor_inventario" in tabla.columns:
+            tabla["valor_inventario"] = pd.to_numeric(tabla["valor_inventario"], errors="coerce").fillna(0)
+        tabla = tabla.rename(columns={
+            COL_CODIGO: "Código", COL_NOMBRE: "Medicamento", "stock_total": "Existencias",
+            "n_lotes": "Lotes", "min_dias_vencer": "Días p/Vencer",
+            "costo_unitario": "Costo unit.", "valor_inventario": "Valor en exist.",
+            "estado": "Estado", "_estado_cob": "Cobertura",
+            "ALCANCE": "Cobertura (meses)", "SUGERIDO": "Cant. sugerida",
+        })
+
+        _ccfg = {
+            "Código":      st.column_config.TextColumn("Código", width="small"),
+            "Medicamento": st.column_config.TextColumn("Medicamento", width="large"),
+            "Existencias": st.column_config.NumberColumn("Existencias", format="%d u"),
+        }
+        if "Cobertura (meses)" in tabla.columns:
+            _max_cob = max(float(tabla["Cobertura (meses)"].dropna().max() or 12), 12)
+            _ccfg["Cobertura (meses)"] = st.column_config.ProgressColumn(
+                "Cobertura (meses)", format="%.1f m", min_value=0, max_value=_max_cob,
+                help="Meses estimados de stock disponible al ritmo de consumo actual",
+            )
+        if "Cant. sugerida" in tabla.columns:
+            _ccfg["Cant. sugerida"] = st.column_config.NumberColumn("Cant. sugerida", format="%d u")
+        if "Costo unit." in tabla.columns:
+            _ccfg["Costo unit."] = st.column_config.NumberColumn("Costo unit.", format="$%d")
+        if "Valor en exist." in tabla.columns:
+            _ccfg["Valor en exist."] = st.column_config.NumberColumn("Valor en exist.", format="$%d")
+        if "Días p/Vencer" in tabla.columns:
+            _ccfg["Días p/Vencer"] = st.column_config.NumberColumn("Días p/Vencer", format="%d d")
+
+        st.caption(f"{_t2n:,} producto(s) — ordenados por urgencia")
+        st.dataframe(_safe_df(tabla), use_container_width=True, hide_index=True,
+                     height=520, column_config=_ccfg)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # SUB-TAB 2 — VENCIMIENTOS
+    # ══════════════════════════════════════════════════════════════════════════
+    with _t2_venc:
+        _inv_venc_raw = pd.DataFrame()
+        if COL_VENCIMIENTO and "dias_vencer" in inv.columns:
+            _inv_venc_raw = inv[inv["dias_vencer"].notna()].copy()
+
+        if len(_inv_venc_raw) == 0:
+            st.markdown(
+                '<div style="background:#EBF8FF;border-left:4px solid #3182CE;border-radius:8px;'
+                'padding:18px 22px;margin:12px 0">'
+                '<div style="font-size:0.88rem;font-weight:700;color:#2B6CB0;margin-bottom:6px">'
+                'Datos de vencimiento no disponibles en este archivo</div>'
+                '<div style="font-size:0.83rem;color:#2C5282;line-height:1.6">'
+                'El archivo de consumos del hospital no incluye fechas de vencimiento ni lotes.<br>'
+                'Para activar esta sección, carga un <strong>archivo de inventario estándar</strong> '
+                'que tenga columnas: <code>VENCIMIENTO</code>, <code>LOTE</code>, <code>STOCK</code>.'
+                '</div></div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            # KPI strip
+            _nv_venc  = int((_inv_venc_raw["dias_vencer"] < 0).sum())
+            _nv_crit  = int(((_inv_venc_raw["dias_vencer"] >= 0) & (_inv_venc_raw["dias_vencer"] < 30)).sum())
+            _nv_adv   = int(((_inv_venc_raw["dias_vencer"] >= 30) & (_inv_venc_raw["dias_vencer"] < 90)).sum())
+            _nv_ok    = int((_inv_venc_raw["dias_vencer"] >= 90).sum())
+            _vkc1, _vkc2, _vkc3, _vkc4 = st.columns(4)
+            for _vc, _vl, _vv, _vcolor in [
+                (_vkc1, "Vencidos",            f"{_nv_venc:,}",  "#E53E3E"),
+                (_vkc2, "Vencen en <30 días",  f"{_nv_crit:,}",  "#DD6B20"),
+                (_vkc3, "Vencen en 30–90 días", f"{_nv_adv:,}", "#D69E2E"),
+                (_vkc4, "Vencen en >90 días",  f"{_nv_ok:,}",   "#38A169"),
+            ]:
+                _vc.markdown(
+                    f'<div style="background:white;border-radius:10px;padding:12px 16px;margin:4px 0 10px 0;'
+                    f'box-shadow:0 1px 3px rgba(0,0,0,0.07);border-top:3px solid {_vcolor};">'
+                    f'<div style="font-size:0.60rem;color:#64748b;font-weight:600;text-transform:uppercase;'
+                    f'letter-spacing:0.05em;margin-bottom:4px">{_vl}</div>'
+                    f'<div style="font-size:1.25rem;font-weight:800;color:#0f172a">{_vv}</div>'
+                    f'</div>', unsafe_allow_html=True,
+                )
+
+            # Timeline (un bar por producto, mínimo días_vencer de todos sus lotes)
+            _stk_col_v = "stock_total" if "stock_total" in _inv_venc_raw.columns else COL_STOCK
+            _venc_prod = (
+                _inv_venc_raw.groupby(COL_NOMBRE)
+                .agg(dias_min=("dias_vencer", "min"), stock=(_stk_col_v, "sum"))
+                .reset_index()
+                .sort_values("dias_min")
+                .head(40)
+            )
+            _venc_prod["color"] = _venc_prod["dias_min"].apply(
+                lambda d: "#E53E3E" if d < 0 else "#DD6B20" if d < 30 else "#D69E2E" if d < 90 else "#38A169"
+            )
+            _noms_v = [n[:38] + "…" if len(str(n)) > 38 else str(n) for n in _venc_prod[COL_NOMBRE]]
+            _fig_tl = go.Figure(go.Bar(
+                x=_venc_prod["dias_min"].clip(lower=-180),
+                y=_noms_v,
+                orientation="h",
+                marker_color=_venc_prod["color"].tolist(),
+                text=[f"{int(d)} d" for d in _venc_prod["dias_min"]],
+                textposition="outside", cliponaxis=False,
+                hovertemplate="<b>%{y}</b><br>%{x} días hasta vencer<extra></extra>",
+            ))
+            _fig_tl.add_vline(x=0,  line_color="#E53E3E", line_width=2, line_dash="dash")
+            _fig_tl.add_vline(x=30, line_color="#DD6B20", line_width=1, line_dash="dot",
+                              annotation_text="30 d", annotation_position="top right")
+            _fig_tl.add_vline(x=90, line_color="#D69E2E", line_width=1, line_dash="dot",
+                              annotation_text="90 d", annotation_position="top right")
+            _fig_tl.update_layout(
+                title=dict(text="Línea de tiempo de vencimientos (top 40 más urgentes)",
+                           font=dict(size=13, color="#0f172a")),
+                height=max(300, len(_venc_prod) * 22 + 70),
+                margin=dict(t=36, b=8, l=8, r=70),
+                xaxis=dict(title="Días restantes (negativo = ya vencido)",
+                           zeroline=True, zerolinecolor="#E53E3E", zerolinewidth=2),
+                yaxis=dict(autorange="reversed"),
+                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+            )
+            st.plotly_chart(_fig_tl, use_container_width=True)
+
+            # Tabla críticos <30 días
+            _crit_v = _inv_venc_raw[_inv_venc_raw["dias_vencer"] < 30].copy()
+            if len(_crit_v) > 0:
+                st.markdown(
+                    '<div style="font-size:0.82rem;font-weight:700;color:#C53030;'
+                    'text-transform:uppercase;letter-spacing:0.05em;margin:8px 0 6px 0">'
+                    'Medicamentos que vencen en menos de 30 días</div>',
+                    unsafe_allow_html=True,
+                )
+                _cv_cols = [COL_NOMBRE]
+                if COL_LOTE and COL_LOTE in _crit_v.columns: _cv_cols.append(COL_LOTE)
+                _cv_stk = "stock_total" if "stock_total" in _crit_v.columns else COL_STOCK
+                _cv_cols += [_cv_stk, "dias_vencer"]
+                _crit_show = _crit_v[[c for c in _cv_cols if c in _crit_v.columns]].copy()
+                _crit_show["Acción sugerida"] = _crit_show["dias_vencer"].apply(
+                    lambda d: "Dar de baja" if d < 0 else
+                              "Consumir primero (FEFO)" if d < 15 else "Planificar devolución"
+                )
+                _crit_show = _crit_show.sort_values("dias_vencer").rename(columns={
+                    COL_NOMBRE: "Medicamento",
+                    COL_LOTE: "Lote", _cv_stk: "Stock", "dias_vencer": "Días restantes",
+                }).reset_index(drop=True)
+                st.dataframe(_safe_df(_crit_show), use_container_width=True, hide_index=True, height=280)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # SUB-TAB 3 — DETALLE POR MEDICAMENTO
+    # ══════════════════════════════════════════════════════════════════════════
+    with _t2_det:
+        _nombres_all = sorted(resumen[COL_NOMBRE].dropna().unique().tolist())
+        _sel_med = st.selectbox(
+            "Seleccionar medicamento:",
+            ["— Elige un medicamento para ver su detalle —"] + _nombres_all,
+            key="det_med_sel",
         )
 
-    _t2_val = 0.0
-    if "costo_unitario" in tabla_base.columns:
-        _t2_val = float(
-            (pd.to_numeric(tabla_base["stock_total"],    errors="coerce").fillna(0) *
-             pd.to_numeric(tabla_base["costo_unitario"], errors="coerce").fillna(0)).sum()
-        )
-    _t2_val_s = (f"${_t2_val/1_000_000_000:.1f}B" if _t2_val >= 1e9
-                 else f"${_t2_val/1_000_000:.1f}M" if _t2_val >= 1e6
-                 else f"${_t2_val:,.0f}")
+        if _sel_med and _sel_med != "— Elige un medicamento para ver su detalle —":
+            _row_d  = resumen[resumen[COL_NOMBRE] == _sel_med].iloc[0]
+            _cod_d  = _row_d[COL_CODIGO]
 
-    _t2c1, _t2c2, _t2c3, _t2c4 = st.columns(4)
-    for _cx, _lx, _vx, _sx, _cx_color in [
-        (_t2c1, "Productos en vista",   f"{_t2n:,}",    "según filtros activos",   "#3182CE"),
-        (_t2c2, "Sin existencias",      f"{_t2_sin:,}", _t2_pct,                   "#E53E3E"),
-        (_t2c3, "Requieren pedido",     f"{_t2_ped:,}", "cant. sugerida > 0",      "#DD6B20"),
-        (_t2c4, "Valor en existencias", _t2_val_s,      "CLP — selección actual",  "#38A169"),
-    ]:
-        _cx.markdown(
-            f'<div style="background:white;border-radius:10px;padding:12px 16px;margin:4px 0 10px 0;'
-            f'box-shadow:0 1px 3px rgba(0,0,0,0.07);border-top:3px solid {_cx_color};">'
-            f'<div style="font-size:0.60rem;color:#64748b;font-weight:600;text-transform:uppercase;'
-            f'letter-spacing:0.05em;margin-bottom:4px">{_lx}</div>'
-            f'<div style="font-size:1.25rem;font-weight:800;color:#0f172a">{_vx}</div>'
-            f'<div style="font-size:0.62rem;color:#94a3b8;margin-top:2px">{_sx}</div>'
-            f'</div>',
-            unsafe_allow_html=True,
-        )
+            _gcol, _ccol = st.columns([1, 1])
 
-    # ── Tabla principal ────────────────────────────────────────────────────────
-    # Ordenar por urgencia (sin stock → crítico → bajo → adecuado)
-    if formato_hospital and "_estado_cob" in tabla_base.columns:
-        _ord2 = {"Sin existencias": 0, "Crítico (≤1 mes)": 1, "Bajo (1–3 meses)": 2, "Adecuado (>3 meses)": 3}
-        tabla_base = tabla_base.copy()
-        tabla_base["_sort"] = tabla_base["_estado_cob"].map(_ord2).fillna(9)
-        tabla_base = tabla_base.sort_values(["_sort", "stock_total"]).drop(columns=["_sort"])
-    elif "estado" in tabla_base.columns:
-        _ord3 = {"VENCIDO": 0, "CRITICO": 1, "ADVERTENCIA": 2, "NORMAL": 3}
-        tabla_base = tabla_base.copy()
-        tabla_base["_sort"] = tabla_base["estado"].map(_ord3).fillna(9)
-        tabla_base = tabla_base.sort_values(["_sort", "stock_total"]).drop(columns=["_sort"])
+            # ── Gauge de cobertura / termómetro ──────────────────────────────
+            with _gcol:
+                _d_stk    = float(_row_d.get("stock_total", 0) or 0)
+                _d_alc    = float(pd.to_numeric(_row_d.get("ALCANCE", None), errors="coerce") or 0)
+                _d_smin   = float(pd.to_numeric(_row_d.get("STC_MIN", None),     errors="coerce") or 0)
+                _d_smax   = float(pd.to_numeric(_row_d.get("STC_MAX", None),     errors="coerce") or 0)
+                _d_scrit  = float(pd.to_numeric(_row_d.get("STC_CRITICO", None), errors="coerce") or 0)
 
-    # Seleccionar columnas relevantes
-    if formato_hospital:
-        _cols_t2 = [COL_CODIGO, COL_NOMBRE, "stock_total", "_estado_cob"]
-        for _xc in ["ALCANCE", "SUGERIDO", "costo_unitario", "valor_inventario"]:
-            if _xc in tabla_base.columns: _cols_t2.append(_xc)
-    else:
-        _cols_t2 = [COL_CODIGO, COL_NOMBRE, "stock_total"]
-        for _xc in ["n_lotes", "min_dias_vencer", "estado", "costo_unitario", "valor_inventario"]:
-            if _xc in tabla_base.columns: _cols_t2.append(_xc)
+                if _d_smax > 0 and _d_smin > 0:
+                    _gmax   = max(_d_smax, _d_stk) * 1.15
+                    _gcolor = "#E53E3E" if _d_stk <= _d_scrit else "#DD6B20" if _d_stk <= _d_smin else "#38A169"
+                    _gsteps = [{"range": [0, _d_scrit], "color": "#FED7D7"}]
+                    if _d_smin > _d_scrit:
+                        _gsteps.append({"range": [_d_scrit, _d_smin], "color": "#FEEBC8"})
+                    _gsteps.append({"range": [_d_smin, _gmax], "color": "#C6F6D5"})
+                    _gval   = _d_stk
+                    _gtitle = "Nivel de stock (unidades)"
+                    _gsufx  = " u"
+                    _gthr   = {"line": {"color": "#DD6B20", "width": 4}, "thickness": 0.75, "value": _d_smin}
+                else:
+                    _gmax   = max(6.0, _d_alc * 1.3)
+                    _gcolor = "#E53E3E" if _d_alc <= 1 else "#DD6B20" if _d_alc <= 3 else "#38A169"
+                    _gsteps = [
+                        {"range": [0, 1], "color": "#FED7D7"},
+                        {"range": [1, 3], "color": "#FEEBC8"},
+                        {"range": [3, _gmax], "color": "#C6F6D5"},
+                    ]
+                    _gval   = _d_alc
+                    _gtitle = "Cobertura estimada (meses)"
+                    _gsufx  = " m"
+                    _gthr   = {"line": {"color": "#DD6B20", "width": 4}, "thickness": 0.75, "value": 3}
 
-    tabla = tabla_base[[c for c in _cols_t2 if c in tabla_base.columns]].copy()
+                _fig_g = go.Figure(go.Indicator(
+                    mode="gauge+number",
+                    value=_gval,
+                    number={"suffix": _gsufx, "font": {"size": 28, "color": _gcolor}},
+                    gauge={
+                        "axis":       {"range": [0, _gmax], "tickwidth": 1, "tickcolor": "#64748b"},
+                        "bar":        {"color": _gcolor, "thickness": 0.28},
+                        "bgcolor":    "white",
+                        "borderwidth": 1, "bordercolor": "#E2E8F0",
+                        "steps":      _gsteps,
+                        "threshold":  _gthr,
+                    },
+                    title={"text": f"<b>{_gtitle}</b>", "font": {"size": 12, "color": "#64748b"}},
+                    domain={"x": [0, 1], "y": [0, 1]},
+                ))
+                _fig_g.update_layout(
+                    height=270, margin=dict(t=40, b=10, l=20, r=20),
+                    paper_bgcolor="rgba(0,0,0,0)",
+                )
+                st.plotly_chart(_fig_g, use_container_width=True)
 
-    # Mantener numéricos para column_config (NO pre-formatear como strings)
-    if "SUGERIDO" in tabla.columns:
-        tabla["SUGERIDO"] = pd.to_numeric(tabla["SUGERIDO"], errors="coerce").fillna(0).clip(lower=0)
-    if "ALCANCE" in tabla.columns:
-        tabla["ALCANCE"] = pd.to_numeric(tabla["ALCANCE"], errors="coerce")
-    if "costo_unitario" in tabla.columns:
-        tabla["costo_unitario"] = pd.to_numeric(tabla["costo_unitario"], errors="coerce").fillna(0)
-    if "valor_inventario" in tabla.columns:
-        tabla["valor_inventario"] = pd.to_numeric(tabla["valor_inventario"], errors="coerce").fillna(0)
+            # ── Tarjetas informativas ─────────────────────────────────────────
+            with _ccol:
+                _d_med   = float(_row_d.get("media_diaria", 0) or 0)
+                _d_sug   = float(pd.to_numeric(_row_d.get("SUGERIDO",       0), errors="coerce") or 0)
+                _d_costo = float(pd.to_numeric(_row_d.get("costo_unitario", 0), errors="coerce") or 0)
+                _d_dcob  = float(_row_d.get("dias_cobertura", 0) or 0)
+                _d_est   = str(_row_d.get("_estado_cob", _row_d.get("estado", "—")))
+                _badge_colors_d = {
+                    "Sin existencias": ("#FED7D7","#C53030"), "Crítico (≤1 mes)": ("#FEEBC8","#C05621"),
+                    "Bajo (1–3 meses)": ("#FEFCBF","#B7791F"), "Adecuado (>3 meses)": ("#C6F6D5","#276749"),
+                    "VENCIDO": ("#FED7D7","#C53030"), "CRITICO": ("#FEEBC8","#C05621"),
+                    "ADVERTENCIA": ("#FEFCBF","#B7791F"), "NORMAL": ("#C6F6D5","#276749"),
+                }
+                _bg_d, _fg_d = _badge_colors_d.get(_d_est, ("#EDF2F7","#718096"))
+                _badge_d = (f'<span style="background:{_bg_d};color:{_fg_d};border-radius:6px;'
+                            f'padding:3px 10px;font-weight:700;font-size:0.80rem">{_d_est}</span>')
 
-    tabla = tabla.rename(columns={
-        COL_CODIGO:        "Código",
-        COL_NOMBRE:        "Medicamento",
-        "stock_total":     "Existencias",
-        "n_lotes":         "Lotes",
-        "min_dias_vencer": "Días p/Vencer",
-        "costo_unitario":  "Costo unit.",
-        "valor_inventario":"Valor en exist.",
-        "estado":          "Estado",
-        "_estado_cob":     "Cobertura",
-        "ALCANCE":         "Cobertura (meses)",
-        "SUGERIDO":        "Cant. sugerida",
-    })
+                _cards_d = [
+                    ("Estado actual",          _badge_d,                                   True,  "#E53E3E"),
+                    ("Stock actual",           f"{int(_d_stk):,} u",                       False, "#3182CE"),
+                    ("Consumo diario prom.",   f"{_d_med:.1f} u/día",                      False, "#3182CE"),
+                    ("Días de cobertura",      f"{_d_dcob:.0f} días" if _d_dcob else "—",  False, "#D69E2E"),
+                    ("Cantidad a pedir",       f"{int(_d_sug):,} u" if _d_sug > 0 else "No requerido", False, "#DD6B20"),
+                    ("Costo unitario",         f"${_d_costo:,.0f} CLP" if _d_costo > 0 else "—", False, "#38A169"),
+                ]
+                for _lc, _vc, _is_html, _brd in _cards_d:
+                    st.markdown(
+                        f'<div style="background:white;border-radius:8px;padding:9px 14px;margin-bottom:6px;'
+                        f'box-shadow:0 1px 2px rgba(0,0,0,0.06);border-left:3px solid {_brd};">'
+                        f'<div style="font-size:0.60rem;color:#94a3b8;font-weight:600;text-transform:uppercase;margin-bottom:2px">{_lc}</div>'
+                        f'<div style="font-size:0.88rem;font-weight:700;color:#0f172a">{_vc}</div>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
 
-    # Column config con elementos visuales
-    _ccfg = {
-        "Código":      st.column_config.TextColumn("Código",      width="small"),
-        "Medicamento": st.column_config.TextColumn("Medicamento", width="large"),
-        "Existencias": st.column_config.NumberColumn(
-            "Existencias", help="Unidades en stock", format="%d u"
-        ),
-    }
-    if "Cobertura (meses)" in tabla.columns:
-        _max_cob = float(tabla["Cobertura (meses)"].dropna().max() or 12)
-        _max_cob = max(_max_cob, 12)
-        _ccfg["Cobertura (meses)"] = st.column_config.ProgressColumn(
-            "Cobertura (meses)",
-            help="Meses estimados de stock disponible al ritmo de consumo actual",
-            format="%.1f m",
-            min_value=0,
-            max_value=_max_cob,
-        )
-    if "Cant. sugerida" in tabla.columns:
-        _ccfg["Cant. sugerida"] = st.column_config.NumberColumn(
-            "Cant. sugerida", help="Unidades a pedir para alcanzar nivel óptimo", format="%d u"
-        )
-    if "Costo unit." in tabla.columns:
-        _ccfg["Costo unit."] = st.column_config.NumberColumn(
-            "Costo unit.", help="Precio unitario (CLP)", format="$%d"
-        )
-    if "Valor en exist." in tabla.columns:
-        _ccfg["Valor en exist."] = st.column_config.NumberColumn(
-            "Valor en exist.", help="stock × costo unitario (CLP)", format="$%d"
-        )
-    if "Días p/Vencer" in tabla.columns:
-        _ccfg["Días p/Vencer"] = st.column_config.NumberColumn(
-            "Días p/Vencer", help="Días hasta el vencimiento más próximo", format="%d d"
-        )
-
-    st.caption(f"{_t2n:,} producto(s) — ordenados por urgencia")
-    st.dataframe(_safe_df(tabla), use_container_width=True, hide_index=True,
-                 height=520, column_config=_ccfg)
+            # ── Historial de consumo mensual ──────────────────────────────────
+            st.markdown(
+                '<div style="font-size:0.82rem;font-weight:700;color:#64748b;'
+                'text-transform:uppercase;letter-spacing:0.06em;margin:14px 0 6px 0">'
+                'Historial de consumo mensual</div>',
+                unsafe_allow_html=True,
+            )
+            if tiene_movimientos and datos_movimientos is not None:
+                _hmov = datos_movimientos[datos_movimientos[COL_MOV_CODIGO] == _cod_d].copy()
+                if len(_hmov) > 0:
+                    _hmov[COL_MOV_FECHA]    = pd.to_datetime(_hmov[COL_MOV_FECHA], dayfirst=True, errors="coerce")
+                    _hmov[COL_MOV_CANTIDAD] = pd.to_numeric(_hmov[COL_MOV_CANTIDAD], errors="coerce").fillna(0)
+                    _hm = (
+                        _hmov.dropna(subset=[COL_MOV_FECHA])
+                        .set_index(COL_MOV_FECHA)
+                        .resample("MS")[COL_MOV_CANTIDAD].sum()
+                        .reset_index().tail(18)
+                    )
+                    if len(_hm) > 0:
+                        _hm["lbl"] = _hm[COL_MOV_FECHA].dt.strftime("%b %Y")
+                        _fig_h = go.Figure()
+                        _fig_h.add_trace(go.Bar(
+                            x=_hm["lbl"], y=_hm[COL_MOV_CANTIDAD],
+                            name="Consumo real", marker_color="#3182CE",
+                            hovertemplate="%{x}: %{y:,} u<extra></extra>",
+                        ))
+                        if _d_med > 0:
+                            _fig_h.add_trace(go.Scatter(
+                                x=_hm["lbl"], y=[_d_med * 30] * len(_hm),
+                                mode="lines", name="Promedio estimado",
+                                line=dict(color="#DD6B20", width=2, dash="dash"),
+                                hovertemplate="Promedio: %{y:,.0f} u/mes<extra></extra>",
+                            ))
+                        _fig_h.update_layout(
+                            height=260, margin=dict(t=8, b=8, l=8, r=8),
+                            xaxis_title="", yaxis_title="Unidades dispensadas",
+                            legend=dict(orientation="h", y=1.08),
+                            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                        )
+                        st.plotly_chart(_fig_h, use_container_width=True)
+                    else:
+                        st.info("Sin fechas válidas para construir el historial.")
+                else:
+                    st.info("Sin movimientos registrados para este medicamento.")
+            else:
+                st.info("Sube el archivo de movimientos para ver el historial de consumo.")
+        else:
+            st.markdown(
+                '<div style="background:#F8FAFC;border-radius:12px;padding:40px;text-align:center;margin-top:20px">'
+                '<div style="font-size:1.05rem;font-weight:700;color:#64748b;margin-bottom:8px">Selecciona un medicamento</div>'
+                '<div style="font-size:0.83rem;color:#94a3b8">Elige un producto del dropdown para ver su gauge de cobertura,'
+                '<br>historial de consumo mensual y métricas clave.</div>'
+                '</div>',
+                unsafe_allow_html=True,
+            )
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 3 — ABASTECIMIENTO Y SIMULACIÓN
