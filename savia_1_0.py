@@ -1175,11 +1175,10 @@ if formato_hospital:
 # ──────────────────────────────────────────────────────────────────────────────
 # TABS
 # ──────────────────────────────────────────────────────────────────────────────
-tab1, tab2, tab3, tab4 = st.tabs([
+tab1, tab2, tab3 = st.tabs([
     "Panel Principal",
     "Inventario y Pronóstico",
     "Abastecimiento",
-    "Detalle por Medicamento",
 ])
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -2166,27 +2165,56 @@ with tab2:
     # SUB-TAB 3 — DETALLE POR MEDICAMENTO
     # ══════════════════════════════════════════════════════════════════════════
     with _t2_det:
-        _nombres_all = sorted(resumen[COL_NOMBRE].dropna().unique().tolist())
+        # Ordenar por consumo descendente (medicamentos más relevantes primero)
+        if "media_diaria" in resumen.columns:
+            _det_ord = resumen.sort_values("media_diaria", ascending=False)[COL_NOMBRE].tolist()
+        else:
+            _det_ord = resumen[COL_NOMBRE].sort_values().tolist()
+
+        # Search + selectbox
+        _det_busq = st.text_input(
+            "Buscar:", placeholder="Nombre del producto...", key="det_busq"
+        )
+        if _det_busq.strip():
+            _det_filt = [n for n in _det_ord if _det_busq.strip().lower() in n.lower()]
+        else:
+            _det_filt = _det_ord
         _sel_med = st.selectbox(
-            "Seleccionar medicamento:",
-            ["— Elige un medicamento para ver su detalle —"] + _nombres_all,
-            key="det_med_sel",
+            "Medicamento:", _det_filt if _det_filt else _det_ord, key="det_med_sel"
         )
 
-        if _sel_med and _sel_med != "— Elige un medicamento para ver su detalle —":
-            _row_d  = resumen[resumen[COL_NOMBRE] == _sel_med].iloc[0]
-            _cod_d  = _row_d[COL_CODIGO]
+        if _sel_med:
+            _row_d   = resumen[resumen[COL_NOMBRE] == _sel_med].iloc[0]
+            _cod_d   = _row_d[COL_CODIGO]
+            _d_stk   = float(_row_d.get("stock_total",    0) or 0)
+            _d_alc   = float(pd.to_numeric(_row_d.get("ALCANCE",    None), errors="coerce") or 0)
+            _d_smin  = float(pd.to_numeric(_row_d.get("STC_MIN",    None), errors="coerce") or 0)
+            _d_smax  = float(pd.to_numeric(_row_d.get("STC_MAX",    None), errors="coerce") or 0)
+            _d_scrit = float(pd.to_numeric(_row_d.get("STC_CRITICO",None), errors="coerce") or 0)
+            _d_med   = float(_row_d.get("media_diaria",   0) or 0)
+            _d_sug   = float(pd.to_numeric(_row_d.get("SUGERIDO",   0), errors="coerce") or 0)
+            _d_costo = float(pd.to_numeric(_row_d.get("costo_unitario", 0), errors="coerce") or 0)
+            _d_dcob  = float(_row_d.get("dias_cobertura", 0) or 0)
+            _d_est   = str(_row_d.get("_estado_cob", _row_d.get("estado", "—")))
 
-            _gcol, _ccol = st.columns([1, 1])
+            # ── KPI strip ─────────────────────────────────────────────────────
+            _dk1, _dk2, _dk3, _dk4 = st.columns(4)
+            _dk1.metric("Stock actual",          f"{int(_d_stk):,} u")
+            _dk2.metric("Consumo prom. mensual", f"{_d_med*30:,.0f} u/mes" if _d_med > 0 else "—")
+            if _d_alc > 0:
+                _dk3.metric("Cobertura", f"{round(_d_alc, 1)} meses")
+            elif _d_dcob > 0:
+                _dk3.metric("Días de cobertura", f"{_d_dcob:.0f} días")
+            else:
+                _dk3.metric("Cobertura", "—")
+            _dk4.metric("Sugerido pedir", f"{int(_d_sug):,} u" if _d_sug > 0 else "No requerido")
 
-            # ── Gauge de cobertura / termómetro ──────────────────────────────
+            st.divider()
+
+            # ── Gauge (izq) + Tabla info / Lotes (der) ────────────────────────
+            _gcol, _tcol = st.columns([1, 1])
+
             with _gcol:
-                _d_stk    = float(_row_d.get("stock_total", 0) or 0)
-                _d_alc    = float(pd.to_numeric(_row_d.get("ALCANCE", None), errors="coerce") or 0)
-                _d_smin   = float(pd.to_numeric(_row_d.get("STC_MIN", None),     errors="coerce") or 0)
-                _d_smax   = float(pd.to_numeric(_row_d.get("STC_MAX", None),     errors="coerce") or 0)
-                _d_scrit  = float(pd.to_numeric(_row_d.get("STC_CRITICO", None), errors="coerce") or 0)
-
                 if _d_smax > 0 and _d_smin > 0:
                     _gmax   = max(_d_smax, _d_stk) * 1.15
                     _gcolor = "#E53E3E" if _d_stk <= _d_scrit else "#DD6B20" if _d_stk <= _d_smin else "#38A169"
@@ -2232,40 +2260,47 @@ with tab2:
                 )
                 st.plotly_chart(_fig_g, use_container_width=True)
 
-            # ── Tarjetas informativas ─────────────────────────────────────────
-            with _ccol:
-                _d_med   = float(_row_d.get("media_diaria", 0) or 0)
-                _d_sug   = float(pd.to_numeric(_row_d.get("SUGERIDO",       0), errors="coerce") or 0)
-                _d_costo = float(pd.to_numeric(_row_d.get("costo_unitario", 0), errors="coerce") or 0)
-                _d_dcob  = float(_row_d.get("dias_cobertura", 0) or 0)
-                _d_est   = str(_row_d.get("_estado_cob", _row_d.get("estado", "—")))
-                _badge_colors_d = {
-                    "Sin existencias": ("#FED7D7","#C53030"), "Crítico (≤1 mes)": ("#FEEBC8","#C05621"),
-                    "Bajo (1–3 meses)": ("#FEFCBF","#B7791F"), "Adecuado (>3 meses)": ("#C6F6D5","#276749"),
-                    "VENCIDO": ("#FED7D7","#C53030"), "CRITICO": ("#FEEBC8","#C05621"),
-                    "ADVERTENCIA": ("#FEFCBF","#B7791F"), "NORMAL": ("#C6F6D5","#276749"),
-                }
-                _bg_d, _fg_d = _badge_colors_d.get(_d_est, ("#EDF2F7","#718096"))
-                _badge_d = (f'<span style="background:{_bg_d};color:{_fg_d};border-radius:6px;'
-                            f'padding:3px 10px;font-weight:700;font-size:0.80rem">{_d_est}</span>')
-
-                _cards_d = [
-                    ("Estado actual",          _badge_d,                                   True,  "#E53E3E"),
-                    ("Stock actual",           f"{int(_d_stk):,} u",                       False, "#3182CE"),
-                    ("Consumo diario prom.",   f"{_d_med:.1f} u/día",                      False, "#3182CE"),
-                    ("Días de cobertura",      f"{_d_dcob:.0f} días" if _d_dcob else "—",  False, "#D69E2E"),
-                    ("Cantidad a pedir",       f"{int(_d_sug):,} u" if _d_sug > 0 else "No requerido", False, "#DD6B20"),
-                    ("Costo unitario",         f"${_d_costo:,.0f} CLP" if _d_costo > 0 else "—", False, "#38A169"),
-                ]
-                for _lc, _vc, _is_html, _brd in _cards_d:
-                    st.markdown(
-                        f'<div style="background:white;border-radius:8px;padding:9px 14px;margin-bottom:6px;'
-                        f'box-shadow:0 1px 2px rgba(0,0,0,0.06);border-left:3px solid {_brd};">'
-                        f'<div style="font-size:0.60rem;color:#94a3b8;font-weight:600;text-transform:uppercase;margin-bottom:2px">{_lc}</div>'
-                        f'<div style="font-size:0.88rem;font-weight:700;color:#0f172a">{_vc}</div>'
-                        f'</div>',
-                        unsafe_allow_html=True,
+            with _tcol:
+                if formato_hospital:
+                    st.markdown("**Información del producto**")
+                    _info_rows = [
+                        {"Campo": "Código",       "Valor": str(_cod_d)},
+                        {"Campo": "Stock actual",  "Valor": f"{int(_d_stk):,} u"},
+                    ]
+                    _badge_colors_d = {
+                        "Sin existencias":   ("#FED7D7","#C53030"),
+                        "Crítico (≤1 mes)":  ("#FEEBC8","#C05621"),
+                        "Bajo (1–3 meses)":  ("#FEFCBF","#B7791F"),
+                        "Adecuado (>3 meses)": ("#C6F6D5","#276749"),
+                        "VENCIDO":   ("#FED7D7","#C53030"), "CRITICO": ("#FEEBC8","#C05621"),
+                        "ADVERTENCIA": ("#FEFCBF","#B7791F"), "NORMAL": ("#C6F6D5","#276749"),
+                    }
+                    _bg_d, _fg_d = _badge_colors_d.get(_d_est, ("#EDF2F7","#718096"))
+                    _info_rows.append({"Campo": "Estado", "Valor": _d_est})
+                    for _campo, _col_r in [
+                        ("Cobertura (meses)",   "ALCANCE"),
+                        ("Existencias mínimas", "STC_MIN"),
+                        ("Existencias máximas", "STC_MAX"),
+                        ("Existencias críticas","STC_CRITICO"),
+                        ("Consumo promedio",    "CONS_PROM"),
+                    ]:
+                        if _col_r in _row_d.index and not pd.isna(_row_d.get(_col_r)):
+                            _info_rows.append({"Campo": _campo, "Valor": f"{float(_row_d[_col_r]):,.1f}"})
+                    if _d_costo > 0:
+                        _info_rows.append({"Campo": "Precio unitario",    "Valor": f"${_d_costo:,.0f} CLP"})
+                        _info_rows.append({"Campo": "Valor en existencias","Valor": f"${_d_stk * _d_costo:,.0f} CLP"})
+                    st.dataframe(
+                        _safe_df(pd.DataFrame(_info_rows)),
+                        use_container_width=True, hide_index=True,
                     )
+                else:
+                    st.markdown("**Lotes (FEFO: primero en vencer, primero en salir)**")
+                    _cols_lotes = [c for c in [COL_LOTE, COL_MARCA, COL_VENCIMIENTO, COL_STOCK, "dias_vencer", "estado"]
+                                   if c is not None and c in inv.columns]
+                    _lotes_med = inv[inv[COL_NOMBRE] == _sel_med][_cols_lotes].copy().sort_values("dias_vencer")
+                    if COL_VENCIMIENTO in _lotes_med.columns:
+                        _lotes_med[COL_VENCIMIENTO] = _lotes_med[COL_VENCIMIENTO].dt.strftime("%d/%m/%Y")
+                    st.dataframe(_safe_df(_lotes_med), use_container_width=True, hide_index=True)
 
             # ── Historial de consumo mensual ──────────────────────────────────
             st.markdown(
@@ -2290,21 +2325,19 @@ with tab2:
                         _fig_h = go.Figure()
                         _fig_h.add_trace(go.Bar(
                             x=_hm["lbl"], y=_hm[COL_MOV_CANTIDAD],
-                            name="Consumo real", marker_color="#3182CE",
-                            hovertemplate="%{x}: %{y:,} u<extra></extra>",
+                            marker_color="#2563eb", name="Consumo mensual",
+                            hovertemplate="%{x}: %{y:,.0f} u<extra></extra>",
                         ))
                         if _d_med > 0:
-                            _fig_h.add_trace(go.Scatter(
-                                x=_hm["lbl"], y=[_d_med * 30] * len(_hm),
-                                mode="lines", name="Promedio estimado",
-                                line=dict(color="#DD6B20", width=2, dash="dash"),
-                                hovertemplate="Promedio: %{y:,.0f} u/mes<extra></extra>",
-                            ))
+                            _fig_h.add_hline(
+                                y=_d_med * 30,
+                                line_dash="dash", line_color="#dc2626", line_width=1.5,
+                                annotation_text=f"Prom: {_d_med*30:,.0f}", annotation_position="top right",
+                            )
                         _fig_h.update_layout(
-                            height=260, margin=dict(t=8, b=8, l=8, r=8),
-                            xaxis_title="", yaxis_title="Unidades dispensadas",
-                            legend=dict(orientation="h", y=1.08),
-                            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                            height=280, margin=dict(t=20, b=20, l=10, r=10),
+                            xaxis_title="Mes", yaxis_title="Unidades dispensadas",
+                            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="#f8fafc", showlegend=False,
                         )
                         st.plotly_chart(_fig_h, use_container_width=True)
                     else:
@@ -2313,15 +2346,6 @@ with tab2:
                     st.info("Sin movimientos registrados para este medicamento.")
             else:
                 st.info("Sube el archivo de movimientos para ver el historial de consumo.")
-        else:
-            st.markdown(
-                '<div style="background:#F8FAFC;border-radius:12px;padding:40px;text-align:center;margin-top:20px">'
-                '<div style="font-size:1.05rem;font-weight:700;color:#64748b;margin-bottom:8px">Selecciona un medicamento</div>'
-                '<div style="font-size:0.83rem;color:#94a3b8">Elige un producto del dropdown para ver su gauge de cobertura,'
-                '<br>historial de consumo mensual y métricas clave.</div>'
-                '</div>',
-                unsafe_allow_html=True,
-            )
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 3 — ABASTECIMIENTO Y SIMULACIÓN
@@ -2641,123 +2665,3 @@ with tab3:
                 else:
                     st.info("El costo actual es equivalente al recomendado.")
 
-# ══════════════════════════════════════════════════════════════════════════════
-# TAB 4 — DETALLE POR MEDICAMENTO
-# ══════════════════════════════════════════════════════════════════════════════
-with tab4:
-
-    # Ordenar por consumo descendente para que el default sea relevante
-    if "media_diaria" in resumen.columns:
-        meds_det_ord = resumen.sort_values("media_diaria", ascending=False)[COL_NOMBRE].tolist()
-    else:
-        meds_det_ord = resumen[COL_NOMBRE].sort_values().tolist()
-
-    busq_det = st.text_input("Buscar:", placeholder="Nombre del producto...", key="busq_det")
-    if busq_det.strip():
-        # Filtrar la lista de medicamentos según el texto de búsqueda
-        meds_det_filt = []
-        texto_busqueda = busq_det.strip().lower()
-        for nombre_med in meds_det_ord:
-            if texto_busqueda in nombre_med.lower():
-                meds_det_filt.append(nombre_med)
-    else:
-        meds_det_filt = meds_det_ord
-    med_detalle = st.selectbox("Medicamento:", meds_det_filt if meds_det_filt else meds_det_ord, key="det")
-
-    _filas_det = resumen[resumen[COL_NOMBRE] == med_detalle]
-    if _filas_det.empty:
-        st.warning("El medicamento seleccionado ya no está en los datos. Elige otro.")
-        st.stop()
-    fila_det = _filas_det.iloc[0]
-    codigo_det = fila_det[COL_CODIGO]
-
-    # ── Métricas rápidas ────────────────────────────────────────────────────
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Stock actual", f"{int(fila_det['stock_total']):,} u")
-    m2.metric("Consumo prom. mensual", f"{fila_det['media_diaria']*30:,.0f} u/mes" if fila_det["media_diaria"] > 0 else "—")
-    if "ALCANCE" in fila_det and not pd.isna(fila_det.get("ALCANCE")):
-        m3.metric("Cobertura", f"{round(float(fila_det['ALCANCE']), 1)} meses")
-    elif fila_det["media_diaria"] > 0 and fila_det["dias_cobertura"] is not None and not pd.isna(fila_det["dias_cobertura"]):
-        m3.metric("Días de cobertura", f"{fila_det['dias_cobertura']:.0f} días")
-    else:
-        m3.metric("Cobertura", "—")
-    if "SUGERIDO" in fila_det and not pd.isna(fila_det.get("SUGERIDO")):
-        sug_val = max(0, int(float(fila_det["SUGERIDO"])))
-        m4.metric("Sugerido pedir", f"{sug_val:,} u")
-    elif "costo_unitario" in fila_det:
-        m4.metric("Costo unitario", f"${fila_det['costo_unitario']:,.0f}")
-
-    st.divider()
-    col_izq, col_der = st.columns(2)
-
-    with col_izq:
-        if formato_hospital:
-            # En formato hospital no hay lotes ni vencimiento — mostrar resumen del producto
-            st.markdown("**Información del producto**")
-            info_rows = [
-                {"Campo": "Código",          "Valor": str(codigo_det)},
-                {"Campo": "Stock actual",    "Valor": f"{int(fila_det['stock_total']):,} u"},
-            ]
-            for campo, col_res in [("Cobertura (meses)", "ALCANCE"), ("Existencias mínimas", "STC_MIN"),
-                                    ("Existencias máximas", "STC_MAX"), ("Existencias críticas", "STC_CRITICO"),
-                                    ("Consumo promedio", "CONS_PROM")]:
-                if col_res in fila_det and not pd.isna(fila_det.get(col_res)):
-                    val = fila_det[col_res]
-                    info_rows.append({"Campo": campo, "Valor": f"{float(val):,.1f}"})
-            if "costo_unitario" in fila_det and fila_det["costo_unitario"] > 0:
-                info_rows.append({"Campo": "Precio unitario", "Valor": f"${fila_det['costo_unitario']:,.0f} CLP"})
-                info_rows.append({"Campo": "Valor en existencias", "Valor": f"${fila_det['valor_inventario']:,.0f} CLP"})
-            st.dataframe(_safe_df(pd.DataFrame(info_rows)), use_container_width=True, hide_index=True)
-        else:
-            st.markdown("**Lotes (orden FEFO: primero en vencer, primero en salir)**")
-            # Incluir solo las columnas de lotes que existen en el archivo
-            cols_lotes = []
-            for col_posible in [COL_LOTE, COL_MARCA, COL_VENCIMIENTO, COL_STOCK, "dias_vencer", "estado"]:
-                if col_posible is not None:
-                    cols_lotes.append(col_posible)
-            # Filtrar el inventario por medicamento, quedarse con las columnas de lotes y ordenar por vencimiento
-            lotes_medicamento = inv[inv[COL_NOMBRE] == med_detalle]
-            lotes_detalle = lotes_medicamento[cols_lotes].copy()
-            lotes_detalle = lotes_detalle.sort_values("dias_vencer")
-            if COL_VENCIMIENTO in lotes_detalle.columns:
-                lotes_detalle[COL_VENCIMIENTO] = lotes_detalle[COL_VENCIMIENTO].dt.strftime("%d/%m/%Y")
-            st.dataframe(_safe_df(lotes_detalle), use_container_width=True, hide_index=True)
-
-    with col_der:
-        if tiene_movimientos:
-            st.markdown("**Consumo mensual histórico**")
-            consumo_det = datos_movimientos[datos_movimientos[COL_MOV_CODIGO] == codigo_det].copy()
-            consumo_det[COL_MOV_FECHA]    = pd.to_datetime(consumo_det[COL_MOV_FECHA], errors="coerce")
-            consumo_det[COL_MOV_CANTIDAD] = pd.to_numeric(consumo_det[COL_MOV_CANTIDAD], errors="coerce").fillna(0)
-
-            # Agrupar por mes (en caso de que haya varias filas por mes)
-            consumo_det["mes"] = consumo_det[COL_MOV_FECHA].dt.to_period("M")
-            serie_det = consumo_det.groupby("mes")[COL_MOV_CANTIDAD].sum().reset_index()
-            serie_det["mes_dt"] = serie_det["mes"].dt.to_timestamp()
-            serie_det = serie_det.sort_values("mes_dt")
-
-            MESES_ES = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"]
-            # Crear etiquetas de mes en español para el eje X del gráfico
-            def formatear_mes(fecha):
-                return MESES_ES[fecha.month - 1] + " " + str(fecha.year)
-            serie_det["mes_label"] = serie_det["mes_dt"].apply(formatear_mes)
-
-            promedio_det = serie_det[COL_MOV_CANTIDAD].mean()
-
-            fig_det = go.Figure()
-            fig_det.add_trace(go.Bar(
-                x=serie_det["mes_label"], y=serie_det[COL_MOV_CANTIDAD],
-                marker_color="#2563eb", name="Consumo mensual",
-                hovertemplate="%{x}: %{y:,.0f} u<extra></extra>",
-            ))
-            fig_det.add_hline(y=promedio_det, line_dash="dash", line_color="#dc2626", line_width=1.5,
-                              annotation_text=f"Prom: {promedio_det:,.0f}", annotation_position="top right")
-            fig_det.update_layout(
-                xaxis_title="Mes", yaxis_title="Unidades",
-                height=340, margin=dict(t=20, b=20, l=10, r=10),
-                paper_bgcolor="white", plot_bgcolor="#f8fafc", showlegend=False,
-            )
-            st.plotly_chart(fig_det, use_container_width=True)
-        else:
-            st.info("Carga el archivo de movimientos para ver el consumo histórico.")
-# redeploy
