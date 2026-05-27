@@ -1078,6 +1078,12 @@ if _bod_extra_cols:
     _bod_mapa = datos_inventario[[COL_CODIGO] + _bod_extra_cols].drop_duplicates(COL_CODIGO)
     resumen   = resumen.merge(_bod_mapa, on=COL_CODIGO, how="left")
 
+# Si no hay existencias, la cobertura real es 0 aunque el archivo diga otra cosa
+# (el ALCANCE del Programa de compras puede estar desactualizado)
+for _col_cob in ["ALCANCE", "dias_cobertura", "min_dias_vencer"]:
+    if _col_cob in resumen.columns:
+        resumen.loc[resumen["stock_total"] == 0, _col_cob] = 0
+
 # ──────────────────────────────────────────────────────────────────────────────
 # PROCESAR MOVIMIENTOS (DEMANDA) — enfoque de tasa de llegada Poisson
 #
@@ -1334,7 +1340,7 @@ with tab1:
             (int(n_vencidos),    "#E53E3E", "Vencidos"),
             (int(n_criticos),    "#DD6B20", "Vencimiento crítico (<30 días)"),
             (int(n_advertencia), "#D69E2E", "Vencimiento próximo (31–90 días)"),
-            (int(n_normales),    "#38A169", "Stock adecuado"),
+            (int(n_normales),    "#38A169", "Existencias adecuadas"),
         ]
 
     _circles = ""
@@ -1429,7 +1435,7 @@ with tab1:
             _c_show   = [c for c in _c_show if c in _tbl_filt.columns]
             _tbl_show = _tbl_filt[_c_show].rename(columns={
                 COL_CODIGO: "Código", COL_NOMBRE: "Medicamento",
-                "stock_total": "Stock", "min_dias_vencer": "Días p/Vencer",
+                "stock_total": "Existencias", "min_dias_vencer": "Días p/Vencer",
                 "estado": "Estado", "ALCANCE": "Cobertura (meses)", "SUGERIDO": "Cant. sugerida",
             }).reset_index(drop=True)
             st.caption(f"{len(_tbl_show)} producto(s) en estado '{_sel}'")
@@ -1449,7 +1455,7 @@ with tab1:
                 _uc = [c for c in _uc if c in _urg.columns]
                 _urg_show = _urg[_uc].rename(columns={
                     COL_CODIGO: "Código", COL_NOMBRE: "Medicamento",
-                    "stock_total": "Stock", "min_dias_vencer": "Días p/Vencer",
+                    "stock_total": "Existencias", "min_dias_vencer": "Días p/Vencer",
                     "ALCANCE": "Cobertura (meses)",
                 }).reset_index(drop=True)
                 st.caption("Productos sin stock / más urgentes")
@@ -1803,7 +1809,7 @@ with tab2:
             ]
             _bd_hover = [
                 f"<b>{_bod_clean_name(k)}</b><br>"
-                f"Stock: <b>{int(_bd_stk[k]):,}</b> u<br>"
+                f"Existencias: <b>{int(_bd_stk[k]):,}</b> u<br>"
                 f"Participación: {_bd_pct[i]}<extra></extra>"
                 for i, k in enumerate(_bod_cols)
             ]
@@ -1829,8 +1835,8 @@ with tab2:
 
             # Leyenda de color
             for _bl_color, _bl_name in [
-                ("#38A169", "Stock alto"), ("#D69E2E", "Stock medio"),
-                ("#DD6B20", "Stock bajo"), ("#E53E3E", "Sin stock"),
+                ("#38A169", "Existencias altas"), ("#D69E2E", "Existencias medias"),
+                ("#DD6B20", "Existencias bajas"), ("#E53E3E", "Sin existencias"),
             ]:
                 _bd_fig.add_trace(go.Scatter(
                     x=[None], y=[None], mode="markers",
@@ -1882,9 +1888,9 @@ with tab2:
                     [c for c in _bd_show_cols if c in _bd_det_df.columns]
                 ].rename(columns={
                     COL_NOMBRE: "Medicamento",
-                    _bd_det_col: f"Stock ({_bd_det_sel})",
+                    _bd_det_col: f"Existencias ({_bd_det_sel})",
                     "COSTO": "Costo unit.", "costo_unitario": "Costo unit.",
-                    "STC_MIN": "Stock mín.", "STC_MAX": "Stock máx.",
+                    "STC_MIN": "Exist. mín.", "STC_MAX": "Exist. máx.",
                     "ALCANCE": "Cobertura (m)",
                 }).reset_index(drop=True)
 
@@ -2033,7 +2039,7 @@ with tab2:
                            help="Código interno del medicamento en el sistema."),
             "Medicamento": st.column_config.TextColumn("Medicamento", width="large"),
             "Existencias": st.column_config.NumberColumn("Existencias", format="%d u",
-                           help="Unidades físicas disponibles en todas las bodegas combinadas."),
+                           help="Unidades fisicas disponibles en todas las bodegas combinadas."),
         }
         if "Cobertura (meses)" in tabla.columns:
             _max_cob = max(float(tabla["Cobertura (meses)"].dropna().max() or 12), 12)
@@ -2264,7 +2270,7 @@ with tab2:
 
             # ── KPI strip ─────────────────────────────────────────────────────
             _dk1, _dk2, _dk3, _dk4 = st.columns(4)
-            _dk1.metric("Stock actual", f"{math.floor(_d_stk):,} u",
+            _dk1.metric("Existencias actuales", f"{math.floor(_d_stk):,} u",
                         help="Total de unidades fisicas disponibles en todas las bodegas para este medicamento.")
             _dk2.metric("Consumo prom. mensual", f"{_d_med*30:,.0f} u/mes" if _d_med > 0 else "—",
                         help="Promedio de unidades dispensadas por mes, calculado a partir del historial de movimientos.")
@@ -2340,7 +2346,7 @@ with tab2:
                     st.markdown("**Información del producto**")
                     _info_rows = [
                         {"Campo": "Código",       "Valor": str(_cod_d)},
-                        {"Campo": "Stock actual",  "Valor": f"{math.floor(_d_stk):,} u"},
+                        {"Campo": "Existencias actuales", "Valor": f"{math.floor(_d_stk):,} u"},
                     ]
                     _badge_colors_d = {
                         "Sin existencias":   ("#FED7D7","#C53030"),
@@ -2460,7 +2466,7 @@ with tab3:
                 "Código":                       fila[COL_CODIGO],
                 "Medicamento":                  fila[COL_NOMBRE],
                 "Consumo diario promedio":       str(round(fila["media_diaria"], 1)) + " u/día",
-                "Stock actual":                 math.floor(fila["stock_total"]),
+                "Existencias actuales":          math.floor(fila["stock_total"]),
                 "Pedir cuando queden menos de": math.ceil(p["s"]),
                 "Cuánto pedir":                 math.ceil(p["Q"]),
                 "Nivel máximo recomendado":      math.ceil(p["S"]),
