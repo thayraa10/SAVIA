@@ -2187,7 +2187,7 @@ with tab2:
                 .agg(dias_min=("dias_vencer", "min"))
                 .reset_index()
                 .sort_values("dias_min")
-                .head(40)
+                .head(20)
             )
             if len(_venc_prod) == 0:
                 st.info("No hay medicamentos que coincidan con los filtros aplicados.")
@@ -2197,7 +2197,7 @@ with tab2:
                     else "#D69E2E" if d < 90 else "#38A169"
                 )
                 _noms_v = [
-                    n[:40] + "…" if len(str(n)) > 40 else str(n)
+                    n[:45] + "…" if len(str(n)) > 45 else str(n)
                     for n in _venc_prod[_venc_nom]
                 ]
                 _fig_tl = go.Figure(go.Bar(
@@ -2218,7 +2218,7 @@ with tab2:
                 _fig_tl.update_layout(
                     title=dict(text=f"Días hasta vencimiento — top {len(_venc_prod)} más urgentes",
                                font=dict(size=13, color="#0f172a")),
-                    height=max(320, len(_venc_prod) * 24 + 80),
+                    height=max(300, len(_venc_prod) * 28 + 80),
                     margin=dict(t=36, b=8, l=8, r=80),
                     xaxis=dict(title="Días restantes (negativo = ya vencido)",
                                zeroline=True, zerolinecolor="#E53E3E", zerolinewidth=2),
