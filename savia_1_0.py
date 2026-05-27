@@ -2084,7 +2084,7 @@ with tab2:
             "<b>Dias restantes</b>: dias entre hoy y la fecha de vencimiento del lote. Un valor negativo significa que el lote ya esta vencido. "
             "La tabla inferior lista solo los lotes que vencen en menos de 30 dias, con una accion sugerida para cada uno."
         ), unsafe_allow_html=True)
-        # ── Origen de datos: preferir inv_lotes (tiene fechas reales de lotes) ─
+        # ── Origen de datos ───────────────────────────────────────────────────
         _venc_df   = pd.DataFrame()
         _venc_nom  = COL_NOMBRE
         _venc_lote = COL_LOTE if COL_LOTE else None
@@ -2097,10 +2097,13 @@ with tab2:
             _vdf_il["dias_vencer"] = (
                 _vdf_il[IL_VENC] - pd.Timestamp.today().normalize()
             ).dt.days
-            _venc_df   = _vdf_il[_vdf_il[IL_VENC].notna()].copy()
+            # Filtrar fechas inválidas: nulas o anteriores a 2000 (son celdas vacías del Excel)
+            _venc_df = _vdf_il[
+                (_vdf_il[IL_VENC].notna()) &
+                (_vdf_il[IL_VENC] >= pd.Timestamp("2000-01-01"))
+            ].copy()
             _venc_nom  = IL_NOM
             _venc_lote = IL_LOTE
-            # CantPorLote = stock de ese lote específico; si no existe, usar IL_STK
             _vcpl = next(
                 (c for c in _venc_df.columns
                  if "cantporlote" in c.lower().replace("_", "").replace(" ", "")),
@@ -2108,7 +2111,10 @@ with tab2:
             )
             _venc_stk = _vcpl if _vcpl else IL_STK
         elif COL_VENCIMIENTO and inv is not None and "dias_vencer" in inv.columns:
-            _venc_df   = inv[inv["dias_vencer"].notna()].copy()
+            _venc_df  = inv[
+                inv["dias_vencer"].notna() &
+                (inv[COL_VENCIMIENTO] >= pd.Timestamp("2000-01-01"))
+            ].copy()
             _venc_nom  = COL_NOMBRE
             _venc_lote = COL_LOTE if COL_LOTE else None
             _venc_stk  = "stock_total" if "stock_total" in inv.columns else COL_STOCK
@@ -2118,12 +2124,10 @@ with tab2:
                 '<div style="background:#EBF8FF;border-left:4px solid #3182CE;border-radius:8px;'
                 'padding:18px 22px;margin:12px 0">'
                 '<div style="font-size:0.88rem;font-weight:700;color:#2B6CB0;margin-bottom:6px">'
-                'Datos de vencimiento no disponibles en este archivo</div>'
+                'Datos de vencimiento no disponibles</div>'
                 '<div style="font-size:0.83rem;color:#2C5282;line-height:1.6">'
-                'El archivo de consumos del hospital no incluye fechas de vencimiento ni lotes.<br>'
-                'Para activar esta sección, carga también el <strong>archivo de inventario</strong> '
-                'con columnas: <code>VENCIMIENTO / FVenvimiento</code>, <code>LOTE</code>, '
-                '<code>EXISTENCIA</code>.'
+                'Para activar esta sección, carga el <strong>archivo de inventario</strong> '
+                'con columnas: <code>FVenvimiento</code>, <code>Lotes</code>, <code>Existencia</code>.'
                 '</div></div>',
                 unsafe_allow_html=True,
             )
@@ -2134,71 +2138,103 @@ with tab2:
             _nv_adv  = int(((_venc_df["dias_vencer"] >= 30) & (_venc_df["dias_vencer"] < 90)).sum())
             _nv_ok   = int((_venc_df["dias_vencer"] >= 90).sum())
             _vkc1, _vkc2, _vkc3, _vkc4 = st.columns(4)
-            for _vc, _vl_lbl, _vv, _vcolor in [
-                (_vkc1, "Lotes vencidos",        f"{_nv_venc:,}",  "#E53E3E"),
-                (_vkc2, "Vencen en <30 días",    f"{_nv_crit:,}",  "#DD6B20"),
-                (_vkc3, "Vencen en 30–90 días",  f"{_nv_adv:,}",   "#D69E2E"),
-                (_vkc4, "Vencen en >90 días",    f"{_nv_ok:,}",    "#38A169"),
+            for _vc, _vl_lbl, _vv, _vcolor, _vhelp in [
+                (_vkc1, "Lotes vencidos",       f"{_nv_venc:,}", "#E53E3E",
+                 "Lotes cuya fecha de vencimiento ya pasó. Deben darse de baja del inventario."),
+                (_vkc2, "Vencen en <30 días",   f"{_nv_crit:,}", "#DD6B20",
+                 "Lotes con menos de 30 días antes de caducar. Requieren acción inmediata."),
+                (_vkc3, "Vencen en 30–90 días", f"{_nv_adv:,}",  "#D69E2E",
+                 "Lotes con entre 1 y 3 meses de vida útil restante. Monitorear y planificar."),
+                (_vkc4, "Vencen en >90 días",   f"{_nv_ok:,}",   "#38A169",
+                 "Lotes con más de 3 meses hasta su vencimiento. Estado adecuado."),
             ]:
                 _vc.markdown(
                     f'<div style="background:white;border-radius:10px;padding:12px 16px;margin:4px 0 10px 0;'
-                    f'box-shadow:0 1px 3px rgba(0,0,0,0.07);border-top:3px solid {_vcolor};">'
+                    f'box-shadow:0 1px 3px rgba(0,0,0,0.07);border-top:3px solid {_vcolor};" '
+                    f'title="{_vhelp}">'
                     f'<div style="font-size:0.60rem;color:#64748b;font-weight:600;text-transform:uppercase;'
                     f'letter-spacing:0.05em;margin-bottom:4px">{_vl_lbl}</div>'
                     f'<div style="font-size:1.25rem;font-weight:800;color:#0f172a">{_vv}</div>'
                     f'</div>', unsafe_allow_html=True,
                 )
 
-            # ── Timeline: un bar por producto (mínimo días_vencer de sus lotes) ─
+            # ── Filtro de urgencia ─────────────────────────────────────────────
+            _vf_col1, _vf_col2 = st.columns([2, 3])
+            _vf_vista = _vf_col1.radio(
+                "Mostrar en el gráfico:",
+                ["Todos con fecha", "Solo vencidos y críticos (<30 d)", "Solo próximos (30–90 d)"],
+                horizontal=False, key="venc_vista",
+            )
+            _vf_busq = _vf_col2.text_input(
+                "Buscar medicamento:", placeholder="Filtra por nombre...", key="venc_busq"
+            )
+
+            # Aplicar filtro de vista
+            if _vf_vista == "Solo vencidos y críticos (<30 d)":
+                _venc_vis = _venc_df[_venc_df["dias_vencer"] < 30].copy()
+            elif _vf_vista == "Solo próximos (30–90 d)":
+                _venc_vis = _venc_df[(_venc_df["dias_vencer"] >= 30) & (_venc_df["dias_vencer"] < 90)].copy()
+            else:
+                _venc_vis = _venc_df.copy()
+
+            if _vf_busq.strip():
+                _mask_b = _venc_vis[_venc_nom].astype(str).str.contains(_vf_busq.strip(), case=False, na=False)
+                _venc_vis = _venc_vis[_mask_b]
+
+            # ── Timeline ──────────────────────────────────────────────────────
             _venc_prod = (
-                _venc_df.groupby(_venc_nom)
+                _venc_vis.groupby(_venc_nom)
                 .agg(dias_min=("dias_vencer", "min"))
                 .reset_index()
                 .sort_values("dias_min")
                 .head(40)
             )
-            _venc_prod["color"] = _venc_prod["dias_min"].apply(
-                lambda d: "#E53E3E" if d < 0 else "#DD6B20" if d < 30
-                else "#D69E2E" if d < 90 else "#38A169"
-            )
-            _noms_v = [
-                n[:38] + "…" if len(str(n)) > 38 else str(n)
-                for n in _venc_prod[_venc_nom]
-            ]
-            _fig_tl = go.Figure(go.Bar(
-                x=_venc_prod["dias_min"].clip(lower=-180),
-                y=_noms_v,
-                orientation="h",
-                marker_color=_venc_prod["color"].tolist(),
-                text=[f"{int(d)} d" for d in _venc_prod["dias_min"]],
-                textposition="outside", cliponaxis=False,
-                hovertemplate="<b>%{y}</b><br>%{x} días hasta vencer<extra></extra>",
-            ))
-            _fig_tl.add_vline(x=0,  line_color="#E53E3E", line_width=2, line_dash="dash")
-            _fig_tl.add_vline(x=30, line_color="#DD6B20", line_width=1, line_dash="dot",
-                              annotation_text="30 d", annotation_position="top right")
-            _fig_tl.add_vline(x=90, line_color="#D69E2E", line_width=1, line_dash="dot",
-                              annotation_text="90 d", annotation_position="top right")
-            _fig_tl.update_layout(
-                title=dict(text="Línea de tiempo de vencimientos (top 40 más urgentes)",
-                           font=dict(size=13, color="#0f172a")),
-                height=max(300, len(_venc_prod) * 22 + 70),
-                margin=dict(t=36, b=8, l=8, r=70),
-                xaxis=dict(title="Días restantes (negativo = ya vencido)",
-                           zeroline=True, zerolinecolor="#E53E3E", zerolinewidth=2),
-                yaxis=dict(autorange="reversed"),
-                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-            )
-            st.plotly_chart(_fig_tl, use_container_width=True)
-            st.caption("Cada barra representa un medicamento. La longitud indica cuantos dias faltan para que venza su lote mas proximo. Las barras a la izquierda de la linea roja (dia 0) corresponden a lotes ya vencidos.")
+            if len(_venc_prod) == 0:
+                st.info("No hay medicamentos que coincidan con los filtros aplicados.")
+            else:
+                _venc_prod["color"] = _venc_prod["dias_min"].apply(
+                    lambda d: "#E53E3E" if d < 0 else "#DD6B20" if d < 30
+                    else "#D69E2E" if d < 90 else "#38A169"
+                )
+                _noms_v = [
+                    n[:40] + "…" if len(str(n)) > 40 else str(n)
+                    for n in _venc_prod[_venc_nom]
+                ]
+                _fig_tl = go.Figure(go.Bar(
+                    x=_venc_prod["dias_min"].clip(lower=-365),
+                    y=_noms_v,
+                    orientation="h",
+                    marker_color=_venc_prod["color"].tolist(),
+                    text=[f"{int(d)} d" for d in _venc_prod["dias_min"]],
+                    textposition="outside", cliponaxis=False,
+                    hovertemplate="<b>%{y}</b><br>%{x} días hasta vencer<extra></extra>",
+                ))
+                _fig_tl.add_vline(x=0,  line_color="#E53E3E", line_width=2, line_dash="dash",
+                                  annotation_text="Hoy", annotation_position="top left")
+                _fig_tl.add_vline(x=30, line_color="#DD6B20", line_width=1, line_dash="dot",
+                                  annotation_text="30 d", annotation_position="top right")
+                _fig_tl.add_vline(x=90, line_color="#D69E2E", line_width=1, line_dash="dot",
+                                  annotation_text="90 d", annotation_position="top right")
+                _fig_tl.update_layout(
+                    title=dict(text=f"Días hasta vencimiento — top {len(_venc_prod)} más urgentes",
+                               font=dict(size=13, color="#0f172a")),
+                    height=max(320, len(_venc_prod) * 24 + 80),
+                    margin=dict(t=36, b=8, l=8, r=80),
+                    xaxis=dict(title="Días restantes (negativo = ya vencido)",
+                               zeroline=True, zerolinecolor="#E53E3E", zerolinewidth=2),
+                    yaxis=dict(autorange="reversed"),
+                    paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                )
+                st.plotly_chart(_fig_tl, use_container_width=True)
+                st.caption("Cada barra = un medicamento, posicionado según el lote que vence primero. Izquierda de la línea 'Hoy' = ya vencido. Entre 'Hoy' y '30 d' = acción urgente.")
 
-            # ── Tabla de lotes críticos (<30 días) ────────────────────────────
-            _crit_v = _venc_df[_venc_df["dias_vencer"] < 30].copy().sort_values("dias_vencer")
+            # ── Tabla detalle: lotes con acción requerida (<90 días) ──────────
+            _crit_v = _venc_vis[_venc_vis["dias_vencer"] < 90].copy().sort_values("dias_vencer")
             if len(_crit_v) > 0:
                 st.markdown(
-                    '<div style="font-size:0.82rem;font-weight:700;color:#C53030;'
-                    'text-transform:uppercase;letter-spacing:0.05em;margin:8px 0 6px 0">'
-                    'Lotes que vencen en menos de 30 días</div>',
+                    f'<div style="font-size:0.82rem;font-weight:700;color:#C53030;'
+                    f'text-transform:uppercase;letter-spacing:0.05em;margin:14px 0 6px 0">'
+                    f'Lotes que requieren atención ({len(_crit_v)} lotes)</div>',
                     unsafe_allow_html=True,
                 )
                 _cv_cols = [_venc_nom]
@@ -2210,15 +2246,20 @@ with tab2:
                 if IL_VENC and IL_VENC in _crit_v.columns and IL_VENC not in _cv_cols:
                     _cv_cols.append(IL_VENC)
                 _crit_show = _crit_v[[c for c in _cv_cols if c in _crit_v.columns]].copy()
-                _crit_show["Acción"] = _crit_show["dias_vencer"].apply(
-                    lambda d: "⛔ Dar de baja" if d < 0
-                    else "🔴 Consumir primero (FEFO)" if d < 15
-                    else "🟡 Planificar devolución"
+
+                # Formatear fecha como dd/mm/yyyy
+                if IL_VENC and IL_VENC in _crit_show.columns:
+                    _crit_show[IL_VENC] = pd.to_datetime(
+                        _crit_show[IL_VENC], errors="coerce"
+                    ).dt.strftime("%d/%m/%Y").fillna("—")
+
+                _crit_show["Acción recomendada"] = _crit_show["dias_vencer"].apply(
+                    lambda d: "Dar de baja" if d < 0
+                    else "Consumir primero (FEFO)" if d < 15
+                    else "Planificar devolución" if d < 30
+                    else "Monitorear"
                 )
-                _ren_v = {
-                    _venc_nom:    "Medicamento",
-                    "dias_vencer": "Días restantes",
-                }
+                _ren_v = {_venc_nom: "Medicamento", "dias_vencer": "Días restantes"}
                 if _venc_lote:  _ren_v[_venc_lote] = "Lote"
                 if _venc_stk:   _ren_v[_venc_stk]  = "Cant. en lote"
                 if IL_VENC:     _ren_v[IL_VENC]     = "Fecha venc."
@@ -2226,13 +2267,13 @@ with tab2:
                     columns={k: v for k, v in _ren_v.items() if k}
                 ).reset_index(drop=True)
                 st.markdown(_ayuda(
-                    "<b>Acciones sugeridas:</b> "
-                    "<b>Dar de baja</b> = el lote ya vencio, debe retirarse del inventario y registrarse como baja. "
-                    "<b>Consumir primero (FEFO)</b> = quedan menos de 15 dias; debe priorizarse en dispensacion antes que otros lotes del mismo medicamento. "
-                    "<b>Planificar devolucion</b> = entre 15 y 30 dias; aun hay tiempo para gestionar una devolucion al proveedor si aplica.",
+                    "<b>Dar de baja</b>: el lote ya venció, retirarlo del inventario. "
+                    "<b>Consumir primero (FEFO)</b>: quedan menos de 15 días, dispensar antes que otros lotes. "
+                    "<b>Planificar devolución</b>: entre 15 y 30 días, gestionar devolución al proveedor si aplica. "
+                    "<b>Monitorear</b>: entre 30 y 90 días, mantener bajo seguimiento.",
                     color="#FFF5F5", borde="#C53030"
                 ), unsafe_allow_html=True)
-                st.dataframe(_safe_df(_crit_show), use_container_width=True, hide_index=True, height=300)
+                st.dataframe(_safe_df(_crit_show), use_container_width=True, hide_index=True, height=320)
 
     # ══════════════════════════════════════════════════════════════════════════
     # SUB-TAB 3 — DETALLE POR MEDICAMENTO
