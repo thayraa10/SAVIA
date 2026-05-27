@@ -2026,6 +2026,16 @@ with tab2:
             tabla["costo_unitario"] = pd.to_numeric(tabla["costo_unitario"], errors="coerce").fillna(0)
         if "valor_inventario" in tabla.columns:
             tabla["valor_inventario"] = pd.to_numeric(tabla["valor_inventario"], errors="coerce").fillna(0)
+        # Pre-formatear columnas de dinero con separador de miles
+        if "costo_unitario" in tabla.columns:
+            tabla["costo_unitario"] = tabla["costo_unitario"].apply(
+                lambda v: f"${int(v):,}" if pd.notna(v) and v > 0 else "—"
+            )
+        if "valor_inventario" in tabla.columns:
+            tabla["valor_inventario"] = tabla["valor_inventario"].apply(
+                lambda v: f"${int(v):,}" if pd.notna(v) and v > 0 else "—"
+            )
+
         tabla = tabla.rename(columns={
             COL_CODIGO: "Código", COL_NOMBRE: "Medicamento", "stock_total": "Existencias",
             "n_lotes": "Lotes", "min_dias_vencer": "Días p/Vencer",
@@ -2042,20 +2052,19 @@ with tab2:
                            help="Unidades fisicas disponibles en todas las bodegas combinadas."),
         }
         if "Cobertura (meses)" in tabla.columns:
-            _max_cob = max(float(tabla["Cobertura (meses)"].dropna().max() or 12), 12)
-            _ccfg["Cobertura (meses)"] = st.column_config.ProgressColumn(
-                "Cobertura (meses)", format="%.1f m", min_value=0, max_value=_max_cob,
+            _ccfg["Cobertura (meses)"] = st.column_config.NumberColumn(
+                "Cobertura (meses)", format="%.1f m",
                 help="Meses estimados que duran las existencias actuales al ritmo de consumo promedio. Menos de 1 mes = critico; 1-3 meses = bajo; más de 3 meses = adecuado.",
             )
         if "Cant. sugerida" in tabla.columns:
             _ccfg["Cant. sugerida"] = st.column_config.NumberColumn("Cant. sugerida", format="%d u",
                            help="Cantidad recomendada a pedir en la proxima orden, calculada por el modelo de inventario.")
         if "Costo unit." in tabla.columns:
-            _ccfg["Costo unit."] = st.column_config.NumberColumn("Costo unit.", format="$%d",
+            _ccfg["Costo unit."] = st.column_config.TextColumn("Costo unit.",
                            help="Precio unitario del medicamento en CLP, según el Programa de compras.")
         if "Valor en exist." in tabla.columns:
-            _ccfg["Valor en exist."] = st.column_config.NumberColumn("Valor en exist.", format="$%d",
-                           help="Valor económico total del stock: existencias × costo unitario (CLP).")
+            _ccfg["Valor en exist."] = st.column_config.TextColumn("Valor en exist.",
+                           help="Valor económico total: existencias × costo unitario (CLP).")
         if "Días p/Vencer" in tabla.columns:
             _ccfg["Días p/Vencer"] = st.column_config.NumberColumn("Días p/Vencer", format="%d d",
                            help="Días que faltan para que venza el lote más próximo a caducar. Negativo = ya vencido.")
