@@ -1720,9 +1720,9 @@ with tab2:
             _bd_col_info.markdown(
                 f'<div style="background:white;border-radius:8px;padding:10px 14px;margin-top:24px;'
                 f'box-shadow:0 1px 3px rgba(0,0,0,0.07)">'
-                f'<div style="font-size:0.60rem;color:#94a3b8;font-weight:600;text-transform:uppercase">Total en sistema</div>'
+                f'<div style="font-size:0.60rem;color:#94a3b8;font-weight:600;text-transform:uppercase">Unidades totales en stock</div>'
                 f'<div style="font-size:1.15rem;font-weight:800;color:#0f172a">{int(_bd_total):,} u</div>'
-                f'<div style="font-size:0.75rem;color:#64748b">{len(_bod_cols)} bodegas activas</div>'
+                f'<div style="font-size:0.75rem;color:#64748b">{len(_bod_cols)} bodegas · {len(resumen):,} medicamentos</div>'
                 f'</div>',
                 unsafe_allow_html=True,
             )
