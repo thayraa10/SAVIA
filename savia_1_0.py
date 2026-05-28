@@ -12,6 +12,7 @@ import pytz
 import gc
 import streamlit.components.v1 as _components
 from streamlit_autorefresh import st_autorefresh
+import requests as _requests
 st.set_page_config(page_title="SAVIA — Abastecimiento de Medi"
                               "camentos", layout="wide")
 
@@ -946,6 +947,16 @@ with st.sidebar:
 _guardar_params(fecha_revision, hora_revision, responsable,
                 costo_orden, costo_mantener, lead_time, periodo_revision)
 
+# ── Webhook Make.com (alertas automáticas) ────────────────────────────────────
+with st.sidebar.expander("Alertas automáticas (Make.com)", expanded=False):
+    st.caption("Pega aquí la URL del webhook de Make para recibir alertas cuando el stock baje del punto de reorden o cuando haya lotes rechazados.")
+    _wh_stored = _store_global().get("webhook_url", "")
+    _wh_input  = st.text_input("URL del webhook:", value=_wh_stored,
+                               placeholder="https://hook.eu2.make.com/...",
+                               key="wh_url_input", label_visibility="collapsed")
+    if _wh_input != _wh_stored:
+        _store_global()["webhook_url"] = _wh_input.strip()
+
 # ──────────────────────────────────────────────────────────────────────────────
 # CARGA DE DATOS (función auxiliar para ejemplo)
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1190,9 +1201,10 @@ if formato_hospital:
 # ──────────────────────────────────────────────────────────────────────────────
 # TABS
 # ──────────────────────────────────────────────────────────────────────────────
-tab1, tab2, tab3 = st.tabs([
+tab1, tab2, tab3, tab4 = st.tabs([
     "Panel Principal",
     "Seguimiento",
+    "Movimientos",
     "Abastecimiento",
 ])
 
@@ -2541,9 +2553,458 @@ with tab2:
                 st.info("Sube el archivo de movimientos para ver el historial de consumo.")
 
 # ══════════════════════════════════════════════════════════════════════════════
-# TAB 3 — ABASTECIMIENTO Y SIMULACIÓN
+# MÓDULO 3 — MOVIMIENTOS
 # ══════════════════════════════════════════════════════════════════════════════
 with tab3:
+    _smv = _store_global()
+    # Inicializar listas en el store si aún no existen
+    if "movimientos" not in _smv: _smv["movimientos"] = []
+    if "lotes_oc"    not in _smv: _smv["lotes_oc"]    = []
+
+    # ── Helper: disparar webhook ───────────────────────────────────────────
+    def _disparar_webhook(payload: dict):
+        _wh = _store_global().get("webhook_url", "").strip()
+        if not _wh:
+            return False, "Sin URL configurada"
+        try:
+            r = _requests.post(_wh, json=payload, timeout=6)
+            return r.status_code < 300, f"HTTP {r.status_code}"
+        except Exception as _e:
+            return False, str(_e)
+
+    # ── DataFrames de trabajo ──────────────────────────────────────────────
+    _MOV_COLS  = ["Fecha","Medicamento","Código","Tipo","Cantidad","Bodega","Observaciones","Responsable"]
+    _LOT_COLS  = ["Fecha llegada","OC referencia","Medicamento","Código","Nro. lote",
+                  "Cant. pedida","Cant. llegada","Cant. aprobada","Cant. rechazada",
+                  "Motivo rechazo","Fecha vencimiento","Responsable"]
+    _df_movs  = pd.DataFrame(_smv["movimientos"])  if _smv["movimientos"]  else pd.DataFrame(columns=_MOV_COLS)
+    _df_lotes = pd.DataFrame(_smv["lotes_oc"])     if _smv["lotes_oc"]     else pd.DataFrame(columns=_LOT_COLS)
+
+    # ── BOD_* disponibles (para selector de bodega) ────────────────────────
+    _bods_disponibles = sorted([
+        c.replace("BOD_", "").replace("_", " ").title()
+        for c in resumen.columns if c.startswith("BOD_")
+    ])
+    if not _bods_disponibles:
+        _bods_disponibles = ["Bodega Central"]
+
+    # Lista de medicamentos ordenada por consumo
+    if "media_diaria" in resumen.columns:
+        _meds_lista = resumen.sort_values("media_diaria", ascending=False)[COL_NOMBRE].dropna().tolist()
+    else:
+        _meds_lista = resumen[COL_NOMBRE].dropna().sort_values().tolist()
+
+    _t3_reg, _t3_lot, _t3_his = st.tabs([
+        "Registrar movimiento",
+        "Control de Lotes",
+        "Historial",
+    ])
+
+    # ══════════════════════════════════════════════════════════════════════
+    # SUB-TAB: REGISTRAR MOVIMIENTO
+    # ══════════════════════════════════════════════════════════════════════
+    with _t3_reg:
+        st.markdown(_ayuda(
+            "<b>Registro de movimientos</b> — Ingresa aquí cada entrada, salida, pérdida o ajuste de inventario. "
+            "Cada registro queda guardado en el historial de la sesión y actualiza las existencias de forma inmediata. "
+            "Si las existencias caen bajo el punto de reorden, se dispara automáticamente una alerta al webhook de Make.com configurado en el panel lateral."
+        ), unsafe_allow_html=True)
+
+        with st.form("form_movimiento", clear_on_submit=True):
+            _fc1, _fc2 = st.columns([3, 2])
+
+            _mv_med = _fc1.selectbox(
+                "Medicamento *",
+                _meds_lista,
+                help="Selecciona el medicamento. La lista está ordenada por mayor consumo.",
+                key="mv_med_sel",
+            )
+            _mv_tipo = _fc2.selectbox(
+                "Tipo de movimiento *",
+                ["Entrada", "Salida", "Pérdida", "Ajuste de inventario"],
+                help="Entrada: recepción de pedido. Salida: dispensación/consumo. Pérdida: merma, rotura, vencimiento. Ajuste: corrección de inventario.",
+            )
+
+            _fc3, _fc4, _fc5 = st.columns(3)
+            _mv_cant = _fc3.number_input(
+                "Cantidad *", min_value=1, value=1, step=1,
+                help="Número de unidades del movimiento.",
+            )
+            _mv_bod = _fc4.selectbox(
+                "Bodega *",
+                _bods_disponibles,
+                help="Bodega desde/hacia donde se realiza el movimiento.",
+            )
+            _mv_fecha = _fc5.date_input(
+                "Fecha *", value=date.today(),
+                help="Fecha efectiva del movimiento (puede ser retroactiva).",
+            )
+            _mv_obs = st.text_area(
+                "Observaciones (opcional)",
+                placeholder="Ej: Recepción OC 2026-045, lote 30322578 — llegó con 2 unidades dañadas",
+                height=68,
+            )
+            _mv_submit = st.form_submit_button("Registrar movimiento", type="primary", use_container_width=True)
+
+        if _mv_submit:
+            _mv_row_cod = resumen.loc[resumen[COL_NOMBRE] == _mv_med, COL_CODIGO]
+            _mv_cod     = str(_mv_row_cod.iloc[0]) if len(_mv_row_cod) > 0 else "—"
+
+            _smv["movimientos"].append({
+                "Fecha":        _mv_fecha.strftime("%d/%m/%Y"),
+                "Medicamento":  _mv_med,
+                "Código":       _mv_cod,
+                "Tipo":         _mv_tipo,
+                "Cantidad":     int(_mv_cant),
+                "Bodega":       _mv_bod,
+                "Observaciones": _mv_obs.strip() if _mv_obs else "—",
+                "Responsable":  _smv.get("responsable", "sin especificar"),
+                "_ts":          pd.Timestamp.now().isoformat(),
+            })
+            st.success(f"Movimiento registrado: **{_mv_tipo}** de **{int(_mv_cant):,} u** de {_mv_med}")
+
+            # ── Verificar si el stock ajustado cae bajo el punto de reorden ──
+            _mv_row = resumen[resumen[COL_NOMBRE] == _mv_med]
+            if len(_mv_row) > 0:
+                _base_stk = float(_mv_row.iloc[0].get("stock_total", 0) or 0)
+                # Calcular delta acumulado en sesión para este medicamento
+                _delta = sum(
+                    m["Cantidad"] if m["Tipo"] == "Entrada" else -m["Cantidad"]
+                    for m in _smv["movimientos"] if m["Medicamento"] == _mv_med
+                )
+                _adj_stk = max(0, _base_stk + _delta)
+                _stc_min = float(_mv_row.iloc[0].get("STC_MIN", 0) or 0)
+                if _adj_stk < _stc_min and _stc_min > 0:
+                    st.warning(
+                        f"Alerta: las existencias ajustadas de **{_mv_med}** ({int(_adj_stk):,} u) "
+                        f"caen bajo el punto de reorden ({int(_stc_min):,} u). Se recomienda hacer un pedido."
+                    )
+                    _ok, _msg = _disparar_webhook({
+                        "tipo_alerta": "existencias_bajo_reorden",
+                        "medicamento": _mv_med,
+                        "codigo":      _mv_cod,
+                        "existencias_ajustadas": int(_adj_stk),
+                        "punto_reorden": int(_stc_min),
+                        "ultimo_movimiento": _mv_tipo,
+                        "fecha": _mv_fecha.strftime("%d/%m/%Y"),
+                    })
+                    if _ok:
+                        st.info("Alerta enviada al webhook de Make.com.")
+                    elif _store_global().get("webhook_url", ""):
+                        st.warning(f"No se pudo enviar la alerta al webhook: {_msg}")
+
+        # ── Resumen de últimos 5 movimientos ──────────────────────────────
+        if _smv["movimientos"]:
+            st.markdown("**Últimos movimientos registrados en esta sesión**")
+            _last5 = pd.DataFrame(_smv["movimientos"][-10:]).drop(columns=["_ts"], errors="ignore")
+            _last5 = _last5[_MOV_COLS].iloc[::-1].reset_index(drop=True)
+            st.dataframe(
+                _safe_df(_last5), use_container_width=True, hide_index=True,
+                height=min(380, len(_last5) * 35 + 40),
+            )
+        else:
+            st.info("Aún no se han registrado movimientos en esta sesión.")
+
+    # ══════════════════════════════════════════════════════════════════════
+    # SUB-TAB: CONTROL DE LOTES
+    # ══════════════════════════════════════════════════════════════════════
+    with _t3_lot:
+        st.markdown(_ayuda(
+            "<b>Control de lotes</b> — Registra la recepción de cada lote, el resultado del control de calidad "
+            "y las cantidades aprobadas y rechazadas. "
+            "Si los rechazos superan el 30% del pedido, se envía automáticamente una alerta de calidad al webhook. "
+            "El gráfico y las tablas se actualizan en tiempo real con cada registro."
+        ), unsafe_allow_html=True)
+
+        # ── Diagrama de flujo del ciclo del lote ─────────────────────────
+        _NODES = [
+            (0.5, 2.0, "Pedido OC",           "#3182CE", "white"),
+            (2.0, 2.0, "Llegada",              "#3182CE", "white"),
+            (3.5, 2.0, "Control de\nCalidad",  "#3182CE", "white"),
+            (5.0, 2.8, "Aprobado",             "#38A169", "white"),
+            (6.5, 2.8, "Bodega",               "#38A169", "white"),
+            (8.0, 2.8, "Dispensación",         "#276749", "white"),
+            (5.0, 1.2, "Rechazado",            "#C53030", "white"),
+            (6.5, 1.2, "Reg. Pérdida",         "#C53030", "white"),
+            (8.0, 1.2, "Desecho",              "#742A2A", "white"),
+        ]
+        _EDGES = [
+            (0, 1), (1, 2), (2, 3), (3, 4), (4, 5),
+            (2, 6), (6, 7), (7, 8),
+        ]
+        _fig_flow = go.Figure()
+        for (_x1, _y1, _, _, _), (_x2, _y2, _, _, _) in [(_NODES[a], _NODES[b]) for a, b in _EDGES]:
+            _fig_flow.add_trace(go.Scatter(
+                x=[_x1 + 0.5, _x2 - 0.5], y=[_y1, _y2],
+                mode="lines",
+                line=dict(color="#A0AEC0", width=2),
+                showlegend=False, hoverinfo="skip",
+            ))
+        for _nx, _ny, _nlbl, _nc, _ntc in _NODES:
+            _fig_flow.add_shape(type="rect",
+                x0=_nx-0.48, y0=_ny-0.32, x1=_nx+0.48, y1=_ny+0.32,
+                fillcolor=_nc, line_color=_nc, line_width=0, layer="above",
+            )
+            _fig_flow.add_annotation(x=_nx, y=_ny, text=_nlbl.replace("\n", "<br>"),
+                showarrow=False, font=dict(size=10, color=_ntc), align="center",
+            )
+        _fig_flow.update_layout(
+            height=220, margin=dict(t=10, b=10, l=10, r=10),
+            xaxis=dict(showgrid=False, zeroline=False, showticklabels=False, range=[-0.1, 8.6]),
+            yaxis=dict(showgrid=False, zeroline=False, showticklabels=False, range=[0.7, 3.3]),
+            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        )
+        st.plotly_chart(_fig_flow, use_container_width=True)
+        st.caption("Flujo estándar del ciclo de vida de un lote: desde la orden de compra hasta la dispensación o el desecho si es rechazado en control de calidad.")
+
+        # ── Formulario de registro de lote ────────────────────────────────
+        st.markdown("#### Registrar recepción de lote")
+        with st.form("form_lote", clear_on_submit=True):
+            _lc1, _lc2 = st.columns([2, 2])
+            _lot_med   = _lc1.selectbox("Medicamento *", _meds_lista,
+                                        help="Medicamento al que pertenece el lote.")
+            _lot_oc    = _lc2.text_input("OC de referencia", placeholder="Ej: OC-2026-045",
+                                         help="Número de orden de compra asociada a este lote.")
+
+            _lc3, _lc4 = st.columns([2, 2])
+            _lot_num   = _lc3.text_input("Número de lote *", placeholder="Ej: 30322578",
+                                          help="Código de lote del fabricante.")
+            _lot_flleg = _lc4.date_input("Fecha de llegada *", value=date.today(),
+                                          help="Fecha en que el lote llegó al establecimiento.")
+
+            _lc5, _lc6, _lc7, _lc8 = st.columns(4)
+            _lot_ped  = _lc5.number_input("Cant. pedida",   min_value=0, value=0, step=1,
+                                           help="Unidades solicitadas en la OC.")
+            _lot_lleg = _lc6.number_input("Cant. llegada",  min_value=0, value=0, step=1,
+                                           help="Unidades físicamente recibidas.")
+            _lot_apr  = _lc7.number_input("Cant. aprobada", min_value=0, value=0, step=1,
+                                           help="Unidades que pasaron el control de calidad.")
+            _lot_rech = _lc8.number_input("Cant. rechazada",min_value=0, value=0, step=1,
+                                           help="Unidades que NO pasaron el control de calidad.")
+
+            _lc9, _lc10 = st.columns([2, 2])
+            _lot_motivo = _lc9.selectbox(
+                "Motivo de rechazo (si aplica)",
+                ["—", "Falla de calidad", "Daño físico", "Cadena de frío rota",
+                 "Fecha de vencimiento incorrecta", "Otro"],
+                help="Completar solo si hay unidades rechazadas.",
+            )
+            _lot_fvenc = _lc10.date_input("Fecha de vencimiento del lote",
+                                           value=date.today() + timedelta(days=365),
+                                           help="Fecha de vencimiento indicada en el envase del lote.")
+
+            _lot_submit = st.form_submit_button("Registrar lote", type="primary", use_container_width=True)
+
+        if _lot_submit:
+            if not _lot_num.strip():
+                st.error("El número de lote es obligatorio.")
+            else:
+                _lot_cod = ""
+                _lot_row = resumen[resumen[COL_NOMBRE] == _lot_med]
+                if len(_lot_row) > 0:
+                    _lot_cod = str(_lot_row.iloc[0][COL_CODIGO])
+
+                _smv["lotes_oc"].append({
+                    "Fecha llegada":     _lot_flleg.strftime("%d/%m/%Y"),
+                    "OC referencia":     _lot_oc.strip() or "—",
+                    "Medicamento":       _lot_med,
+                    "Código":            _lot_cod,
+                    "Nro. lote":         _lot_num.strip(),
+                    "Cant. pedida":      int(_lot_ped),
+                    "Cant. llegada":     int(_lot_lleg),
+                    "Cant. aprobada":    int(_lot_apr),
+                    "Cant. rechazada":   int(_lot_rech),
+                    "Motivo rechazo":    _lot_motivo if _lot_rech > 0 else "—",
+                    "Fecha vencimiento": _lot_fvenc.strftime("%d/%m/%Y"),
+                    "Responsable":       _smv.get("responsable", "sin especificar"),
+                    "_ts":               pd.Timestamp.now().isoformat(),
+                })
+
+                # Si hay unidades aprobadas, registrar una entrada de movimiento
+                if _lot_apr > 0:
+                    _smv["movimientos"].append({
+                        "Fecha":         _lot_flleg.strftime("%d/%m/%Y"),
+                        "Medicamento":   _lot_med,
+                        "Código":        _lot_cod,
+                        "Tipo":          "Entrada",
+                        "Cantidad":      int(_lot_apr),
+                        "Bodega":        _bods_disponibles[0] if _bods_disponibles else "Bodega Central",
+                        "Observaciones": f"Entrada automática desde lote {_lot_num.strip()} (OC: {_lot_oc or '—'})",
+                        "Responsable":   _smv.get("responsable", "sin especificar"),
+                        "_ts":           pd.Timestamp.now().isoformat(),
+                    })
+                    st.success(f"Lote {_lot_num} registrado. Se generó una entrada de **{int(_lot_apr):,} u** aprobadas.")
+
+                # Alerta si rechazados > 30% del pedido
+                if _lot_ped > 0 and _lot_rech / _lot_ped > 0.30:
+                    st.error(
+                        f"Los rechazos ({int(_lot_rech):,} u) superan el **30%** del pedido ({int(_lot_ped):,} u). "
+                        "Se está disparando una alerta de calidad."
+                    )
+                    _ok, _msg = _disparar_webhook({
+                        "tipo_alerta":    "calidad_lotes_rechazados",
+                        "medicamento":    _lot_med,
+                        "codigo":         _lot_cod,
+                        "nro_lote":       _lot_num.strip(),
+                        "oc_referencia":  _lot_oc or "—",
+                        "cant_pedida":    int(_lot_ped),
+                        "cant_rechazada": int(_lot_rech),
+                        "pct_rechazo":    round(_lot_rech / _lot_ped * 100, 1),
+                        "motivo":         _lot_motivo,
+                        "fecha":          _lot_flleg.strftime("%d/%m/%Y"),
+                    })
+                    if _ok:
+                        st.info("Alerta de calidad enviada al webhook de Make.com.")
+                    elif _store_global().get("webhook_url", ""):
+                        st.warning(f"No se pudo enviar la alerta: {_msg}")
+                elif _lot_ped > 0:
+                    st.success(f"Tasa de rechazo: {_lot_rech/_lot_ped*100:.1f}% — dentro del umbral aceptable.")
+
+        # ── Gráficos de lotes (solo si hay datos) ─────────────────────────
+        if _smv["lotes_oc"]:
+            _df_lot_g = pd.DataFrame(_smv["lotes_oc"])
+            _lc_g1, _lc_g2 = st.columns(2)
+
+            # Torta: aprobados vs rechazados totales
+            with _lc_g1:
+                _tot_apr  = pd.to_numeric(_df_lot_g["Cant. aprobada"],  errors="coerce").fillna(0).sum()
+                _tot_rech = pd.to_numeric(_df_lot_g["Cant. rechazada"], errors="coerce").fillna(0).sum()
+                if _tot_apr + _tot_rech > 0:
+                    _fig_pie_lot = go.Figure(go.Pie(
+                        labels=["Aprobado", "Rechazado"],
+                        values=[_tot_apr, _tot_rech],
+                        marker_colors=["#38A169", "#E53E3E"],
+                        hole=0.4,
+                        textinfo="label+percent",
+                    ))
+                    _fig_pie_lot.update_layout(
+                        title=dict(text="Lotes: aprobados vs rechazados", font=dict(size=12)),
+                        height=280, margin=dict(t=36, b=8, l=8, r=8),
+                        paper_bgcolor="rgba(0,0,0,0)",
+                    )
+                    st.plotly_chart(_fig_pie_lot, use_container_width=True)
+
+            # Barras apiladas: rechazos por motivo
+            with _lc_g2:
+                _df_mot = _df_lot_g[_df_lot_g["Cant. rechazada"].apply(
+                    lambda v: pd.to_numeric(v, errors="coerce") > 0
+                )].copy()
+                if len(_df_mot) > 0:
+                    _df_mot["Cant. rechazada"] = pd.to_numeric(_df_mot["Cant. rechazada"], errors="coerce").fillna(0)
+                    _df_mot_g = _df_mot.groupby("Motivo rechazo")["Cant. rechazada"].sum().reset_index()
+                    _df_mot_g = _df_mot_g[_df_mot_g["Motivo rechazo"] != "—"]
+                    if len(_df_mot_g) > 0:
+                        _fig_bar_mot = go.Figure(go.Bar(
+                            x=_df_mot_g["Motivo rechazo"],
+                            y=_df_mot_g["Cant. rechazada"],
+                            marker_color="#E53E3E",
+                            text=_df_mot_g["Cant. rechazada"].astype(int).astype(str) + " u",
+                            textposition="outside",
+                        ))
+                        _fig_bar_mot.update_layout(
+                            title=dict(text="Unidades rechazadas por motivo", font=dict(size=12)),
+                            height=280, margin=dict(t=36, b=8, l=8, r=60),
+                            xaxis=dict(tickangle=-20),
+                            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                        )
+                        st.plotly_chart(_fig_bar_mot, use_container_width=True)
+
+            # Tabla de lotes registrados
+            st.markdown("**Lotes registrados en esta sesión**")
+            _df_lot_show = _df_lot_g.drop(columns=["_ts", "Código"], errors="ignore").reset_index(drop=True)
+            st.dataframe(_safe_df(_df_lot_show), use_container_width=True, hide_index=True, height=320)
+        else:
+            st.info("Aún no se han registrado lotes en esta sesión. Usa el formulario de arriba para empezar.")
+
+    # ══════════════════════════════════════════════════════════════════════
+    # SUB-TAB: HISTORIAL
+    # ══════════════════════════════════════════════════════════════════════
+    with _t3_his:
+        st.markdown(_ayuda(
+            "<b>Historial de movimientos</b> — Visualiza y filtra todos los movimientos registrados en la sesión. "
+            "Usa los filtros para enfocarte en un medicamento, bodega, tipo de movimiento o rango de fechas específico. "
+            "Descarga la tabla filtrada como Excel para llevar un registro externo o cargarla en el sistema."
+        ), unsafe_allow_html=True)
+
+        if not _smv["movimientos"]:
+            st.info("Aún no hay movimientos registrados. Ve a la sub-pestaña 'Registrar movimiento' para comenzar.")
+        else:
+            _df_his = pd.DataFrame(_smv["movimientos"]).drop(columns=["_ts"], errors="ignore")
+            _df_his["Fecha"] = pd.to_datetime(_df_his["Fecha"], format="%d/%m/%Y", errors="coerce")
+
+            # ── Filtros ───────────────────────────────────────────────────
+            _hf1, _hf2, _hf3 = st.columns(3)
+            _hf_med  = _hf1.multiselect("Medicamento:", sorted(_df_his["Medicamento"].unique()),
+                                         key="his_med_filt", placeholder="Todos")
+            _hf_tipo = _hf2.multiselect("Tipo:", ["Entrada","Salida","Pérdida","Ajuste de inventario"],
+                                          key="his_tipo_filt", placeholder="Todos")
+            _hf_bod  = _hf3.multiselect("Bodega:", sorted(_df_his["Bodega"].unique()),
+                                          key="his_bod_filt", placeholder="Todas")
+
+            _hd1, _hd2 = st.columns(2)
+            _h_fecha_min = _df_his["Fecha"].min().date() if _df_his["Fecha"].notna().any() else date.today()
+            _h_fecha_max = _df_his["Fecha"].max().date() if _df_his["Fecha"].notna().any() else date.today()
+            _hf_desde = _hd1.date_input("Desde:", value=_h_fecha_min, key="his_desde")
+            _hf_hasta = _hd2.date_input("Hasta:", value=_h_fecha_max, key="his_hasta")
+
+            # Aplicar filtros
+            _df_fil = _df_his.copy()
+            if _hf_med:  _df_fil = _df_fil[_df_fil["Medicamento"].isin(_hf_med)]
+            if _hf_tipo: _df_fil = _df_fil[_df_fil["Tipo"].isin(_hf_tipo)]
+            if _hf_bod:  _df_fil = _df_fil[_df_fil["Bodega"].isin(_hf_bod)]
+            _df_fil = _df_fil[
+                (_df_fil["Fecha"] >= pd.Timestamp(_hf_desde)) &
+                (_df_fil["Fecha"] <= pd.Timestamp(_hf_hasta))
+            ]
+            _df_fil["Fecha"] = _df_fil["Fecha"].dt.strftime("%d/%m/%Y")
+
+            st.caption(f"Mostrando {len(_df_fil):,} de {len(_df_his):,} movimientos.")
+
+            # ── Serie de tiempo semanal ───────────────────────────────────
+            _df_ts = _df_his.copy()
+            _df_ts["Semana"] = _df_ts["Fecha"].dt.to_period("W").dt.start_time
+            _df_ent = _df_ts[_df_ts["Tipo"] == "Entrada"].groupby("Semana")["Cantidad"].sum().reset_index().rename(columns={"Cantidad": "Entradas"})
+            _df_sal = _df_ts[_df_ts["Tipo"].isin(["Salida","Pérdida"])].groupby("Semana")["Cantidad"].sum().reset_index().rename(columns={"Cantidad": "Salidas"})
+            _df_sem = _df_ent.merge(_df_sal, on="Semana", how="outer").fillna(0).sort_values("Semana")
+
+            if len(_df_sem) > 0:
+                _fig_ts = go.Figure()
+                _fig_ts.add_trace(go.Bar(x=_df_sem["Semana"], y=_df_sem["Entradas"],
+                                         name="Entradas", marker_color="#38A169"))
+                _fig_ts.add_trace(go.Bar(x=_df_sem["Semana"], y=_df_sem["Salidas"],
+                                         name="Salidas / Pérdidas", marker_color="#E53E3E"))
+                _fig_ts.update_layout(
+                    barmode="group",
+                    title=dict(text="Entradas y salidas por semana", font=dict(size=13)),
+                    height=280, margin=dict(t=36, b=8, l=8, r=8),
+                    xaxis=dict(title="Semana"),
+                    yaxis=dict(title="Unidades"),
+                    legend=dict(orientation="h", y=1.1),
+                    paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                )
+                st.plotly_chart(_fig_ts, use_container_width=True)
+
+            # ── Tabla filtrada + exportar ────────────────────────────────
+            st.dataframe(
+                _safe_df(_df_fil[_MOV_COLS].reset_index(drop=True)),
+                use_container_width=True, hide_index=True,
+                height=min(500, max(120, len(_df_fil) * 35 + 40)),
+            )
+
+            # Botón exportar Excel
+            _buf_xls = io.BytesIO()
+            _df_fil[_MOV_COLS].to_excel(_buf_xls, index=False, engine="openpyxl")
+            st.download_button(
+                label="Descargar historial filtrado (.xlsx)",
+                data=_buf_xls.getvalue(),
+                file_name=f"movimientos_SAVIA_{date.today().strftime('%Y%m%d')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MÓDULO 4 — ABASTECIMIENTO Y SIMULACIÓN
+# ══════════════════════════════════════════════════════════════════════════════
+with tab4:
     st.markdown(_ayuda(
         "<b>Modulo de Abastecimiento</b> — Calcula automaticamente las politicas optimas de reposicion para cada medicamento, basandose en el historial de consumo y los parametros configurados en el panel lateral. "
         "<b>Punto de reorden (s)</b>: nivel de existencias al que se debe emitir un nuevo pedido para no quedarse sin existencias durante el tiempo de entrega. "
