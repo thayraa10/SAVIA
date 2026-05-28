@@ -2610,13 +2610,25 @@ with tab3:
             "Si las existencias caen bajo el punto de reorden, se dispara automáticamente una alerta al webhook de Make.com configurado en el panel lateral."
         ), unsafe_allow_html=True)
 
+        # Buscador FUERA del form para evitar límite WebSocket con 5000+ items
+        _mv_busq = st.text_input(
+            "Buscar medicamento:",
+            placeholder="Escribe parte del nombre para filtrar...",
+            key="mv_med_busq",
+        )
+        _mv_lista_f = (
+            [m for m in _meds_lista if _mv_busq.strip().lower() in m.lower()][:50]
+            if _mv_busq.strip() else _meds_lista[:50]
+        ) or _meds_lista[:50]
+        st.caption(f"Mostrando {len(_mv_lista_f)} de {len(_meds_lista):,} medicamentos. Usa el buscador para encontrar el que necesitas.")
+
         with st.form("form_movimiento", clear_on_submit=True):
             _fc1, _fc2 = st.columns([3, 2])
 
             _mv_med = _fc1.selectbox(
                 "Medicamento *",
-                _meds_lista,
-                help="Selecciona el medicamento. La lista está ordenada por mayor consumo.",
+                _mv_lista_f,
+                help="Lista filtrada según el buscador de arriba. Si no ves el medicamento, cierra el formulario y escríbelo en el buscador.",
                 key="mv_med_sel",
             )
             _mv_tipo = _fc2.selectbox(
@@ -2759,10 +2771,22 @@ with tab3:
 
         # ── Formulario de registro de lote ────────────────────────────────
         st.markdown("#### Registrar recepción de lote")
+        # Buscador FUERA del form para evitar límite WebSocket
+        _lot_busq = st.text_input(
+            "Buscar medicamento:",
+            placeholder="Escribe parte del nombre para filtrar...",
+            key="lot_med_busq",
+        )
+        _lot_lista_f = (
+            [m for m in _meds_lista if _lot_busq.strip().lower() in m.lower()][:50]
+            if _lot_busq.strip() else _meds_lista[:50]
+        ) or _meds_lista[:50]
+        st.caption(f"Mostrando {len(_lot_lista_f)} de {len(_meds_lista):,} medicamentos.")
+
         with st.form("form_lote", clear_on_submit=True):
             _lc1, _lc2 = st.columns([2, 2])
-            _lot_med   = _lc1.selectbox("Medicamento *", _meds_lista,
-                                        help="Medicamento al que pertenece el lote.")
+            _lot_med   = _lc1.selectbox("Medicamento *", _lot_lista_f,
+                                        help="Lista filtrada según el buscador de arriba.")
             _lot_oc    = _lc2.text_input("OC de referencia", placeholder="Ej: OC-2026-045",
                                          help="Número de orden de compra asociada a este lote.")
 
