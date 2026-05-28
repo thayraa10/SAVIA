@@ -2594,10 +2594,11 @@ with tab3:
     else:
         _meds_lista = resumen[COL_NOMBRE].dropna().sort_values().tolist()
 
-    _t3_reg, _t3_lot, _t3_his = st.tabs([
+    _t3_reg, _t3_lot, _t3_his, _t3_gest = st.tabs([
         "Registrar movimiento",
         "Control de Lotes",
         "Historial",
+        "Gestión de datos",
     ])
 
     # ══════════════════════════════════════════════════════════════════════
@@ -2610,7 +2611,7 @@ with tab3:
             "Si las existencias caen bajo el punto de reorden, se dispara automáticamente una alerta al webhook de Make.com configurado en el panel lateral."
         ), unsafe_allow_html=True)
 
-        # Buscador FUERA del form para evitar límite WebSocket con 5000+ items
+        # ── Controles FUERA del form (sin límite WebSocket) ──────────────
         _mv_busq = st.text_input(
             "Buscar medicamento:",
             placeholder="Escribe parte del nombre para filtrar...",
@@ -2620,15 +2621,23 @@ with tab3:
             [m for m in _meds_lista if _mv_busq.strip().lower() in m.lower()][:50]
             if _mv_busq.strip() else _meds_lista[:50]
         ) or _meds_lista[:50]
-        st.caption(f"Mostrando {len(_mv_lista_f)} de {len(_meds_lista):,} medicamentos. Usa el buscador para encontrar el que necesitas.")
+        st.caption(f"Mostrando {len(_mv_lista_f)} de {len(_meds_lista):,} medicamentos.")
+
+        # Modo de registro (fuera del form para controlar campos dinámicos)
+        _mv_modo = st.radio(
+            "Modo de registro:",
+            ["Por unidad", "Por lote / pack"],
+            horizontal=True,
+            key="mv_modo_sel",
+            help="'Por unidad': ingresas el total directo. 'Por lote/pack': ingresas la cantidad del pack y cuántos packs recibes (más unidades sueltas si aplica).",
+        )
 
         with st.form("form_movimiento", clear_on_submit=True):
             _fc1, _fc2 = st.columns([3, 2])
-
             _mv_med = _fc1.selectbox(
                 "Medicamento *",
                 _mv_lista_f,
-                help="Lista filtrada según el buscador de arriba. Si no ves el medicamento, cierra el formulario y escríbelo en el buscador.",
+                help="Lista filtrada según el buscador de arriba.",
                 key="mv_med_sel",
             )
             _mv_tipo = _fc2.selectbox(
@@ -2637,14 +2646,40 @@ with tab3:
                 help="Entrada: recepción de pedido. Salida: dispensación/consumo. Pérdida: merma, rotura, vencimiento. Ajuste: corrección de inventario.",
             )
 
-            _fc3, _fc4, _fc5 = st.columns(3)
-            _mv_cant = _fc3.number_input(
-                "Cantidad *", min_value=1, value=1, step=1,
-                help="Número de unidades del movimiento.",
-            )
+            # ── Campos de cantidad según modo ──────────────────────────────
+            if _mv_modo == "Por lote / pack":
+                st.markdown(_ayuda(
+                    "Ingresa el <b>tamaño del pack</b> (unidades que trae cada pack) y cuántos "
+                    "<b>packs completos</b> recibes. Si sobran unidades sueltas (un pack incompleto), "
+                    "agrégalas en el último campo. El total se calcula automáticamente.",
+                    color="#EBF8FF", borde="#3182CE",
+                ), unsafe_allow_html=True)
+                _fpa, _fpb, _fpc = st.columns(3)
+                _mv_pack_u = _fpa.number_input(
+                    "Unidades por pack", min_value=1, value=10, step=1,
+                    help="¿Cuántas unidades trae cada pack o lote? Ej: si el pack trae 100 ampollas, escribe 100.",
+                )
+                _mv_packs  = _fpb.number_input(
+                    "Packs completos", min_value=0, value=0, step=1,
+                    help="Número de packs completos que entran o salen.",
+                )
+                _mv_suelts = _fpc.number_input(
+                    "Unidades sueltas adicionales", min_value=0, value=0, step=1,
+                    help="Unidades de un pack incompleto. Ej: si recibiste 2 packs completos y 15 unidades sueltas, escribe 15 aquí.",
+                )
+                _mv_cant_calc = int(_mv_pack_u) * int(_mv_packs) + int(_mv_suelts)
+                st.info(f"Total a registrar: **{_mv_cant_calc:,} unidades** ({int(_mv_packs)} × {int(_mv_pack_u)} + {int(_mv_suelts)} sueltas)")
+            else:
+                _mv_cant_calc = 0  # placeholder; se lee del input abajo
+                _mv_cant_u = st.number_input(
+                    "Cantidad *", min_value=1, value=1, step=1,
+                    help="Número total de unidades del movimiento.",
+                )
+                _mv_cant_calc = int(_mv_cant_u)
+
+            _fc4, _fc5 = st.columns(2)
             _mv_bod = _fc4.selectbox(
-                "Bodega *",
-                _bods_disponibles,
+                "Bodega *", _bods_disponibles,
                 help="Bodega desde/hacia donde se realiza el movimiento.",
             )
             _mv_fecha = _fc5.date_input(
@@ -2661,19 +2696,22 @@ with tab3:
         if _mv_submit:
             _mv_row_cod = resumen.loc[resumen[COL_NOMBRE] == _mv_med, COL_CODIGO]
             _mv_cod     = str(_mv_row_cod.iloc[0]) if len(_mv_row_cod) > 0 else "—"
+            _mv_obs_txt = _mv_obs.strip() if _mv_obs else "—"
+            if _mv_modo == "Por lote / pack" and _mv_packs > 0:
+                _mv_obs_txt += f" | Pack: {int(_mv_packs)}×{int(_mv_pack_u)} u + {int(_mv_suelts)} sueltas"
 
             _smv["movimientos"].append({
                 "Fecha":        _mv_fecha.strftime("%d/%m/%Y"),
                 "Medicamento":  _mv_med,
                 "Código":       _mv_cod,
                 "Tipo":         _mv_tipo,
-                "Cantidad":     int(_mv_cant),
+                "Cantidad":     _mv_cant_calc,
                 "Bodega":       _mv_bod,
-                "Observaciones": _mv_obs.strip() if _mv_obs else "—",
+                "Observaciones": _mv_obs_txt,
                 "Responsable":  _smv.get("responsable", "sin especificar"),
                 "_ts":          pd.Timestamp.now().isoformat(),
             })
-            st.success(f"Movimiento registrado: **{_mv_tipo}** de **{int(_mv_cant):,} u** de {_mv_med}")
+            st.success(f"Movimiento registrado: **{_mv_tipo}** de **{_mv_cant_calc:,} u** de {_mv_med}")
 
             # ── Verificar si el stock ajustado cae bajo el punto de reorden ──
             _mv_row = resumen[resumen[COL_NOMBRE] == _mv_med]
@@ -3024,6 +3062,151 @@ with tab3:
                 file_name=f"movimientos_SAVIA_{date.today().strftime('%Y%m%d')}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
+
+    # ══════════════════════════════════════════════════════════════════════
+    # SUB-TAB: GESTIÓN DE DATOS
+    # ══════════════════════════════════════════════════════════════════════
+    with _t3_gest:
+        st.markdown(_ayuda(
+            "<b>Gestión de datos del inventario</b> — Edita o elimina registros directamente desde la tabla. "
+            "Filtra por nombre para encontrar el medicamento, modifica las celdas que necesites y haz clic en "
+            "<b>Aplicar cambios</b> para que se reflejen en toda la aplicación. "
+            "También puedes descargar el inventario actualizado, el registro de movimientos o los lotes como archivos Excel."
+        ), unsafe_allow_html=True)
+
+        # ── Selector de columnas a mostrar ────────────────────────────────
+        _prio_cols = [c for c in [
+            COL_CODIGO, COL_NOMBRE,
+            "stock_total", "STC_MIN", "STC_MAX", "STC_CRITICO",
+            "ALCANCE", "SUGERIDO", "CONS_PROM", "costo_unitario",
+        ] if c in datos_inventario.columns]
+        _bod_cols_g = [c for c in datos_inventario.columns if c.startswith("BOD_")]
+        _cols_editor = _prio_cols + _bod_cols_g
+
+        _gest_busq = st.text_input(
+            "Buscar medicamento:",
+            placeholder="Filtra por nombre o código...",
+            key="gest_busq_inv",
+        )
+        _inv_edit_df = datos_inventario[_cols_editor].copy() if _cols_editor else datos_inventario.copy()
+        if _gest_busq.strip():
+            _m1 = _inv_edit_df[COL_NOMBRE].astype(str).str.contains(_gest_busq.strip(), case=False, na=False)
+            _m2 = _inv_edit_df[COL_CODIGO].astype(str).str.contains(_gest_busq.strip(), case=False, na=False)
+            _inv_edit_df = _inv_edit_df[_m1 | _m2]
+        _inv_edit_df = _inv_edit_df.head(100).reset_index(drop=True)
+
+        st.caption(
+            f"Mostrando {len(_inv_edit_df):,} filas. "
+            "Para **eliminar** una fila: marca la casilla de la izquierda y bórrala con la tecla ←. "
+            "Para **editar** una celda: haz doble clic sobre ella."
+        )
+
+        # ── Editor de datos ────────────────────────────────────────────────
+        _ccfg_gest = {}
+        if COL_NOMBRE in _inv_edit_df.columns:
+            _ccfg_gest[COL_NOMBRE] = st.column_config.TextColumn("Nombre", width="large")
+        if COL_CODIGO in _inv_edit_df.columns:
+            _ccfg_gest[COL_CODIGO] = st.column_config.TextColumn("Código", width="small")
+        if "stock_total" in _inv_edit_df.columns:
+            _ccfg_gest["stock_total"] = st.column_config.NumberColumn("Existencias", format="%d u")
+        for _bc in _bod_cols_g:
+            _ccfg_gest[_bc] = st.column_config.NumberColumn(_bc.replace("BOD_","").replace("_"," "), format="%d u")
+
+        _edited_inv = st.data_editor(
+            _inv_edit_df,
+            use_container_width=True,
+            hide_index=False,
+            num_rows="dynamic",
+            column_config=_ccfg_gest,
+            key="data_editor_inv",
+        )
+
+        _gc1, _gc2 = st.columns(2)
+        if _gc1.button("Aplicar cambios al inventario", type="primary", use_container_width=True,
+                        help="Guarda las ediciones y eliminaciones en el inventario activo. Los cambios se reflejan en toda la app."):
+            _g_store = _store_global()
+            _inv_base = _g_store["inv"].copy()
+            # Obtener los índices originales del filtro aplicado
+            if _gest_busq.strip():
+                _m1b = _inv_base[COL_NOMBRE].astype(str).str.contains(_gest_busq.strip(), case=False, na=False)
+                _m2b = _inv_base[COL_CODIGO].astype(str).str.contains(_gest_busq.strip(), case=False, na=False)
+                _idx_orig = _inv_base[_m1b | _m2b].head(100).index
+            else:
+                _idx_orig = _inv_base.head(100).index
+
+            # Calcular filas eliminadas (las que estaban antes y ya no están en _edited_inv)
+            _orig_codes = set(_inv_base.loc[_idx_orig, COL_CODIGO].astype(str))
+            _edit_codes = set(_edited_inv[COL_CODIGO].astype(str)) if COL_CODIGO in _edited_inv.columns else _orig_codes
+            _deleted    = _orig_codes - _edit_codes
+            if _deleted:
+                _inv_base = _inv_base[~_inv_base[COL_CODIGO].astype(str).isin(_deleted)]
+
+            # Aplicar ediciones a las filas que siguen existiendo
+            for _, _erow in _edited_inv.iterrows():
+                _ecod = str(_erow.get(COL_CODIGO, ""))
+                _mask = _inv_base[COL_CODIGO].astype(str) == _ecod
+                if _mask.any():
+                    for _col in _edited_inv.columns:
+                        if _col in _inv_base.columns:
+                            _inv_base.loc[_mask, _col] = _erow[_col]
+
+            _g_store["inv"] = _inv_base
+            if _deleted:
+                st.success(f"Cambios aplicados. Se eliminaron {len(_deleted)} fila(s): {', '.join(list(_deleted)[:5])}. Recargando...")
+            else:
+                st.success("Cambios aplicados correctamente. Recargando...")
+            st.rerun()
+
+        # ── Descargas ──────────────────────────────────────────────────────
+        st.markdown("---")
+        st.markdown("#### Exportar datos")
+        _dl1, _dl2, _dl3 = st.columns(3)
+
+        # 1. Inventario actualizado
+        _buf_inv_dl = io.BytesIO()
+        datos_inventario.to_excel(_buf_inv_dl, index=False, engine="openpyxl")
+        _dl1.download_button(
+            label="Inventario actualizado (.xlsx)",
+            data=_buf_inv_dl.getvalue(),
+            file_name=f"inventario_SAVIA_{date.today().strftime('%Y%m%d')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+            help="Descarga el inventario con todos los cambios aplicados en esta sesión.",
+        )
+
+        # 2. Movimientos registrados
+        if _smv["movimientos"]:
+            _buf_mv_dl = io.BytesIO()
+            pd.DataFrame(_smv["movimientos"]).drop(columns=["_ts"], errors="ignore")[_MOV_COLS].to_excel(
+                _buf_mv_dl, index=False, engine="openpyxl"
+            )
+            _dl2.download_button(
+                label="Movimientos registrados (.xlsx)",
+                data=_buf_mv_dl.getvalue(),
+                file_name=f"movimientos_SAVIA_{date.today().strftime('%Y%m%d')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+                help="Historial completo de movimientos registrados en esta sesión.",
+            )
+        else:
+            _dl2.info("Sin movimientos aún")
+
+        # 3. Lotes registrados
+        if _smv["lotes_oc"]:
+            _buf_lot_dl = io.BytesIO()
+            pd.DataFrame(_smv["lotes_oc"]).drop(columns=["_ts","Código"], errors="ignore").to_excel(
+                _buf_lot_dl, index=False, engine="openpyxl"
+            )
+            _dl3.download_button(
+                label="Lotes registrados (.xlsx)",
+                data=_buf_lot_dl.getvalue(),
+                file_name=f"lotes_SAVIA_{date.today().strftime('%Y%m%d')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+                help="Registro de todos los lotes ingresados en esta sesión.",
+            )
+        else:
+            _dl3.info("Sin lotes aún")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # MÓDULO 4 — ABASTECIMIENTO Y SIMULACIÓN
