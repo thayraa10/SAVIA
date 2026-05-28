@@ -2077,6 +2077,45 @@ with tab1:
         else:
             st.info("Selecciona al menos un estado para ver los KPIs.")
 
+    # ── Diagrama: ciclo de vida de un lote ───────────────────────────────────
+    st.divider()
+    st.markdown("#### Flujo del ciclo de vida de un lote")
+    _NODES_P1 = [
+        (0.5, 2.0, "Pedido OC",           "#3182CE", "white"),
+        (2.0, 2.0, "Llegada",              "#3182CE", "white"),
+        (3.5, 2.0, "Control de\nCalidad",  "#3182CE", "white"),
+        (5.0, 2.8, "Aprobado",             "#38A169", "white"),
+        (6.5, 2.8, "Bodega",               "#38A169", "white"),
+        (8.0, 2.8, "Dispensación",         "#276749", "white"),
+        (5.0, 1.2, "Rechazado",            "#C53030", "white"),
+        (6.5, 1.2, "Reg. Pérdida",         "#C53030", "white"),
+        (8.0, 1.2, "Desecho",              "#742A2A", "white"),
+    ]
+    _EDGES_P1 = [(0,1),(1,2),(2,3),(3,4),(4,5),(2,6),(6,7),(7,8)]
+    _fig_flow_p1 = go.Figure()
+    for (_x1,_y1,_,_,_), (_x2,_y2,_,_,_) in [(_NODES_P1[a], _NODES_P1[b]) for a,b in _EDGES_P1]:
+        _fig_flow_p1.add_trace(go.Scatter(
+            x=[_x1+0.5, _x2-0.5], y=[_y1, _y2],
+            mode="lines", line=dict(color="#A0AEC0", width=2),
+            showlegend=False, hoverinfo="skip",
+        ))
+    for _nx,_ny,_nlbl,_nc,_ntc in _NODES_P1:
+        _fig_flow_p1.add_shape(type="rect",
+            x0=_nx-0.48, y0=_ny-0.32, x1=_nx+0.48, y1=_ny+0.32,
+            fillcolor=_nc, line_color=_nc, line_width=0, layer="above",
+        )
+        _fig_flow_p1.add_annotation(x=_nx, y=_ny, text=_nlbl.replace("\n","<br>"),
+            showarrow=False, font=dict(size=10, color=_ntc), align="center",
+        )
+    _fig_flow_p1.update_layout(
+        height=220, margin=dict(t=10, b=10, l=10, r=10),
+        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False, range=[-0.1, 8.6]),
+        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False, range=[0.7, 3.3]),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+    )
+    st.plotly_chart(_fig_flow_p1, use_container_width=True)
+    st.caption("Flujo estándar del ciclo de vida de un lote: desde la orden de compra hasta la dispensación o el desecho si es rechazado en control de calidad.")
+
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 2 — INVENTARIO Y PRONÓSTICO
 # ══════════════════════════════════════════════════════════════════════════════
@@ -2945,7 +2984,6 @@ with tab3:
     _smv = _store_global()
     # Inicializar listas en el store si aún no existen
     if "movimientos" not in _smv: _smv["movimientos"] = []
-    if "lotes_oc"    not in _smv: _smv["lotes_oc"]    = []
 
     # ── Helper: disparar webhook ───────────────────────────────────────────
     def _disparar_webhook(payload: dict):
@@ -2959,12 +2997,8 @@ with tab3:
             return False, str(_e)
 
     # ── DataFrames de trabajo ──────────────────────────────────────────────
-    _MOV_COLS  = ["Fecha","Medicamento","Código","Tipo","Cantidad","Bodega","Observaciones","Responsable"]
-    _LOT_COLS  = ["Fecha llegada","OC referencia","Medicamento","Código","Nro. lote",
-                  "Cant. pedida","Cant. llegada","Cant. aprobada","Cant. rechazada",
-                  "Motivo rechazo","Fecha vencimiento","Responsable"]
-    _df_movs  = pd.DataFrame(_smv["movimientos"])  if _smv["movimientos"]  else pd.DataFrame(columns=_MOV_COLS)
-    _df_lotes = pd.DataFrame(_smv["lotes_oc"])     if _smv["lotes_oc"]     else pd.DataFrame(columns=_LOT_COLS)
+    _MOV_COLS = ["Fecha","Medicamento","Código","Tipo","Cantidad","Bodega","Observaciones","Responsable"]
+    _df_movs  = pd.DataFrame(_smv["movimientos"]) if _smv["movimientos"] else pd.DataFrame(columns=_MOV_COLS)
 
     # ── BOD_* disponibles (para selector de bodega) ────────────────────────
     _bods_disponibles = sorted([
@@ -3015,9 +3049,8 @@ with tab3:
 
     st.markdown("---")
 
-    _t3_reg, _t3_lot, _t3_his, _t3_gest = st.tabs([
+    _t3_reg, _t3_his, _t3_gest = st.tabs([
         "Registrar movimiento",
-        "Control de Lotes",
         "Historial",
         "Gestión de datos",
     ])
@@ -3216,253 +3249,7 @@ with tab3:
         else:
             st.info("Aún no se han registrado movimientos en esta sesión.")
 
-    # ══════════════════════════════════════════════════════════════════════
-    # SUB-TAB: CONTROL DE LOTES
-    # ══════════════════════════════════════════════════════════════════════
-    with _t3_lot:
-        st.markdown(_ayuda(
-            "<b>Control de lotes</b> — Registra la recepción de cada lote, el resultado del control de calidad "
-            "y las cantidades aprobadas y rechazadas. "
-            "Si los rechazos superan el 30% del pedido, se envía automáticamente una alerta de calidad al webhook. "
-            "El gráfico y las tablas se actualizan en tiempo real con cada registro."
-        ), unsafe_allow_html=True)
 
-        # ── Diagrama de flujo del ciclo del lote ─────────────────────────
-        _NODES = [
-            (0.5, 2.0, "Pedido OC",           "#3182CE", "white"),
-            (2.0, 2.0, "Llegada",              "#3182CE", "white"),
-            (3.5, 2.0, "Control de\nCalidad",  "#3182CE", "white"),
-            (5.0, 2.8, "Aprobado",             "#38A169", "white"),
-            (6.5, 2.8, "Bodega",               "#38A169", "white"),
-            (8.0, 2.8, "Dispensación",         "#276749", "white"),
-            (5.0, 1.2, "Rechazado",            "#C53030", "white"),
-            (6.5, 1.2, "Reg. Pérdida",         "#C53030", "white"),
-            (8.0, 1.2, "Desecho",              "#742A2A", "white"),
-        ]
-        _EDGES = [
-            (0, 1), (1, 2), (2, 3), (3, 4), (4, 5),
-            (2, 6), (6, 7), (7, 8),
-        ]
-        _fig_flow = go.Figure()
-        for (_x1, _y1, _, _, _), (_x2, _y2, _, _, _) in [(_NODES[a], _NODES[b]) for a, b in _EDGES]:
-            _fig_flow.add_trace(go.Scatter(
-                x=[_x1 + 0.5, _x2 - 0.5], y=[_y1, _y2],
-                mode="lines",
-                line=dict(color="#A0AEC0", width=2),
-                showlegend=False, hoverinfo="skip",
-            ))
-        for _nx, _ny, _nlbl, _nc, _ntc in _NODES:
-            _fig_flow.add_shape(type="rect",
-                x0=_nx-0.48, y0=_ny-0.32, x1=_nx+0.48, y1=_ny+0.32,
-                fillcolor=_nc, line_color=_nc, line_width=0, layer="above",
-            )
-            _fig_flow.add_annotation(x=_nx, y=_ny, text=_nlbl.replace("\n", "<br>"),
-                showarrow=False, font=dict(size=10, color=_ntc), align="center",
-            )
-        _fig_flow.update_layout(
-            height=220, margin=dict(t=10, b=10, l=10, r=10),
-            xaxis=dict(showgrid=False, zeroline=False, showticklabels=False, range=[-0.1, 8.6]),
-            yaxis=dict(showgrid=False, zeroline=False, showticklabels=False, range=[0.7, 3.3]),
-            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-        )
-        st.plotly_chart(_fig_flow, use_container_width=True)
-        st.caption("Flujo estándar del ciclo de vida de un lote: desde la orden de compra hasta la dispensación o el desecho si es rechazado en control de calidad.")
-
-        # ── Formulario de registro de lote ────────────────────────────────
-        st.markdown("#### Registrar recepción de lote")
-        # Buscador FUERA del form para evitar límite WebSocket
-        _lot_busq = st.text_input(
-            "Buscar medicamento:",
-            placeholder="Escribe parte del nombre para filtrar...",
-            key="lot_med_busq",
-        )
-        _lot_lista_f = (
-            [m for m in _meds_lista if _lot_busq.strip().lower() in m.lower()][:50]
-            if _lot_busq.strip() else _meds_lista[:50]
-        ) or _meds_lista[:50]
-        st.caption(f"Mostrando {len(_lot_lista_f)} de {len(_meds_lista):,} medicamentos.")
-
-        with st.form("form_lote", clear_on_submit=True):
-            _lc1, _lc2 = st.columns([2, 2])
-            _lot_med   = _lc1.selectbox("Medicamento *", _lot_lista_f,
-                                        help="Lista filtrada según el buscador de arriba.")
-            _lot_oc    = _lc2.text_input("OC de referencia", placeholder="Ej: OC-2026-045",
-                                         help="Número de orden de compra asociada a este lote.")
-
-            _lc3, _lc4 = st.columns([2, 2])
-            _lot_num   = _lc3.text_input("Número de lote *", placeholder="Ej: 30322578",
-                                          help="Código de lote del fabricante.")
-            _lot_flleg = _lc4.date_input("Fecha de llegada *", value=date.today(),
-                                          help="Fecha en que el lote llegó al establecimiento.")
-
-            _lc5, _lc6, _lc7, _lc8 = st.columns(4)
-            _lot_ped  = _lc5.number_input("Cant. pedida",   min_value=0, value=0, step=1,
-                                           help="Unidades solicitadas en la OC.")
-            _lot_lleg = _lc6.number_input("Cant. llegada",  min_value=0, value=0, step=1,
-                                           help="Unidades físicamente recibidas.")
-            _lot_apr  = _lc7.number_input("Cant. aprobada", min_value=0, value=0, step=1,
-                                           help="Unidades que pasaron el control de calidad.")
-            _lot_rech = _lc8.number_input("Cant. rechazada",min_value=0, value=0, step=1,
-                                           help="Unidades que NO pasaron el control de calidad.")
-
-            _lc9, _lc10 = st.columns([2, 2])
-            _lot_motivo = _lc9.selectbox(
-                "Motivo de rechazo (si aplica)",
-                ["—", "Falla de calidad", "Daño físico", "Cadena de frío rota",
-                 "Fecha de vencimiento incorrecta", "Otro"],
-                help="Completar solo si hay unidades rechazadas.",
-            )
-            _lot_fvenc = _lc10.date_input("Fecha de vencimiento del lote",
-                                           value=date.today() + timedelta(days=365),
-                                           help="Fecha de vencimiento indicada en el envase del lote.")
-
-            _lot_submit = st.form_submit_button("Registrar lote", type="primary", use_container_width=True)
-
-        if _lot_submit:
-            if not _lot_num.strip():
-                st.error("El número de lote es obligatorio.")
-            else:
-                _lot_cod = ""
-                _lot_row = resumen[resumen[COL_NOMBRE] == _lot_med]
-                if len(_lot_row) > 0:
-                    _lot_cod = str(_lot_row.iloc[0][COL_CODIGO])
-
-                _smv["lotes_oc"].append({
-                    "Fecha llegada":     _lot_flleg.strftime("%d/%m/%Y"),
-                    "OC referencia":     _lot_oc.strip() or "—",
-                    "Medicamento":       _lot_med,
-                    "Código":            _lot_cod,
-                    "Nro. lote":         _lot_num.strip(),
-                    "Cant. pedida":      int(_lot_ped),
-                    "Cant. llegada":     int(_lot_lleg),
-                    "Cant. aprobada":    int(_lot_apr),
-                    "Cant. rechazada":   int(_lot_rech),
-                    "Motivo rechazo":    _lot_motivo if _lot_rech > 0 else "—",
-                    "Fecha vencimiento": _lot_fvenc.strftime("%d/%m/%Y"),
-                    "Responsable":       _smv.get("responsable", "sin especificar"),
-                    "_ts":               pd.Timestamp.now().isoformat(),
-                })
-
-                # Si hay unidades aprobadas, registrar entrada en movimientos
-                if _lot_apr > 0:
-                    _lot_obs_txt = f"Entrada desde lote {_lot_num.strip()} (OC: {_lot_oc or '—'})"
-                    _smv["movimientos"].append({
-                        "Fecha":         _lot_flleg.strftime("%d/%m/%Y"),
-                        "Medicamento":   _lot_med,
-                        "Código":        _lot_cod,
-                        "Tipo":          "Entrada",
-                        "Cantidad":      int(_lot_apr),
-                        "Bodega":        _bods_disponibles[0] if _bods_disponibles else "Bodega Central",
-                        "Observaciones": _lot_obs_txt,
-                        "Responsable":   _smv.get("responsable", "sin especificar"),
-                        "_ts":           pd.Timestamp.now().isoformat(),
-                    })
-                    # Añadir también al archivo de movimientos cargado
-                    if tiene_movimientos and _store_global()["mov"] is not None:
-                        _lot_mov_new = {col: None for col in _store_global()["mov"].columns}
-                        if COL_MOV_CODIGO:   _lot_mov_new[COL_MOV_CODIGO]   = _lot_cod
-                        if COL_MOV_FECHA:    _lot_mov_new[COL_MOV_FECHA]     = pd.Timestamp(_lot_flleg)
-                        if COL_MOV_CANTIDAD: _lot_mov_new[COL_MOV_CANTIDAD]  = float(_lot_apr)
-                        _lot_mov_new["Tipo_SAVIA"]         = "Entrada"
-                        _lot_mov_new["Bodega_SAVIA"]        = _bods_disponibles[0] if _bods_disponibles else "Bodega Central"
-                        _lot_mov_new["Observaciones_SAVIA"] = _lot_obs_txt
-                        _lot_mov_new["Responsable_SAVIA"]   = _smv.get("responsable", "")
-                        _store_global()["mov"] = pd.concat(
-                            [_store_global()["mov"], pd.DataFrame([_lot_mov_new])],
-                            ignore_index=True,
-                        )
-                    # Actualizar stock en inventario
-                    _inv_s2 = _store_global()["inv"]
-                    if COL_STOCK and COL_CODIGO and _inv_s2 is not None:
-                        _mask_l = _inv_s2[COL_CODIGO].astype(str) == str(_lot_cod)
-                        if _mask_l.any():
-                            _cur_l = pd.to_numeric(_inv_s2.loc[_mask_l, COL_STOCK], errors="coerce").fillna(0)
-                            _inv_s2.loc[_mask_l, COL_STOCK] = (_cur_l + float(_lot_apr)).clip(lower=0)
-                    st.success(
-                        f"Lote {_lot_num} registrado. **{int(_lot_apr):,} u** aprobadas añadidas al inventario y al archivo de movimientos.  \n"
-                        "Descarga los archivos actualizados en la parte superior de esta pestaña."
-                    )
-
-                # Alerta si rechazados > 30% del pedido
-                if _lot_ped > 0 and _lot_rech / _lot_ped > 0.30:
-                    st.error(
-                        f"Los rechazos ({int(_lot_rech):,} u) superan el **30%** del pedido ({int(_lot_ped):,} u). "
-                        "Se está disparando una alerta de calidad."
-                    )
-                    _ok, _msg = _disparar_webhook({
-                        "tipo_alerta":    "calidad_lotes_rechazados",
-                        "medicamento":    _lot_med,
-                        "codigo":         _lot_cod,
-                        "nro_lote":       _lot_num.strip(),
-                        "oc_referencia":  _lot_oc or "—",
-                        "cant_pedida":    int(_lot_ped),
-                        "cant_rechazada": int(_lot_rech),
-                        "pct_rechazo":    round(_lot_rech / _lot_ped * 100, 1),
-                        "motivo":         _lot_motivo,
-                        "fecha":          _lot_flleg.strftime("%d/%m/%Y"),
-                    })
-                    if _ok:
-                        st.info("Alerta de calidad enviada al webhook de Make.com.")
-                    elif _store_global().get("webhook_url", ""):
-                        st.warning(f"No se pudo enviar la alerta: {_msg}")
-                elif _lot_ped > 0:
-                    st.success(f"Tasa de rechazo: {_lot_rech/_lot_ped*100:.1f}% — dentro del umbral aceptable.")
-
-        # ── Gráficos de lotes (solo si hay datos) ─────────────────────────
-        if _smv["lotes_oc"]:
-            _df_lot_g = pd.DataFrame(_smv["lotes_oc"])
-            _lc_g1, _lc_g2 = st.columns(2)
-
-            # Torta: aprobados vs rechazados totales
-            with _lc_g1:
-                _tot_apr  = pd.to_numeric(_df_lot_g["Cant. aprobada"],  errors="coerce").fillna(0).sum()
-                _tot_rech = pd.to_numeric(_df_lot_g["Cant. rechazada"], errors="coerce").fillna(0).sum()
-                if _tot_apr + _tot_rech > 0:
-                    _fig_pie_lot = go.Figure(go.Pie(
-                        labels=["Aprobado", "Rechazado"],
-                        values=[_tot_apr, _tot_rech],
-                        marker_colors=["#38A169", "#E53E3E"],
-                        hole=0.4,
-                        textinfo="label+percent",
-                    ))
-                    _fig_pie_lot.update_layout(
-                        title=dict(text="Lotes: aprobados vs rechazados", font=dict(size=12)),
-                        height=280, margin=dict(t=36, b=8, l=8, r=8),
-                        paper_bgcolor="rgba(0,0,0,0)",
-                    )
-                    st.plotly_chart(_fig_pie_lot, use_container_width=True)
-
-            # Barras apiladas: rechazos por motivo
-            with _lc_g2:
-                _df_mot = _df_lot_g[_df_lot_g["Cant. rechazada"].apply(
-                    lambda v: pd.to_numeric(v, errors="coerce") > 0
-                )].copy()
-                if len(_df_mot) > 0:
-                    _df_mot["Cant. rechazada"] = pd.to_numeric(_df_mot["Cant. rechazada"], errors="coerce").fillna(0)
-                    _df_mot_g = _df_mot.groupby("Motivo rechazo")["Cant. rechazada"].sum().reset_index()
-                    _df_mot_g = _df_mot_g[_df_mot_g["Motivo rechazo"] != "—"]
-                    if len(_df_mot_g) > 0:
-                        _fig_bar_mot = go.Figure(go.Bar(
-                            x=_df_mot_g["Motivo rechazo"],
-                            y=_df_mot_g["Cant. rechazada"],
-                            marker_color="#E53E3E",
-                            text=_df_mot_g["Cant. rechazada"].astype(int).astype(str) + " u",
-                            textposition="outside",
-                        ))
-                        _fig_bar_mot.update_layout(
-                            title=dict(text="Unidades rechazadas por motivo", font=dict(size=12)),
-                            height=280, margin=dict(t=36, b=8, l=8, r=60),
-                            xaxis=dict(tickangle=-20),
-                            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                        )
-                        st.plotly_chart(_fig_bar_mot, use_container_width=True)
-
-            # Tabla de lotes registrados
-            st.markdown("**Lotes registrados en esta sesión**")
-            _df_lot_show = _df_lot_g.drop(columns=["_ts", "Código"], errors="ignore").reset_index(drop=True)
-            st.dataframe(_safe_df(_df_lot_show), use_container_width=True, hide_index=True, height=320)
-        else:
-            st.info("Aún no se han registrado lotes en esta sesión. Usa el formulario de arriba para empezar.")
 
     # ══════════════════════════════════════════════════════════════════════
     # SUB-TAB: HISTORIAL
@@ -3655,7 +3442,7 @@ with tab3:
         st.markdown("---")
         st.markdown("#### Exportar datos")
         st.caption("Los archivos descargados son exactamente los que cargaste, con tus cambios aplicados.")
-        _dl1, _dl2, _dl3 = st.columns(3)
+        _dl1, _dl2 = st.columns(2)
 
         # 1. Inventario original actualizado
         _inv_bytes_g, _inv_nom_g = _excel_inv_actualizado()
@@ -3681,23 +3468,6 @@ with tab3:
             help="Tu archivo de movimientos original con las filas nuevas al final.",
             key="dl_mov_gest",
         )
-
-        # 3. Lotes registrados en sesión
-        if _smv["lotes_oc"]:
-            _buf_lot_dl = io.BytesIO()
-            pd.DataFrame(_smv["lotes_oc"]).drop(columns=["_ts","Código"], errors="ignore").to_excel(
-                _buf_lot_dl, index=False, engine="openpyxl"
-            )
-            _dl3.download_button(
-                label=f"Lotes registrados (.xlsx)",
-                data=_buf_lot_dl.getvalue(),
-                file_name=f"lotes_SAVIA_{date.today().strftime('%Y%m%d')}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True,
-                help="Registro de control de calidad de todos los lotes ingresados en esta sesión.",
-            )
-        else:
-            _dl3.info("Sin lotes aún")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # MÓDULO 4 — ABASTECIMIENTO Y SIMULACIÓN
