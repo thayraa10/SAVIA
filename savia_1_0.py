@@ -2594,6 +2594,44 @@ with tab3:
     else:
         _meds_lista = resumen[COL_NOMBRE].dropna().sort_values().tolist()
 
+    # ── Descargas siempre visibles (arriba del módulo) ────────────────────
+    st.markdown(_ayuda(
+        "Los archivos de abajo incluyen <b>todo lo que cargaste originalmente más lo que agregaste o modificaste</b> en esta sesión. "
+        "Descárgalos cuando quieras para tener la versión actualizada.",
+        color="#F0FFF4", borde="#38A169",
+    ), unsafe_allow_html=True)
+    _dlh1, _dlh2 = st.columns(2)
+
+    _buf_inv_top = io.BytesIO()
+    _store_global()["inv"].to_excel(_buf_inv_top, index=False, engine="openpyxl")
+    _dlh1.download_button(
+        label="Inventario actualizado (.xlsx)",
+        data=_buf_inv_top.getvalue(),
+        file_name=f"inventario_SAVIA_{date.today().strftime('%Y%m%d')}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True,
+        help="Archivo de inventario con todas las ediciones, eliminaciones y ajustes de stock de esta sesión.",
+        key="dl_inv_top",
+    )
+    _mov_top = _store_global().get("mov")
+    if _mov_top is not None and len(_mov_top) > 0:
+        _buf_mov_top = io.BytesIO()
+        _mov_top.to_excel(_buf_mov_top, index=False, engine="openpyxl")
+        _n_top = len(_smv["movimientos"])
+        _dlh2.download_button(
+            label=f"Movimientos actualizados (.xlsx){f'  (+{_n_top} nuevos)' if _n_top else ''}",
+            data=_buf_mov_top.getvalue(),
+            file_name=f"movimientos_SAVIA_{date.today().strftime('%Y%m%d')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+            help="Archivo de movimientos con todas las filas nuevas añadidas al final. Las columnas _SAVIA identifican lo nuevo.",
+            key="dl_mov_top",
+        )
+    else:
+        _dlh2.info("Carga un archivo de movimientos para habilitarlo.")
+
+    st.markdown("---")
+
     _t3_reg, _t3_lot, _t3_his, _t3_gest = st.tabs([
         "Registrar movimiento",
         "Control de Lotes",
@@ -2727,7 +2765,28 @@ with tab3:
                     [_store_global()["mov"], pd.DataFrame([_mov_new])],
                     ignore_index=True,
                 )
-            st.success(f"Movimiento registrado: **{_mv_tipo}** de **{_mv_cant_calc:,} u** de {_mv_med}")
+
+            # ── Actualizar stock en el archivo de inventario ───────────────
+            _delta_inv = _mv_cant_calc if _mv_tipo == "Entrada" else -_mv_cant_calc
+            _inv_store = _store_global()["inv"]
+            if COL_STOCK and COL_CODIGO and _inv_store is not None:
+                _mask_inv = _inv_store[COL_CODIGO].astype(str) == str(_mv_cod)
+                if _mask_inv.any():
+                    _cur = pd.to_numeric(_inv_store.loc[_mask_inv, COL_STOCK], errors="coerce").fillna(0)
+                    _inv_store.loc[_mask_inv, COL_STOCK] = (_cur + _delta_inv).clip(lower=0)
+            # También actualizar la columna BOD_* de la bodega seleccionada si existe
+            _bod_col_k = "BOD_" + _mv_bod.upper().replace(" ", "_")
+            if _bod_col_k in (_inv_store.columns if _inv_store is not None else []):
+                _mask_inv2 = _inv_store[COL_CODIGO].astype(str) == str(_mv_cod)
+                if _mask_inv2.any():
+                    _cur2 = pd.to_numeric(_inv_store.loc[_mask_inv2, _bod_col_k], errors="coerce").fillna(0)
+                    _inv_store.loc[_mask_inv2, _bod_col_k] = (_cur2 + _delta_inv).clip(lower=0)
+
+            _inv_delta_txt = f"+{_mv_cant_calc:,}" if _mv_tipo == "Entrada" else f"−{_mv_cant_calc:,}"
+            st.success(
+                f"Movimiento registrado: **{_mv_tipo}** de **{_mv_cant_calc:,} u** de {_mv_med}  \n"
+                f"Stock en inventario actualizado ({_inv_delta_txt} u). Descarga los archivos actualizados arriba."
+            )
 
             # ── Verificar si el stock ajustado cae bajo el punto de reorden ──
             _mv_row = resumen[resumen[COL_NOMBRE] == _mv_med]
@@ -2926,7 +2985,17 @@ with tab3:
                             [_store_global()["mov"], pd.DataFrame([_lot_mov_new])],
                             ignore_index=True,
                         )
-                    st.success(f"Lote {_lot_num} registrado. Se añadieron **{int(_lot_apr):,} u** aprobadas al archivo de movimientos.")
+                    # Actualizar stock en inventario
+                    _inv_s2 = _store_global()["inv"]
+                    if COL_STOCK and COL_CODIGO and _inv_s2 is not None:
+                        _mask_l = _inv_s2[COL_CODIGO].astype(str) == str(_lot_cod)
+                        if _mask_l.any():
+                            _cur_l = pd.to_numeric(_inv_s2.loc[_mask_l, COL_STOCK], errors="coerce").fillna(0)
+                            _inv_s2.loc[_mask_l, COL_STOCK] = (_cur_l + float(_lot_apr)).clip(lower=0)
+                    st.success(
+                        f"Lote {_lot_num} registrado. **{int(_lot_apr):,} u** aprobadas añadidas al inventario y al archivo de movimientos.  \n"
+                        "Descarga los archivos actualizados en la parte superior de esta pestaña."
+                    )
 
                 # Alerta si rechazados > 30% del pedido
                 if _lot_ped > 0 and _lot_rech / _lot_ped > 0.30:
