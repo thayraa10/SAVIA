@@ -1192,7 +1192,7 @@ if formato_hospital:
 # ──────────────────────────────────────────────────────────────────────────────
 tab1, tab2, tab3 = st.tabs([
     "Panel Principal",
-    "Medicamentos",
+    "Seguimiento",
     "Abastecimiento",
 ])
 
