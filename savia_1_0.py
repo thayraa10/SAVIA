@@ -2231,49 +2231,110 @@ with tab2:
             # ── Tabla detalle: lotes con acción requerida (<90 días) ──────────
             _crit_v = _venc_vis[_venc_vis["dias_vencer"] < 90].copy().sort_values("dias_vencer")
             if len(_crit_v) > 0:
-                st.markdown(
-                    f'<div style="font-size:0.82rem;font-weight:700;color:#C53030;'
-                    f'text-transform:uppercase;letter-spacing:0.05em;margin:14px 0 6px 0">'
-                    f'Lotes que requieren atención ({len(_crit_v)} lotes)</div>',
-                    unsafe_allow_html=True,
-                )
+                # Construir columnas base
                 _cv_cols = [_venc_nom]
                 if _venc_lote and _venc_lote in _crit_v.columns:
                     _cv_cols.append(_venc_lote)
                 if _venc_stk and _venc_stk in _crit_v.columns:
                     _cv_cols.append(_venc_stk)
-                _cv_cols.append("dias_vencer")
                 if IL_VENC and IL_VENC in _crit_v.columns and IL_VENC not in _cv_cols:
                     _cv_cols.append(IL_VENC)
+                _cv_cols.append("dias_vencer")
                 _crit_show = _crit_v[[c for c in _cv_cols if c in _crit_v.columns]].copy()
 
-                # Formatear fecha como dd/mm/yyyy
+                # Fecha legible dd/mm/yyyy
                 if IL_VENC and IL_VENC in _crit_show.columns:
                     _crit_show[IL_VENC] = pd.to_datetime(
                         _crit_show[IL_VENC], errors="coerce"
                     ).dt.strftime("%d/%m/%Y").fillna("—")
 
-                _crit_show["Acción recomendada"] = _crit_show["dias_vencer"].apply(
-                    lambda d: "Dar de baja" if d < 0
-                    else "Consumir primero (FEFO)" if d < 15
-                    else "Planificar devolución" if d < 30
-                    else "Monitorear"
+                # Situación en texto natural (reemplaza número crudo)
+                def _dias_legible(d):
+                    d = int(d)
+                    if d < 0:   return f"Vencido hace {abs(d):,} días"
+                    if d == 0:  return "Vence hoy"
+                    if d == 1:  return "Vence mañana"
+                    return f"Vence en {d:,} días"
+
+                _crit_show["Situación"]  = _crit_show["dias_vencer"].apply(_dias_legible)
+                _crit_show["_estado"]    = _crit_show["dias_vencer"].apply(
+                    lambda d: "vencido" if d < 0 else "critico" if d < 15
+                    else "proximo" if d < 30 else "monitorear"
                 )
-                _ren_v = {_venc_nom: "Medicamento", "dias_vencer": "Días restantes"}
-                if _venc_lote:  _ren_v[_venc_lote] = "Lote"
-                if _venc_stk:   _ren_v[_venc_stk]  = "Cant. en lote"
-                if IL_VENC:     _ren_v[IL_VENC]     = "Fecha venc."
+
+                # Renombrar columnas
+                _ren_v = {_venc_nom: "Medicamento", "dias_vencer": "_dias_raw"}
+                if _venc_lote:  _ren_v[_venc_lote] = "Nro. de lote"
+                if _venc_stk:   _ren_v[_venc_stk]  = "Unidades"
+                if IL_VENC:     _ren_v[IL_VENC]     = "Fecha vencimiento"
                 _crit_show = _crit_show.rename(
                     columns={k: v for k, v in _ren_v.items() if k}
                 ).reset_index(drop=True)
-                st.markdown(_ayuda(
-                    "<b>Dar de baja</b>: el lote ya venció, retirarlo del inventario. "
-                    "<b>Consumir primero (FEFO)</b>: quedan menos de 15 días, dispensar antes que otros lotes. "
-                    "<b>Planificar devolución</b>: entre 15 y 30 días, gestionar devolución al proveedor si aplica. "
-                    "<b>Monitorear</b>: entre 30 y 90 días, mantener bajo seguimiento.",
-                    color="#FFF5F5", borde="#C53030"
-                ), unsafe_allow_html=True)
-                st.dataframe(_safe_df(_crit_show), use_container_width=True, hide_index=True, height=320)
+
+                # Orden de columnas: Medicamento | Situación | Nro lote | Unidades | Fecha
+                _col_ord = ["Medicamento", "Situación"]
+                if "Nro. de lote"      in _crit_show.columns: _col_ord.append("Nro. de lote")
+                if "Unidades"          in _crit_show.columns: _col_ord.append("Unidades")
+                if "Fecha vencimiento" in _crit_show.columns: _col_ord.append("Fecha vencimiento")
+                _col_ord += ["_estado"]
+                _crit_show = _crit_show[[c for c in _col_ord if c in _crit_show.columns]]
+
+                # ── 4 secciones por nivel de urgencia ─────────────────────────
+                st.markdown(
+                    '<div style="font-size:0.85rem;font-weight:700;color:#1a202c;margin:18px 0 4px 0">'
+                    'Detalle por lote — ordenado por urgencia</div>',
+                    unsafe_allow_html=True,
+                )
+                _secciones_v = [
+                    ("vencido",    "Vencidos — retirar del inventario",
+                     "#C53030", "#FFF5F5",
+                     "Estos lotes ya superaron su fecha de vencimiento. "
+                     "Deben retirarse del inventario y darse de baja de inmediato para evitar riesgos."),
+                    ("critico",   "Críticos — vencen en menos de 15 días",
+                     "#C05621", "#FFFAF0",
+                     "Menos de 15 días de vida útil restante. "
+                     "Dispensar estos lotes <b>antes que cualquier otro</b> (principio FEFO: primero en vencer, primero en salir)."),
+                    ("proximo",   "Próximos — entre 15 y 30 días",
+                     "#975A16", "#FEFCBF",
+                     "Entre 15 y 30 días hasta el vencimiento. "
+                     "Planificar devolución al proveedor si corresponde, o asegurar su consumo antes de que lleguen a estado crítico."),
+                    ("monitorear","Monitorear — entre 30 y 90 días",
+                     "#276749", "#F0FFF4",
+                     "Entre 1 y 3 meses hasta el vencimiento. "
+                     "No requieren acción urgente, pero deben estar bajo seguimiento para evitar que lleguen a estado crítico sin ser detectados."),
+                ]
+                for _est_k, _sec_tit, _sec_col, _sec_bg, _sec_desc in _secciones_v:
+                    _df_sec = _crit_show[_crit_show["_estado"] == _est_k].drop(
+                        columns=["_estado", "_dias_raw"], errors="ignore"
+                    ).reset_index(drop=True)
+                    if len(_df_sec) == 0:
+                        continue
+                    st.markdown(
+                        f'<div style="background:{_sec_bg};border-left:4px solid {_sec_col};'
+                        f'border-radius:6px;padding:10px 14px;margin:14px 0 6px 0">'
+                        f'<div style="font-size:0.80rem;font-weight:700;color:{_sec_col};'
+                        f'text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">'
+                        f'{_sec_tit} — {len(_df_sec)} lote{"s" if len(_df_sec) != 1 else ""}</div>'
+                        f'<div style="font-size:0.78rem;color:#4A5568;line-height:1.5">'
+                        f'{_sec_desc}</div></div>',
+                        unsafe_allow_html=True,
+                    )
+                    _ccfg_v = {}
+                    if "Medicamento"      in _df_sec.columns:
+                        _ccfg_v["Medicamento"]      = st.column_config.TextColumn("Medicamento", help="Nombre del medicamento o insumo.")
+                    if "Situación"        in _df_sec.columns:
+                        _ccfg_v["Situación"]        = st.column_config.TextColumn("Situación", help="Tiempo transcurrido o restante hasta la fecha de vencimiento.")
+                    if "Nro. de lote"     in _df_sec.columns:
+                        _ccfg_v["Nro. de lote"]     = st.column_config.TextColumn("Nro. de lote", help="Identificador único del lote físico registrado en el inventario.")
+                    if "Unidades"         in _df_sec.columns:
+                        _ccfg_v["Unidades"]         = st.column_config.NumberColumn("Unidades en lote", format="%d u", help="Cantidad de unidades físicas disponibles en este lote específico.")
+                    if "Fecha vencimiento" in _df_sec.columns:
+                        _ccfg_v["Fecha vencimiento"] = st.column_config.TextColumn("Fecha vencimiento", help="Fecha en que expira la vida útil del lote según el fabricante.")
+                    st.dataframe(
+                        _safe_df(_df_sec), use_container_width=True, hide_index=True,
+                        column_config=_ccfg_v,
+                        height=min(420, max(80, len(_df_sec) * 35 + 40)),
+                    )
 
     # ══════════════════════════════════════════════════════════════════════════
     # SUB-TAB 3 — DETALLE POR MEDICAMENTO
