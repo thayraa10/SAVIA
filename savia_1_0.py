@@ -649,6 +649,8 @@ def _store_global():
         "archivos":       [],   # [{nombre, size, cargado_en, responsable, preview, n_productos, mov, inv_extra, inv_directo}]
         "historial":      [],   # [{Fecha, Responsable, Accion, Archivo, Productos}]
         "archivos_bytes": {},   # {nombre: bytes_originales} — para descargar el archivo original + filas nuevas
+        "gd_file_ids":    {},   # {nombre_archivo: file_id_en_drive}
+        "gd_mov_id":      None, # file_id del Excel de movimientos consolidado en Drive
     }
 
 
@@ -781,6 +783,184 @@ def _excel_inv_actualizado() -> tuple:
     _df_inv.to_excel(_buf, index=False, engine="openpyxl")
     _nom_dl = _archivo_inv_nom.replace(".xlsx", f"_SAVIA_{date.today().strftime('%Y%m%d')}.xlsx")
     return _buf.getvalue(), _nom_dl
+
+# ── Google Drive helpers ────────────────────────────────────────────────────────
+@st.cache_resource
+def _gd_service():
+    """Crea y cachea el cliente de Google Drive via service account en st.secrets.
+    Retorna None si las credenciales no están configuradas."""
+    try:
+        from google.oauth2 import service_account
+        from googleapiclient.discovery import build
+        _info  = dict(st.secrets["gcp_service_account"])
+        _creds = service_account.Credentials.from_service_account_info(
+            _info, scopes=["https://www.googleapis.com/auth/drive"]
+        )
+        return build("drive", "v3", credentials=_creds, cache_discovery=False)
+    except Exception:
+        return None
+
+
+def _gd_folder_id():
+    """Retorna el folder_id de Drive desde st.secrets, o None si no existe."""
+    try:
+        return str(st.secrets["google_drive"]["folder_id"])
+    except Exception:
+        return None
+
+
+def _gd_find_file(svc, nombre, folder_id):
+    """Busca un archivo por nombre en la carpeta. Retorna file_id o None."""
+    try:
+        _q   = f"name='{nombre}' and '{folder_id}' in parents and trashed=false"
+        _res = svc.files().list(q=_q, fields="files(id,name)").execute()
+        _fl  = _res.get("files", [])
+        return _fl[0]["id"] if _fl else None
+    except Exception:
+        return None
+
+
+def _gd_list_files(svc, folder_id):
+    """Lista archivos xlsx/csv en la carpeta. Retorna [{id, name, modifiedTime}, ...]."""
+    try:
+        _q = (f"'{folder_id}' in parents and trashed=false and "
+              "(mimeType='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' "
+              "or mimeType='text/csv')")
+        _res = svc.files().list(
+            q=_q, fields="files(id,name,modifiedTime)", orderBy="modifiedTime desc"
+        ).execute()
+        return _res.get("files", [])
+    except Exception:
+        return []
+
+
+def _gd_upload_file(svc, bytes_data, nombre, folder_id, file_id=None):
+    """Sube o actualiza un archivo en Drive. Retorna el file_id resultante o None."""
+    try:
+        from googleapiclient.http import MediaIoBaseUpload
+        _mime  = ("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                  if nombre.lower().endswith(".xlsx") else "text/csv")
+        _media = MediaIoBaseUpload(io.BytesIO(bytes_data), mimetype=_mime, resumable=False)
+        if file_id:
+            _f = svc.files().update(fileId=file_id, media_body=_media, fields="id").execute()
+        else:
+            _meta = {"name": nombre, "parents": [folder_id]}
+            _f    = svc.files().create(body=_meta, media_body=_media, fields="id").execute()
+        return _f.get("id")
+    except Exception:
+        return None
+
+
+def _gd_download_file(svc, file_id):
+    """Descarga un archivo de Drive. Retorna bytes o None."""
+    try:
+        from googleapiclient.http import MediaIoBaseDownload
+        _req  = svc.files().get_media(fileId=file_id)
+        _buf  = io.BytesIO()
+        _dl   = MediaIoBaseDownload(_buf, _req)
+        _done = False
+        while not _done:
+            _, _done = _dl.next_chunk()
+        return _buf.getvalue()
+    except Exception:
+        return None
+
+
+def _gd_guardar_original(nombre, bytes_data):
+    """Guarda los bytes originales de un archivo en Drive. Retorna (ok, msg)."""
+    _svc = _gd_service()
+    _fid = _gd_folder_id()
+    if not _svc or not _fid:
+        return False, "Drive no configurado"
+    try:
+        _store  = _store_global()
+        _ids    = _store.setdefault("gd_file_ids", {})
+        _old_id = _ids.get(nombre) or _gd_find_file(_svc, nombre, _fid)
+        _new_id = _gd_upload_file(_svc, bytes_data, nombre, _fid, _old_id)
+        if _new_id:
+            _ids[nombre] = _new_id
+            return True, f"'{nombre}' guardado en Drive"
+        return False, f"Error al subir '{nombre}'"
+    except Exception as _e:
+        return False, str(_e)
+
+
+def _gd_guardar_movimientos():
+    """Guarda el Excel de movimientos consolidados en Drive. Retorna (ok, msg)."""
+    _svc = _gd_service()
+    _fid = _gd_folder_id()
+    if not _svc or not _fid:
+        return False, "Drive no configurado"
+    try:
+        _store       = _store_global()
+        _mov_b, _    = _excel_mov_actualizado(_store.get("movimientos", []))
+        _drive_nom   = "SAVIA_movimientos.xlsx"
+        _old_id      = _store.get("gd_mov_id") or _gd_find_file(_svc, _drive_nom, _fid)
+        _new_id      = _gd_upload_file(_svc, _mov_b, _drive_nom, _fid, _old_id)
+        if _new_id:
+            _store["gd_mov_id"] = _new_id
+            return True, "Movimientos guardados en Drive"
+        return False, "Error al guardar movimientos en Drive"
+    except Exception as _e:
+        return False, str(_e)
+
+
+def _gd_cargar_desde_drive():
+    """Descarga y procesa todos los archivos de la carpeta Drive.
+    Retorna (n_cargados, mensaje)."""
+    _svc = _gd_service()
+    _fid = _gd_folder_id()
+    if not _svc or not _fid:
+        return 0, "Drive no configurado"
+    _files = _gd_list_files(_svc, _fid)
+    if not _files:
+        return 0, "No hay archivos en la carpeta de Drive"
+    _s_gd    = _store_global()
+    _ya_gd   = {a["nombre"] for a in _s_gd["archivos"]}
+    _cargados = 0
+    _tz_gd   = pytz.timezone("America/Santiago")
+    _ahora_gd = pd.Timestamp.now(tz=_tz_gd).strftime("%Y-%m-%d %H:%M")
+    _resp_gd  = _s_gd.get("responsable", "") or "Google Drive"
+    for _gdf in _files:
+        _nom_gd = _gdf["name"]
+        if _nom_gd == "SAVIA_movimientos.xlsx":   # archivo interno — no reprocesar
+            continue
+        if _nom_gd in _ya_gd:                     # ya cargado
+            continue
+        _bytes_gd = _gd_download_file(_svc, _gdf["id"])
+        if _bytes_gd is None:
+            continue
+        _rec_gd = _parsear_archivo(_nom_gd, _bytes_gd)
+        if _rec_gd is None:
+            continue
+        if len(_bytes_gd) <= 5 * 1024 * 1024:
+            _s_gd.setdefault("archivos_bytes", {})[_nom_gd] = _bytes_gd
+        _s_gd.setdefault("gd_file_ids", {})[_nom_gd] = _gdf["id"]
+        _s_gd["archivos"].append({
+            "nombre":      _nom_gd,
+            "size":        len(_bytes_gd),
+            "mov":         _rec_gd["mov"],
+            "inv_extra":   _rec_gd["inv_extra"],
+            "inv_directo": _rec_gd["inv_directo"],
+            "cargado_en":  _ahora_gd,
+            "responsable": _resp_gd,
+            "preview":     _rec_gd["preview"],
+            "n_productos": _rec_gd["n_productos"],
+        })
+        _s_gd["historial"].append({
+            "Fecha":       _ahora_gd,
+            "Responsable": _resp_gd,
+            "Accion":      "Carga desde Drive",
+            "Archivo":     _nom_gd,
+            "Productos":   _rec_gd["n_productos"],
+        })
+        _ya_gd.add(_nom_gd)
+        _cargados += 1
+    if _cargados:
+        _recompute()
+    return _cargados, (f"{_cargados} archivo(s) cargado(s) correctamente desde Drive."
+                       if _cargados else "No hay archivos nuevos para cargar.")
+
 
 def _df_a_preview(df):
     """Convierte un DataFrame de hasta 8 filas a lista de dicts con tipos básicos.
@@ -1004,6 +1184,10 @@ with st.sidebar:
         _recompute()
         if _n_ok:
             st.success(f"{_n_ok} archivo(s) procesado(s) correctamente.")
+            # Auto-guardar en Google Drive si está configurado
+            if _gd_service() and _gd_folder_id():
+                for _nom_ag, _bytes_ag in _s.get("archivos_bytes", {}).items():
+                    _gd_guardar_original(_nom_ag, _bytes_ag)
         else:
             st.error("No se pudo procesar ningún archivo. Verifica el formato.")
 
@@ -1083,6 +1267,61 @@ with st.sidebar.expander("Alertas automáticas (Make.com)", expanded=False):
     if _wh_input != _wh_stored:
         _store_global()["webhook_url"] = _wh_input.strip()
 
+# ── Google Drive (persistencia de datos entre sesiones) ───────────────────────
+with st.sidebar.expander("Google Drive (persistencia)", expanded=False):
+    _gd_svc_sb  = _gd_service()
+    _gd_fid_sb  = _gd_folder_id()
+    _gd_conn_sb = (_gd_svc_sb is not None) and (_gd_fid_sb is not None)
+
+    if not _gd_conn_sb:
+        st.caption(
+            "Sin credenciales configuradas. "
+            "Agrega `gcp_service_account` y `google_drive.folder_id` "
+            "en `.streamlit/secrets.toml` para activar la persistencia automática."
+        )
+    else:
+        st.success("✅ Conectado a Google Drive")
+        _gd_files_sb = _gd_list_files(_gd_svc_sb, _gd_fid_sb)
+
+        # Mostrar archivos en Drive
+        if _gd_files_sb:
+            _nombres_gd = [f for f in _gd_files_sb if f["name"] != "SAVIA_movimientos.xlsx"]
+            if _nombres_gd:
+                st.caption(f"Archivos en Drive ({len(_nombres_gd)}):")
+                for _gdf_sb in _nombres_gd[:6]:
+                    _ts_sb = _gdf_sb.get("modifiedTime", "")[:10]
+                    st.caption(f"  📄 {_gdf_sb['name']}  ·  {_ts_sb}")
+                if len(_nombres_gd) > 6:
+                    st.caption(f"  … y {len(_nombres_gd) - 6} más")
+            else:
+                st.caption("No hay archivos de datos en Drive aún.")
+        else:
+            st.caption("La carpeta de Drive está vacía.")
+
+        # Botón: cargar desde Drive
+        if st.button("⬇ Cargar desde Drive", key="gd_load_btn", use_container_width=True):
+            with st.spinner("Descargando desde Drive…"):
+                _n_gd, _msg_gd = _gd_cargar_desde_drive()
+            if _n_gd:
+                st.success(_msg_gd)
+                st.rerun()
+            else:
+                st.info(_msg_gd)
+
+        # Botón: guardar manualmente en Drive
+        if st.button("⬆ Guardar en Drive ahora", key="gd_save_btn", use_container_width=True):
+            _s_gd_sb = _store_global()
+            _saved_gd = 0
+            with st.spinner("Subiendo archivos a Drive…"):
+                for _n_gd_sb, _b_gd_sb in _s_gd_sb.get("archivos_bytes", {}).items():
+                    _ok_gd_sb, _ = _gd_guardar_original(_n_gd_sb, _b_gd_sb)
+                    if _ok_gd_sb:
+                        _saved_gd += 1
+            if _saved_gd:
+                st.success(f"✓ {_saved_gd} archivo(s) guardado(s) en Drive.")
+            else:
+                st.info("No hay archivos para guardar (carga datos primero).")
+
 # ──────────────────────────────────────────────────────────────────────────────
 # CARGA DE DATOS (función auxiliar para ejemplo)
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1094,6 +1333,31 @@ def cargar_ejemplo():
 
 _g = _store_global()
 if _g["inv"] is None:
+    # ── Opción de cargar desde Google Drive antes de pedir subida manual ──
+    _gd_svc_main = _gd_service()
+    _gd_fid_main = _gd_folder_id()
+    if _gd_svc_main and _gd_fid_main:
+        _gd_fl_main = _gd_list_files(_gd_svc_main, _gd_fid_main)
+        _gd_fl_data = [f for f in _gd_fl_main if f["name"] != "SAVIA_movimientos.xlsx"]
+        if _gd_fl_data:
+            st.info(
+                f"Se encontraron **{len(_gd_fl_data)} archivo(s)** guardados en Google Drive. "
+                "¿Deseas cargarlos automáticamente?"
+            )
+            _col_gd1, _col_gd2 = st.columns(2)
+            with _col_gd1:
+                if st.button("Cargar desde Drive", type="primary", use_container_width=True, key="gd_autoload"):
+                    with st.spinner("Descargando desde Drive…"):
+                        _n_gd_main, _msg_gd_main = _gd_cargar_desde_drive()
+                    if _n_gd_main:
+                        st.success(_msg_gd_main)
+                        st.rerun()
+                    else:
+                        st.warning(_msg_gd_main)
+            with _col_gd2:
+                if st.button("Subir archivo nuevo", use_container_width=True, key="gd_skip"):
+                    st.info("Usa el panel izquierdo para subir tus archivos.")
+            st.stop()
     st.info("Sube un archivo en el panel izquierdo")
     st.stop()
 
@@ -2910,6 +3174,9 @@ with tab3:
                 f"Movimiento registrado: **{_mv_tipo}** de **{_mv_cant_calc:,} u** de {_mv_med}  \n"
                 f"Stock en inventario actualizado ({_inv_delta_txt} u). Descarga los archivos actualizados arriba."
             )
+            # Auto-guardar movimientos en Google Drive si está configurado
+            if _gd_service() and _gd_folder_id():
+                _gd_guardar_movimientos()
 
             # ── Verificar si el stock ajustado cae bajo el punto de reorden ──
             _mv_row = resumen[resumen[COL_NOMBRE] == _mv_med]
