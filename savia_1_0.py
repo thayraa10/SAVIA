@@ -1323,7 +1323,7 @@ with tab1:
     st.markdown(_ayuda(
         "<b>Semáforo de cobertura</b> — Cada círculo muestra cuántos medicamentos se encuentran en ese estado. "
         "<b>Rojo</b> = sin existencias o vencidos (acción inmediata). "
-        "<b>Naranja</b> = cobertura crítica, menos de 1 mes de stock. "
+        "<b>Naranja</b> = cobertura crítica, menos de 1 mes de existencias. "
         "<b>Amarillo</b> = cobertura baja, entre 1 y 3 meses. "
         "<b>Verde</b> = cobertura adecuada, más de 3 meses."
     ), unsafe_allow_html=True)
@@ -1399,7 +1399,7 @@ with tab1:
 
         # Selector de estado (con "Todos")
         _opts = ["Todos"] + _cats_d
-        _sel  = st.radio("Cobertura de stock — filtrar por estado:",
+        _sel  = st.radio("Cobertura de existencias — filtrar por estado:",
                          _opts, horizontal=True, key="donut_filter")
 
         # Donut con slice resaltado
@@ -1458,7 +1458,7 @@ with tab1:
                     "stock_total": "Existencias", "min_dias_vencer": "Días p/Vencer",
                     "ALCANCE": "Cobertura (meses)",
                 }).reset_index(drop=True)
-                st.caption("Productos sin stock / más urgentes")
+                st.caption("Productos sin existencias / más urgentes")
                 st.dataframe(_safe_df(_urg_show), use_container_width=True, hide_index=True, height=220)
 
     with _col_R:
@@ -1551,7 +1551,7 @@ with tab1:
                              "VENCIDO": 0, "CRITICO": 1, "ADVERTENCIA": 2, "NORMAL": 3}
                 _vc_df["_ord"] = _vc_df["Estado"].map(_vc_orden).fillna(9)
                 _vc_df = _vc_df.sort_values("_ord").reset_index(drop=True)
-                _vc_title = "Unidades en stock por estado"
+                _vc_title = "Unidades en existencias por estado"
                 _vc_fmt   = [f"{int(v):,}" for v in _vc_df["Valor"]]
                 _vc_hover = "<b>%{x}</b><br>%{y:,} unidades<extra></extra>"
 
@@ -1684,7 +1684,7 @@ with tab1:
 # ══════════════════════════════════════════════════════════════════════════════
 with tab2:
     _t2_bod, _t2_inv, _t2_venc, _t2_det = st.tabs([
-        "Stock y Bodega",
+        "Existencias por Bodega",
         "Inventario",
         "Vencimientos",
         "Detalle por Medicamento",
@@ -1704,19 +1704,19 @@ with tab2:
                 'Datos de bodegas no disponibles</div>'
                 '<div style="font-size:0.83rem;color:#2C5282;line-height:1.6">'
                 'Carga el <strong>Programa de compras</strong> para ver la distribución '
-                'de stock por bodega y el diagrama de red.<br>'
+                'de existencias por bodega y el diagrama de red.<br>'
                 'El archivo debe contener columnas <code>EXIST.&lt;BODEGA&gt;</code> para cada bodega.'
                 '</div></div>',
                 unsafe_allow_html=True,
             )
         else:
             st.markdown(_ayuda(
-                "<b>Diagrama de red de bodegas</b> — Muestra cómo está distribuido el stock físico entre las distintas bodegas del establecimiento. "
-                "El nodo <b>central</b> corresponde a la bodega con mayor stock total. Los nodos <b>periféricos</b> son las demás bodegas. "
-                "El <b>color</b> indica el nivel de stock relativo: <span style='color:#38A169'><b>verde</b></span> = stock alto, "
+                "<b>Diagrama de red de bodegas</b> — Muestra cómo están distribuidas las existencias físicas entre las distintas bodegas del establecimiento. "
+                "El nodo <b>central</b> corresponde a la bodega con mayor volumen de existencias. Los nodos <b>periféricos</b> son las demás bodegas. "
+                "El <b>color</b> indica el nivel de existencias relativo: <span style='color:#38A169'><b>verde</b></span> = existencias altas, "
                 "<span style='color:#D69E2E'><b>amarillo</b></span> = medio, "
                 "<span style='color:#DD6B20'><b>naranja</b></span> = bajo, "
-                "<span style='color:#E53E3E'><b>rojo</b></span> = sin stock. "
+                "<span style='color:#E53E3E'><b>rojo</b></span> = sin existencias. "
                 "Usa el filtro para ver la distribucion de un medicamento especifico."
             ), unsafe_allow_html=True)
             # ── Filtro por medicamento ────────────────────────────────────────
@@ -1754,7 +1754,7 @@ with tab2:
             _bd_col_info.markdown(
                 f'<div style="background:white;border-radius:8px;padding:10px 14px;margin-top:24px;'
                 f'box-shadow:0 1px 3px rgba(0,0,0,0.07)">'
-                f'<div style="font-size:0.60rem;color:#94a3b8;font-weight:600;text-transform:uppercase">Unidades totales en stock</div>'
+                f'<div style="font-size:0.60rem;color:#94a3b8;font-weight:600;text-transform:uppercase">Unidades totales en existencia</div>'
                 f'<div style="font-size:1.15rem;font-weight:800;color:#0f172a">{int(_bd_total):,} u</div>'
                 f'<div style="font-size:0.75rem;color:#64748b">{len(_bod_cols)} bodegas · {len(resumen):,} medicamentos</div>'
                 f'</div>',
@@ -1845,9 +1845,9 @@ with tab2:
                 ))
 
             _bd_titulo = (
-                f"Distribución de stock — {_bd_sel}"
+                f"Distribución de existencias — {_bd_sel}"
                 if _bd_mode == "med"
-                else "Distribución de stock por bodega (todos los productos)"
+                else "Distribución de existencias por bodega (todos los productos)"
             )
             _bd_fig.update_layout(
                 title=dict(text=_bd_titulo, font=dict(size=13, color="#0f172a")),
@@ -1859,7 +1859,7 @@ with tab2:
                 paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
             )
             st.plotly_chart(_bd_fig, use_container_width=True)
-            st.caption("Pasa el cursor sobre cada nodo para ver el nombre de la bodega, las unidades en stock y su participacion porcentual sobre el total.")
+            st.caption("Pasa el cursor sobre cada nodo para ver el nombre de la bodega, las unidades en existencia y su participacion porcentual sobre el total.")
 
             # ── Tabla de detalle por bodega ───────────────────────────────────
             st.markdown(
@@ -1896,7 +1896,7 @@ with tab2:
 
                 st.markdown(
                     f'<div style="font-size:0.80rem;color:#64748b;margin-bottom:6px">'
-                    f'<b>{len(_bd_show):,}</b> productos con stock en <b>{_bd_det_sel}</b></div>',
+                    f'<b>{len(_bd_show):,}</b> productos con existencias en <b>{_bd_det_sel}</b></div>',
                     unsafe_allow_html=True,
                 )
                 st.dataframe(_safe_df(_bd_show), use_container_width=True, hide_index=True, height=320)
@@ -1906,9 +1906,9 @@ with tab2:
     # ══════════════════════════════════════════════════════════════════════════
     with _t2_inv:
         st.markdown(_ayuda(
-            "<b>Tabla de inventario</b> — Lista completa de medicamentos con su stock actual, cobertura estimada y prioridad de reposicion. "
+            "<b>Tabla de inventario</b> — Lista completa de medicamentos con sus existencias actuales, cobertura estimada y prioridad de reposicion. "
             "La tabla esta ordenada por <b>urgencia</b>: primero aparecen los productos sin existencias, luego los criticos, y al final los que estan bien abastecidos. "
-            "<b>Cobertura (meses)</b>: tiempo estimado que dura el stock actual al ritmo de consumo historico. "
+            "<b>Cobertura (meses)</b>: tiempo estimado que duran las existencias actuales al ritmo de consumo historico. "
             "<b>Cant. sugerida</b>: unidades recomendadas a pedir segun el modelo de inventario configurado. "
             "Usa el buscador y el filtro de estado para enfocarte en productos especificos."
         ), unsafe_allow_html=True)
@@ -2342,7 +2342,7 @@ with tab2:
     with _t2_det:
         st.markdown(_ayuda(
             "<b>Ficha completa de medicamento</b> — Selecciona cualquier producto para ver todos sus indicadores en detalle. "
-            "El <b>termometro (gauge)</b> muestra visualmente si el stock esta en zona critica (rojo), de alerta (naranja) o adecuada (verde) respecto a los stocks minimo y maximo definidos. "
+            "El <b>termometro (gauge)</b> muestra visualmente si las existencias están en zona critica (rojo), de alerta (naranja) o adecuada (verde) respecto a las existencias minimas y maximas definidas. "
             "La <b>tabla de informacion</b> resume parametros operativos como existencias minimas, maximas y criticas. "
             "El <b>historial mensual</b> permite identificar estacionalidad o tendencias de consumo. "
             "El buscador filtra el listado en tiempo real; el dropdown muestra primero los medicamentos de mayor consumo."
@@ -2411,7 +2411,7 @@ with tab2:
                         _gsteps.append({"range": [_d_scrit, _d_smin], "color": "#FEEBC8"})
                     _gsteps.append({"range": [_d_smin, _gmax], "color": "#C6F6D5"})
                     _gval   = _d_stk
-                    _gtitle = "Nivel de stock (unidades)"
+                    _gtitle = "Nivel de existencias (unidades)"
                     _gsufx  = " u"
                     _gthr   = {"line": {"color": "#DD6B20", "width": 4}, "thickness": 0.75, "value": _d_smin}
                 else:
@@ -2448,7 +2448,7 @@ with tab2:
                 )
                 st.plotly_chart(_fig_g, use_container_width=True)
                 if _d_smax > 0 and _d_smin > 0:
-                    st.caption(f"Zona roja: stock ≤ {int(_d_scrit)} u (critico). Zona naranja: entre {int(_d_scrit)} y {int(_d_smin)} u (por debajo del minimo). Zona verde: sobre {int(_d_smin)} u (adecuado). La marca naranja indica el stock minimo requerido.")
+                    st.caption(f"Zona roja: existencias ≤ {int(_d_scrit)} u (critico). Zona naranja: entre {int(_d_scrit)} y {int(_d_smin)} u (por debajo del minimo). Zona verde: sobre {int(_d_smin)} u (adecuado). La marca naranja indica las existencias minimas requeridas.")
                 else:
                     st.caption("Zona roja: cobertura ≤ 1 mes. Zona naranja: 1-3 meses. Zona verde: >3 meses. La marca naranja indica el umbral de 3 meses recomendado.")
 
@@ -2546,10 +2546,10 @@ with tab2:
 with tab3:
     st.markdown(_ayuda(
         "<b>Modulo de Abastecimiento</b> — Calcula automaticamente las politicas optimas de reposicion para cada medicamento, basandose en el historial de consumo y los parametros configurados en el panel lateral. "
-        "<b>Punto de reorden (s)</b>: nivel de stock al que se debe emitir un nuevo pedido para no quedarse sin existencias durante el tiempo de entrega. "
+        "<b>Punto de reorden (s)</b>: nivel de existencias al que se debe emitir un nuevo pedido para no quedarse sin existencias durante el tiempo de entrega. "
         "<b>Cantidad a pedir (EOQ)</b>: cantidad economicamente optima que minimiza la suma de costos de ordenar y de mantener inventario. "
-        "<b>Reserva de seguridad (SS)</b>: stock extra para absorber variaciones inesperadas en la demanda o en el tiempo de entrega. "
-        "<b>Nivel maximo (S)</b>: techo de inventario para evitar sobrestock. "
+        "<b>Reserva de seguridad (SS)</b>: existencias extra para absorber variaciones inesperadas en la demanda o en el tiempo de entrega. "
+        "<b>Nivel maximo (S)</b>: techo de inventario para evitar exceso de existencias. "
         "La tabla esta ordenada por urgencia: primero los productos que requieren accion inmediata."
     ), unsafe_allow_html=True)
     if not tiene_movimientos:
@@ -2598,9 +2598,9 @@ with tab3:
 
             NOMBRES = {"(R,s,Q)": "Cantidad fija", "(R,S)": "Reponer hasta el máximo", "(R,s,S)": "Variable hasta el máximo"}
             DESCRIPCION = {
-                "(R,s,Q)": "Si el stock está bajo, pide siempre la misma cantidad fija.",
-                "(R,S)":   "Pide lo necesario para llegar al nivel máximo.",
-                "(R,s,S)": "Si el stock está bajo, pide lo necesario para llegar al máximo.",
+                "(R,s,Q)": "Si las existencias están bajas, pide siempre la misma cantidad fija.",
+                "(R,S)":   "Pide lo necesario para llegar al nivel máximo de existencias.",
+                "(R,s,S)": "Si las existencias están bajas, pide lo necesario para llegar al máximo.",
             }
 
             # ── SECCIÓN 1: tabla de políticas ──────────────────────────────────
