@@ -2711,6 +2711,22 @@ with tab3:
                 "Responsable":  _smv.get("responsable", "sin especificar"),
                 "_ts":          pd.Timestamp.now().isoformat(),
             })
+
+            # ── Añadir al DataFrame del archivo de movimientos cargado ─────
+            if tiene_movimientos and _store_global()["mov"] is not None:
+                _mov_new = {col: None for col in _store_global()["mov"].columns}
+                if COL_MOV_CODIGO:   _mov_new[COL_MOV_CODIGO]   = _mv_cod
+                if COL_MOV_FECHA:    _mov_new[COL_MOV_FECHA]     = pd.Timestamp(_mv_fecha)
+                if COL_MOV_CANTIDAD: _mov_new[COL_MOV_CANTIDAD]  = float(_mv_cant_calc)
+                # Columnas extra marcadas con _SAVIA para que sea fácil identificar lo nuevo
+                _mov_new["Tipo_SAVIA"]         = _mv_tipo
+                _mov_new["Bodega_SAVIA"]        = _mv_bod
+                _mov_new["Observaciones_SAVIA"] = _mv_obs_txt
+                _mov_new["Responsable_SAVIA"]   = _smv.get("responsable", "")
+                _store_global()["mov"] = pd.concat(
+                    [_store_global()["mov"], pd.DataFrame([_mov_new])],
+                    ignore_index=True,
+                )
             st.success(f"Movimiento registrado: **{_mv_tipo}** de **{_mv_cant_calc:,} u** de {_mv_med}")
 
             # ── Verificar si el stock ajustado cae bajo el punto de reorden ──
@@ -2882,8 +2898,9 @@ with tab3:
                     "_ts":               pd.Timestamp.now().isoformat(),
                 })
 
-                # Si hay unidades aprobadas, registrar una entrada de movimiento
+                # Si hay unidades aprobadas, registrar entrada en movimientos
                 if _lot_apr > 0:
+                    _lot_obs_txt = f"Entrada desde lote {_lot_num.strip()} (OC: {_lot_oc or '—'})"
                     _smv["movimientos"].append({
                         "Fecha":         _lot_flleg.strftime("%d/%m/%Y"),
                         "Medicamento":   _lot_med,
@@ -2891,11 +2908,25 @@ with tab3:
                         "Tipo":          "Entrada",
                         "Cantidad":      int(_lot_apr),
                         "Bodega":        _bods_disponibles[0] if _bods_disponibles else "Bodega Central",
-                        "Observaciones": f"Entrada automática desde lote {_lot_num.strip()} (OC: {_lot_oc or '—'})",
+                        "Observaciones": _lot_obs_txt,
                         "Responsable":   _smv.get("responsable", "sin especificar"),
                         "_ts":           pd.Timestamp.now().isoformat(),
                     })
-                    st.success(f"Lote {_lot_num} registrado. Se generó una entrada de **{int(_lot_apr):,} u** aprobadas.")
+                    # Añadir también al archivo de movimientos cargado
+                    if tiene_movimientos and _store_global()["mov"] is not None:
+                        _lot_mov_new = {col: None for col in _store_global()["mov"].columns}
+                        if COL_MOV_CODIGO:   _lot_mov_new[COL_MOV_CODIGO]   = _lot_cod
+                        if COL_MOV_FECHA:    _lot_mov_new[COL_MOV_FECHA]     = pd.Timestamp(_lot_flleg)
+                        if COL_MOV_CANTIDAD: _lot_mov_new[COL_MOV_CANTIDAD]  = float(_lot_apr)
+                        _lot_mov_new["Tipo_SAVIA"]         = "Entrada"
+                        _lot_mov_new["Bodega_SAVIA"]        = _bods_disponibles[0] if _bods_disponibles else "Bodega Central"
+                        _lot_mov_new["Observaciones_SAVIA"] = _lot_obs_txt
+                        _lot_mov_new["Responsable_SAVIA"]   = _smv.get("responsable", "")
+                        _store_global()["mov"] = pd.concat(
+                            [_store_global()["mov"], pd.DataFrame([_lot_mov_new])],
+                            ignore_index=True,
+                        )
+                    st.success(f"Lote {_lot_num} registrado. Se añadieron **{int(_lot_apr):,} u** aprobadas al archivo de movimientos.")
 
                 # Alerta si rechazados > 30% del pedido
                 if _lot_ped > 0 and _lot_rech / _lot_ped > 0.30:
@@ -3053,14 +3084,22 @@ with tab3:
                 height=min(500, max(120, len(_df_fil) * 35 + 40)),
             )
 
-            # Botón exportar Excel
+            # Botón exportar — usa el archivo cargado + nuevas filas (filtrado)
             _buf_xls = io.BytesIO()
-            _df_fil[_MOV_COLS].to_excel(_buf_xls, index=False, engine="openpyxl")
+            _mov_full = _store_global().get("mov")
+            if _mov_full is not None and len(_mov_full) > 0:
+                # Exportar el archivo completo actualizado (no solo el filtro de sesión)
+                _mov_full.to_excel(_buf_xls, index=False, engine="openpyxl")
+                _xls_label = f"Descargar archivo de movimientos completo (.xlsx) — {len(_mov_full):,} filas"
+            else:
+                _df_fil[_MOV_COLS].to_excel(_buf_xls, index=False, engine="openpyxl")
+                _xls_label = "Descargar movimientos de la sesión (.xlsx)"
             st.download_button(
-                label="Descargar historial filtrado (.xlsx)",
+                label=_xls_label,
                 data=_buf_xls.getvalue(),
                 file_name=f"movimientos_SAVIA_{date.today().strftime('%Y%m%d')}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                help="Archivo de movimientos original con todas las filas nuevas añadidas al final.",
             )
 
     # ══════════════════════════════════════════════════════════════════════
@@ -3157,53 +3196,57 @@ with tab3:
                 st.success("Cambios aplicados correctamente. Recargando...")
             st.rerun()
 
-        # ── Descargas ──────────────────────────────────────────────────────
+        # ── Descargas — siempre son el archivo cargado + lo nuevo añadido ─
         st.markdown("---")
         st.markdown("#### Exportar datos")
+        st.caption(
+            "Cada descarga incluye los datos **originales del archivo que cargaste** más todo lo que agregaste o modificaste en esta sesión. "
+            "No son archivos separados — es el mismo archivo actualizado."
+        )
         _dl1, _dl2, _dl3 = st.columns(3)
 
-        # 1. Inventario actualizado
+        # 1. Inventario actualizado (con ediciones y eliminaciones aplicadas)
         _buf_inv_dl = io.BytesIO()
-        datos_inventario.to_excel(_buf_inv_dl, index=False, engine="openpyxl")
+        _store_global()["inv"].to_excel(_buf_inv_dl, index=False, engine="openpyxl")
         _dl1.download_button(
             label="Inventario actualizado (.xlsx)",
             data=_buf_inv_dl.getvalue(),
             file_name=f"inventario_SAVIA_{date.today().strftime('%Y%m%d')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True,
-            help="Descarga el inventario con todos los cambios aplicados en esta sesión.",
+            help="El archivo de inventario original más todas las ediciones y eliminaciones aplicadas en esta sesión.",
         )
 
-        # 2. Movimientos registrados
-        if _smv["movimientos"]:
+        # 2. Movimientos: archivo original + filas nuevas registradas
+        _mov_store = _store_global().get("mov")
+        if _mov_store is not None and len(_mov_store) > 0:
             _buf_mv_dl = io.BytesIO()
-            pd.DataFrame(_smv["movimientos"]).drop(columns=["_ts"], errors="ignore")[_MOV_COLS].to_excel(
-                _buf_mv_dl, index=False, engine="openpyxl"
-            )
+            _mov_store.to_excel(_buf_mv_dl, index=False, engine="openpyxl")
+            _n_nuevos = len(_smv["movimientos"])
             _dl2.download_button(
-                label="Movimientos registrados (.xlsx)",
+                label=f"Movimientos (.xlsx){f' +{_n_nuevos} nuevos' if _n_nuevos else ''}",
                 data=_buf_mv_dl.getvalue(),
                 file_name=f"movimientos_SAVIA_{date.today().strftime('%Y%m%d')}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 use_container_width=True,
-                help="Historial completo de movimientos registrados en esta sesión.",
+                help=f"El archivo de movimientos original con {_n_nuevos} fila(s) nueva(s) añadida(s) al final. Las columnas '_SAVIA' identifican las filas nuevas.",
             )
         else:
-            _dl2.info("Sin movimientos aún")
+            _dl2.info("Sin archivo de movimientos cargado")
 
-        # 3. Lotes registrados
+        # 3. Lotes registrados en sesión
         if _smv["lotes_oc"]:
             _buf_lot_dl = io.BytesIO()
             pd.DataFrame(_smv["lotes_oc"]).drop(columns=["_ts","Código"], errors="ignore").to_excel(
                 _buf_lot_dl, index=False, engine="openpyxl"
             )
             _dl3.download_button(
-                label="Lotes registrados (.xlsx)",
+                label=f"Lotes registrados (.xlsx)",
                 data=_buf_lot_dl.getvalue(),
                 file_name=f"lotes_SAVIA_{date.today().strftime('%Y%m%d')}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 use_container_width=True,
-                help="Registro de todos los lotes ingresados en esta sesión.",
+                help="Registro de control de calidad de todos los lotes ingresados en esta sesión.",
             )
         else:
             _dl3.info("Sin lotes aún")
