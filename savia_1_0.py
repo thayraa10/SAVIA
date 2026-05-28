@@ -646,8 +646,9 @@ def _store_global():
         "inv_lotes": None,   # DataFrame con lotes+vencimientos del archivo Inventario estándar
         "costo_orden": 40000, "costo_mantener": 10, "lead_time": 7, "periodo_revision": 7,
         "fecha_revision": date.today(), "hora_revision": None, "responsable": "",
-        "archivos":  [],  # [{nombre, size, cargado_en, responsable, preview, n_productos, mov, inv_extra, inv_directo}]
-        "historial": [],  # [{Fecha, Responsable, Accion, Archivo, Productos}]
+        "archivos":       [],   # [{nombre, size, cargado_en, responsable, preview, n_productos, mov, inv_extra, inv_directo}]
+        "historial":      [],   # [{Fecha, Responsable, Accion, Archivo, Productos}]
+        "archivos_bytes": {},   # {nombre: bytes_originales} — para descargar el archivo original + filas nuevas
     }
 
 
@@ -660,6 +661,126 @@ def _guardar_params(fecha, hora, resp, c_orden, c_mant, lt, pr):
     store["costo_mantener"]   = c_mant
     store["lead_time"]        = lt
     store["periodo_revision"] = pr
+
+
+def _excel_mov_actualizado(nuevos_movs: list) -> tuple:
+    """Devuelve (bytes_excel, nombre_archivo) del archivo de movimientos original
+    con las filas nuevas añadidas al final en el mismo formato del archivo cargado."""
+    _bytes_map = _store_global().get("archivos_bytes", {})
+
+    # Buscar el archivo de pedidos/movimientos (el que tiene columnas tipo F_PEDIDO, MATCODIGO, etc.)
+    _archivo_mov_bytes = None
+    _archivo_mov_nom   = None
+    for _nom, _bts in _bytes_map.items():
+        try:
+            _df_test = pd.read_excel(io.BytesIO(_bts), nrows=1)
+            _cols_l  = [str(c).lower() for c in _df_test.columns]
+            if any("pedido" in c or "despacho" in c or "dispensad" in c or "matcod" in c for c in _cols_l):
+                _archivo_mov_bytes = _bts
+                _archivo_mov_nom   = _nom
+                break
+        except Exception:
+            continue
+
+    if _archivo_mov_bytes is None:
+        # Fallback: exportar solo los movimientos manuales como Excel simple
+        _buf = io.BytesIO()
+        pd.DataFrame(nuevos_movs).drop(columns=["_ts"], errors="ignore").to_excel(_buf, index=False, engine="openpyxl")
+        return _buf.getvalue(), f"movimientos_SAVIA_{date.today().strftime('%Y%m%d')}.xlsx"
+
+    # Leer archivo original completo
+    _df_orig = pd.read_excel(io.BytesIO(_archivo_mov_bytes))
+
+    # Detectar columnas clave del archivo original
+    def _find_col(df, keywords):
+        for c in df.columns:
+            if any(k in str(c).lower() for k in keywords):
+                return c
+        return None
+
+    _c_cod  = _find_col(_df_orig, ["matcod", "codigo", "cod_mat"])
+    _c_nom  = _find_col(_df_orig, ["matnombre", "nombre", "material", "medicamento"])
+    _c_fpd  = _find_col(_df_orig, ["f_pedido", "fecha_pedido", "fecha"])
+    _c_cant = _find_col(_df_orig, ["cant_despachada", "despachada", "dispensada", "cantidad"])
+    _c_bod  = _find_col(_df_orig, ["bod", "destino", "bodega"])
+
+    # Construir filas nuevas en el formato original
+    _filas_nuevas = []
+    for _m in nuevos_movs:
+        _row = {c: None for c in _df_orig.columns}
+        if _c_cod:  _row[_c_cod]  = _m.get("Código", "")
+        if _c_nom:  _row[_c_nom]  = _m.get("Medicamento", "")
+        if _c_fpd:  _row[_c_fpd]  = _m.get("Fecha", "")
+        if _c_cant: _row[_c_cant] = _m.get("Cantidad", 0)
+        if _c_bod:  _row[_c_bod]  = _m.get("Bodega", "")
+        # Columnas extra para identificar lo añadido desde SAVIA
+        _row["Tipo_SAVIA"]         = _m.get("Tipo", "")
+        _row["Responsable_SAVIA"]  = _m.get("Responsable", "")
+        _row["Obs_SAVIA"]          = _m.get("Observaciones", "")
+        _filas_nuevas.append(_row)
+
+    _df_final = pd.concat([_df_orig, pd.DataFrame(_filas_nuevas)], ignore_index=True) if _filas_nuevas else _df_orig
+
+    _buf = io.BytesIO()
+    _df_final.to_excel(_buf, index=False, engine="openpyxl")
+    _nom_dl = _archivo_mov_nom.replace(".xlsx", f"_SAVIA_{date.today().strftime('%Y%m%d')}.xlsx")
+    return _buf.getvalue(), _nom_dl
+
+
+def _excel_inv_actualizado() -> tuple:
+    """Devuelve (bytes_excel, nombre_archivo) del archivo de inventario original
+    con la columna de existencias actualizada según los movimientos registrados."""
+    _bytes_map = _store_global().get("archivos_bytes", {})
+    _movs      = _store_global().get("movimientos", [])  # lista interna
+
+    # Buscar el archivo de inventario (tiene columnas tipo Existencia, Codigo, Material, etc.)
+    _archivo_inv_bytes = None
+    _archivo_inv_nom   = None
+    for _nom, _bts in _bytes_map.items():
+        try:
+            # El inventario tiene cabecera en fila 2 (índice 2)
+            _df_test = pd.read_excel(io.BytesIO(_bts), header=2, nrows=1)
+            _cols_l  = [str(c).lower() for c in _df_test.columns]
+            if any("existencia" in c or "codigo" in c or "material" in c for c in _cols_l):
+                _archivo_inv_bytes = _bts
+                _archivo_inv_nom   = _nom
+                break
+        except Exception:
+            continue
+
+    if _archivo_inv_bytes is None:
+        # Fallback: exportar el inv procesado de SAVIA
+        _buf = io.BytesIO()
+        _store_global()["inv"].to_excel(_buf, index=False, engine="openpyxl")
+        return _buf.getvalue(), f"inventario_SAVIA_{date.today().strftime('%Y%m%d')}.xlsx"
+
+    # Leer con header correcto
+    _df_inv = pd.read_excel(io.BytesIO(_archivo_inv_bytes), header=2)
+
+    def _find_col(df, keywords):
+        for c in df.columns:
+            if any(k in str(c).lower() for k in keywords):
+                return c
+        return None
+
+    _c_cod  = _find_col(_df_inv, ["codigo", "cod"])
+    _c_nom  = _find_col(_df_inv, ["material", "nombre", "medicamento"])
+    _c_exist = _find_col(_df_inv, ["existencia"])
+
+    # Calcular delta por medicamento desde los movimientos manuales
+    _smv_list = _store_global().get("movimientos", [])
+    if _c_cod and _c_exist and _smv_list:
+        for _m in _smv_list:
+            _delta = _m["Cantidad"] if _m["Tipo"] == "Entrada" else -_m["Cantidad"]
+            _mask  = _df_inv[_c_cod].astype(str).str.strip() == str(_m.get("Código","")).strip()
+            if _mask.any():
+                _cur = pd.to_numeric(_df_inv.loc[_mask, _c_exist], errors="coerce").fillna(0)
+                _df_inv.loc[_mask, _c_exist] = (_cur + _delta).clip(lower=0)
+
+    _buf = io.BytesIO()
+    _df_inv.to_excel(_buf, index=False, engine="openpyxl")
+    _nom_dl = _archivo_inv_nom.replace(".xlsx", f"_SAVIA_{date.today().strftime('%Y%m%d')}.xlsx")
+    return _buf.getvalue(), _nom_dl
 
 def _df_a_preview(df):
     """Convierte un DataFrame de hasta 8 filas a lista de dicts con tipos básicos.
@@ -852,7 +973,12 @@ with st.sidebar:
                 continue
             _cont = _archivo.read()   # leer bytes aquí, sin guardar en session_state
             _rec  = _parsear_archivo(_nom, _cont)
-            del _cont                 # liberar bytes inmediatamente tras parsear
+            # Guardar bytes originales para descarga fiel (solo archivos ≤ 5 MB)
+            if len(_cont) <= 5 * 1024 * 1024:
+                if "archivos_bytes" not in _s:
+                    _s["archivos_bytes"] = {}
+                _s["archivos_bytes"][_nom] = _cont
+            del _cont                 # liberar referencia local tras guardar en store
             gc.collect()
             if _rec is not None:
                 _s["archivos"].append({
@@ -2596,39 +2722,36 @@ with tab3:
 
     # ── Descargas siempre visibles (arriba del módulo) ────────────────────
     st.markdown(_ayuda(
-        "Los archivos de abajo incluyen <b>todo lo que cargaste originalmente más lo que agregaste o modificaste</b> en esta sesión. "
-        "Descárgalos cuando quieras para tener la versión actualizada.",
+        "Los archivos de abajo son <b>exactamente tus archivos originales</b> con lo nuevo añadido al final "
+        "(movimientos) o con las existencias actualizadas (inventario). El formato y estructura es el mismo que cargaste.",
         color="#F0FFF4", borde="#38A169",
     ), unsafe_allow_html=True)
     _dlh1, _dlh2 = st.columns(2)
 
-    _buf_inv_top = io.BytesIO()
-    _store_global()["inv"].to_excel(_buf_inv_top, index=False, engine="openpyxl")
+    # ── Inventario: archivo original con existencias actualizadas ─────────
+    _inv_bytes, _inv_nom = _excel_inv_actualizado()
     _dlh1.download_button(
         label="Inventario actualizado (.xlsx)",
-        data=_buf_inv_top.getvalue(),
-        file_name=f"inventario_SAVIA_{date.today().strftime('%Y%m%d')}.xlsx",
+        data=_inv_bytes,
+        file_name=_inv_nom,
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         use_container_width=True,
-        help="Archivo de inventario con todas las ediciones, eliminaciones y ajustes de stock de esta sesión.",
+        help="Tu archivo de inventario original con las existencias actualizadas según los movimientos registrados.",
         key="dl_inv_top",
     )
-    _mov_top = _store_global().get("mov")
-    if _mov_top is not None and len(_mov_top) > 0:
-        _buf_mov_top = io.BytesIO()
-        _mov_top.to_excel(_buf_mov_top, index=False, engine="openpyxl")
-        _n_top = len(_smv["movimientos"])
-        _dlh2.download_button(
-            label=f"Movimientos actualizados (.xlsx){f'  (+{_n_top} nuevos)' if _n_top else ''}",
-            data=_buf_mov_top.getvalue(),
-            file_name=f"movimientos_SAVIA_{date.today().strftime('%Y%m%d')}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True,
-            help="Archivo de movimientos con todas las filas nuevas añadidas al final. Las columnas _SAVIA identifican lo nuevo.",
-            key="dl_mov_top",
-        )
-    else:
-        _dlh2.info("Carga un archivo de movimientos para habilitarlo.")
+
+    # ── Movimientos: archivo original + filas nuevas al final ─────────────
+    _n_nuevos_top = len(_smv["movimientos"])
+    _mov_bytes, _mov_nom = _excel_mov_actualizado(_smv["movimientos"])
+    _dlh2.download_button(
+        label=f"Movimientos (.xlsx){f'  (+{_n_nuevos_top} filas nuevas)' if _n_nuevos_top else ''}",
+        data=_mov_bytes,
+        file_name=_mov_nom,
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True,
+        help="Tu archivo de movimientos original con las filas nuevas añadidas al final en el mismo formato. Las columnas '_SAVIA' marcan lo nuevo.",
+        key="dl_mov_top",
+    )
 
     st.markdown("---")
 
@@ -3265,43 +3388,36 @@ with tab3:
                 st.success("Cambios aplicados correctamente. Recargando...")
             st.rerun()
 
-        # ── Descargas — siempre son el archivo cargado + lo nuevo añadido ─
+        # ── Descargas (mismos archivos originales + cambios) ──────────────
         st.markdown("---")
         st.markdown("#### Exportar datos")
-        st.caption(
-            "Cada descarga incluye los datos **originales del archivo que cargaste** más todo lo que agregaste o modificaste en esta sesión. "
-            "No son archivos separados — es el mismo archivo actualizado."
-        )
+        st.caption("Los archivos descargados son exactamente los que cargaste, con tus cambios aplicados.")
         _dl1, _dl2, _dl3 = st.columns(3)
 
-        # 1. Inventario actualizado (con ediciones y eliminaciones aplicadas)
-        _buf_inv_dl = io.BytesIO()
-        _store_global()["inv"].to_excel(_buf_inv_dl, index=False, engine="openpyxl")
+        # 1. Inventario original actualizado
+        _inv_bytes_g, _inv_nom_g = _excel_inv_actualizado()
         _dl1.download_button(
             label="Inventario actualizado (.xlsx)",
-            data=_buf_inv_dl.getvalue(),
-            file_name=f"inventario_SAVIA_{date.today().strftime('%Y%m%d')}.xlsx",
+            data=_inv_bytes_g,
+            file_name=_inv_nom_g,
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True,
-            help="El archivo de inventario original más todas las ediciones y eliminaciones aplicadas en esta sesión.",
+            help="Tu archivo de inventario original con existencias actualizadas por los movimientos.",
+            key="dl_inv_gest",
         )
 
-        # 2. Movimientos: archivo original + filas nuevas registradas
-        _mov_store = _store_global().get("mov")
-        if _mov_store is not None and len(_mov_store) > 0:
-            _buf_mv_dl = io.BytesIO()
-            _mov_store.to_excel(_buf_mv_dl, index=False, engine="openpyxl")
-            _n_nuevos = len(_smv["movimientos"])
-            _dl2.download_button(
-                label=f"Movimientos (.xlsx){f' +{_n_nuevos} nuevos' if _n_nuevos else ''}",
-                data=_buf_mv_dl.getvalue(),
-                file_name=f"movimientos_SAVIA_{date.today().strftime('%Y%m%d')}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True,
-                help=f"El archivo de movimientos original con {_n_nuevos} fila(s) nueva(s) añadida(s) al final. Las columnas '_SAVIA' identifican las filas nuevas.",
-            )
-        else:
-            _dl2.info("Sin archivo de movimientos cargado")
+        # 2. Movimientos original + filas nuevas
+        _n_nuevos_g = len(_smv["movimientos"])
+        _mov_bytes_g, _mov_nom_g = _excel_mov_actualizado(_smv["movimientos"])
+        _dl2.download_button(
+            label=f"Movimientos (.xlsx){f' +{_n_nuevos_g}' if _n_nuevos_g else ''}",
+            data=_mov_bytes_g,
+            file_name=_mov_nom_g,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+            help="Tu archivo de movimientos original con las filas nuevas al final.",
+            key="dl_mov_gest",
+        )
 
         # 3. Lotes registrados en sesión
         if _smv["lotes_oc"]:
