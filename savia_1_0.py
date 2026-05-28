@@ -649,8 +649,7 @@ def _store_global():
         "archivos":       [],   # [{nombre, size, cargado_en, responsable, preview, n_productos, mov, inv_extra, inv_directo}]
         "historial":      [],   # [{Fecha, Responsable, Accion, Archivo, Productos}]
         "archivos_bytes": {},   # {nombre: bytes_originales} — para descargar el archivo original + filas nuevas
-        "gd_file_ids":    {},   # {nombre_archivo: file_id_en_drive}
-        "gd_mov_id":      None, # file_id del Excel de movimientos consolidado en Drive
+        "gh_gist_id":     None, # gist_id del Gist de SAVIA en GitHub
     }
 
 
@@ -784,182 +783,202 @@ def _excel_inv_actualizado() -> tuple:
     _nom_dl = _archivo_inv_nom.replace(".xlsx", f"_SAVIA_{date.today().strftime('%Y%m%d')}.xlsx")
     return _buf.getvalue(), _nom_dl
 
-# ── Google Drive helpers ────────────────────────────────────────────────────────
-@st.cache_resource
-def _gd_service():
-    """Crea y cachea el cliente de Google Drive via service account en st.secrets.
-    Retorna None si las credenciales no están configuradas."""
+# ── GitHub Gist helpers (persistencia gratuita, sin tarjeta) ───────────────────
+import base64 as _b64
+import json   as _json
+
+_GH_GIST_DESC = "SAVIA_datos_inventario"   # identifica el gist en la cuenta del usuario
+
+
+def _gh_token():
+    """Retorna el Personal Access Token de GitHub desde st.secrets."""
     try:
-        from google.oauth2 import service_account
-        from googleapiclient.discovery import build
-        _info  = dict(st.secrets["gcp_service_account"])
-        _creds = service_account.Credentials.from_service_account_info(
-            _info, scopes=["https://www.googleapis.com/auth/drive"]
-        )
-        return build("drive", "v3", credentials=_creds, cache_discovery=False)
+        return str(st.secrets["github"]["token"])
     except Exception:
         return None
 
 
-def _gd_folder_id():
-    """Retorna el folder_id de Drive desde st.secrets, o None si no existe."""
+def _gh_headers():
+    _t = _gh_token()
+    if not _t:
+        return None
+    return {
+        "Authorization": f"token {_t}",
+        "Accept": "application/vnd.github.v3+json",
+    }
+
+
+def _gh_find_gist():
+    """Busca el gist de SAVIA en la cuenta del usuario. Retorna gist_id o None."""
+    _h = _gh_headers()
+    if not _h:
+        return None
     try:
-        return str(st.secrets["google_drive"]["folder_id"])
+        _r = _requests.get("https://api.github.com/gists?per_page=100",
+                           headers=_h, timeout=15)
+        if _r.status_code != 200:
+            return None
+        for _g in _r.json():
+            if _g.get("description", "") == _GH_GIST_DESC:
+                _store_global()["gh_gist_id"] = _g["id"]   # cachear en store
+                return _g["id"]
+        return None
     except Exception:
         return None
 
 
-def _gd_find_file(svc, nombre, folder_id):
-    """Busca un archivo por nombre en la carpeta. Retorna file_id o None."""
+def _gh_guardar_en_gist():
+    """Guarda archivos originales + movimientos en un Gist privado.
+    Retorna (ok, mensaje)."""
+    _h = _gh_headers()
+    if not _h:
+        return False, "Token de GitHub no configurado"
+
+    _store = _store_global()
+    _payload_files = {}
+
+    # Codificar cada archivo Excel/CSV en base64
+    for _nom_g, _bts_g in _store.get("archivos_bytes", {}).items():
+        _safe = _nom_g.replace("/", "_").replace("\\", "_")
+        _payload_files[f"SAVIA__{_safe}"] = {
+            "content": _b64.b64encode(_bts_g).decode("ascii")
+        }
+
+    # Guardar movimientos manuales como JSON
+    _movs_json = _json.dumps(
+        _store.get("movimientos", []), default=str, ensure_ascii=False
+    )
+    _payload_files["SAVIA__movimientos.json"] = {"content": _movs_json or "[]"}
+
+    if not _payload_files:
+        return False, "No hay datos para guardar"
+
     try:
-        _q   = f"name='{nombre}' and '{folder_id}' in parents and trashed=false"
-        _res = svc.files().list(q=_q, fields="files(id,name)").execute()
-        _fl  = _res.get("files", [])
-        return _fl[0]["id"] if _fl else None
-    except Exception:
-        return None
-
-
-def _gd_list_files(svc, folder_id):
-    """Lista archivos xlsx/csv en la carpeta. Retorna [{id, name, modifiedTime}, ...]."""
-    try:
-        _q = (f"'{folder_id}' in parents and trashed=false and "
-              "(mimeType='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' "
-              "or mimeType='text/csv')")
-        _res = svc.files().list(
-            q=_q, fields="files(id,name,modifiedTime)", orderBy="modifiedTime desc"
-        ).execute()
-        return _res.get("files", [])
-    except Exception:
-        return []
-
-
-def _gd_upload_file(svc, bytes_data, nombre, folder_id, file_id=None):
-    """Sube o actualiza un archivo en Drive. Retorna el file_id resultante o None."""
-    try:
-        from googleapiclient.http import MediaIoBaseUpload
-        _mime  = ("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                  if nombre.lower().endswith(".xlsx") else "text/csv")
-        _media = MediaIoBaseUpload(io.BytesIO(bytes_data), mimetype=_mime, resumable=False)
-        if file_id:
-            _f = svc.files().update(fileId=file_id, media_body=_media, fields="id").execute()
+        _gist_id = _store.get("gh_gist_id") or _gh_find_gist()
+        if _gist_id:
+            _r = _requests.patch(
+                f"https://api.github.com/gists/{_gist_id}",
+                headers=_h, json={"files": _payload_files}, timeout=90,
+            )
         else:
-            _meta = {"name": nombre, "parents": [folder_id]}
-            _f    = svc.files().create(body=_meta, media_body=_media, fields="id").execute()
-        return _f.get("id")
-    except Exception:
-        return None
-
-
-def _gd_download_file(svc, file_id):
-    """Descarga un archivo de Drive. Retorna bytes o None."""
-    try:
-        from googleapiclient.http import MediaIoBaseDownload
-        _req  = svc.files().get_media(fileId=file_id)
-        _buf  = io.BytesIO()
-        _dl   = MediaIoBaseDownload(_buf, _req)
-        _done = False
-        while not _done:
-            _, _done = _dl.next_chunk()
-        return _buf.getvalue()
-    except Exception:
-        return None
-
-
-def _gd_guardar_original(nombre, bytes_data):
-    """Guarda los bytes originales de un archivo en Drive. Retorna (ok, msg)."""
-    _svc = _gd_service()
-    _fid = _gd_folder_id()
-    if not _svc or not _fid:
-        return False, "Drive no configurado"
-    try:
-        _store  = _store_global()
-        _ids    = _store.setdefault("gd_file_ids", {})
-        _old_id = _ids.get(nombre) or _gd_find_file(_svc, nombre, _fid)
-        _new_id = _gd_upload_file(_svc, bytes_data, nombre, _fid, _old_id)
-        if _new_id:
-            _ids[nombre] = _new_id
-            return True, f"'{nombre}' guardado en Drive"
-        return False, f"Error al subir '{nombre}'"
+            _r = _requests.post(
+                "https://api.github.com/gists",
+                headers=_h,
+                json={
+                    "description": _GH_GIST_DESC,
+                    "public": False,
+                    "files": _payload_files,
+                },
+                timeout=90,
+            )
+        if _r.status_code in (200, 201):
+            _store["gh_gist_id"] = _r.json()["id"]
+            return True, "Guardado en GitHub Gist ✓"
+        return False, f"Error HTTP {_r.status_code}: {_r.text[:160]}"
     except Exception as _e:
         return False, str(_e)
 
 
-def _gd_guardar_movimientos():
-    """Guarda el Excel de movimientos consolidados en Drive. Retorna (ok, msg)."""
-    _svc = _gd_service()
-    _fid = _gd_folder_id()
-    if not _svc or not _fid:
-        return False, "Drive no configurado"
+def _gh_cargar_desde_gist():
+    """Descarga y procesa los archivos del Gist de SAVIA.
+    Retorna (n_archivos_cargados, mensaje)."""
+    _h = _gh_headers()
+    if not _h:
+        return 0, "Token de GitHub no configurado"
+
+    _store   = _store_global()
+    _gist_id = _store.get("gh_gist_id") or _gh_find_gist()
+    if not _gist_id:
+        return 0, "No se encontró ningún Gist de SAVIA. Sube archivos primero."
+
     try:
-        _store       = _store_global()
-        _mov_b, _    = _excel_mov_actualizado(_store.get("movimientos", []))
-        _drive_nom   = "SAVIA_movimientos.xlsx"
-        _old_id      = _store.get("gd_mov_id") or _gd_find_file(_svc, _drive_nom, _fid)
-        _new_id      = _gd_upload_file(_svc, _mov_b, _drive_nom, _fid, _old_id)
-        if _new_id:
-            _store["gd_mov_id"] = _new_id
-            return True, "Movimientos guardados en Drive"
-        return False, "Error al guardar movimientos en Drive"
+        _r = _requests.get(f"https://api.github.com/gists/{_gist_id}",
+                           headers=_h, timeout=30)
+        if _r.status_code != 200:
+            return 0, f"Error HTTP {_r.status_code}"
+
+        _store["gh_gist_id"] = _gist_id
+        _gist_files = _r.json().get("files", {})
+
+        # Recuperar movimientos JSON
+        if "SAVIA__movimientos.json" in _gist_files:
+            _raw_url = _gist_files["SAVIA__movimientos.json"].get("raw_url")
+            if _raw_url:
+                _mr = _requests.get(_raw_url, timeout=20)
+                if _mr.status_code == 200:
+                    try:
+                        _movs_rec = _json.loads(_mr.text)
+                        if isinstance(_movs_rec, list):
+                            _store["movimientos"] = _movs_rec
+                    except Exception:
+                        pass
+
+        # Recuperar archivos Excel/CSV
+        _ya       = {a["nombre"] for a in _store["archivos"]}
+        _cargados = 0
+        _tz_gh    = pytz.timezone("America/Santiago")
+        _ahora_gh = pd.Timestamp.now(tz=_tz_gh).strftime("%Y-%m-%d %H:%M")
+        _resp_gh  = _store.get("responsable", "") or "GitHub Gist"
+
+        for _fname, _fdata in _gist_files.items():
+            if not _fname.startswith("SAVIA__") or _fname == "SAVIA__movimientos.json":
+                continue
+            _nom_orig = _fname[len("SAVIA__"):]          # quitar prefijo
+            if _nom_orig in _ya:
+                continue
+            # Usar raw_url para evitar contenido truncado en la API
+            _raw_url = _fdata.get("raw_url")
+            if not _raw_url:
+                continue
+            _raw_r = _requests.get(_raw_url, timeout=90)
+            if _raw_r.status_code != 200:
+                continue
+            try:
+                _bytes_rec = _b64.b64decode(_raw_r.content)
+            except Exception:
+                continue
+            _rec = _parsear_archivo(_nom_orig, _bytes_rec)
+            if _rec is None:
+                continue
+            if len(_bytes_rec) <= 5 * 1024 * 1024:
+                _store.setdefault("archivos_bytes", {})[_nom_orig] = _bytes_rec
+            _store["archivos"].append({
+                "nombre":      _nom_orig,
+                "size":        len(_bytes_rec),
+                "mov":         _rec["mov"],
+                "inv_extra":   _rec["inv_extra"],
+                "inv_directo": _rec["inv_directo"],
+                "cargado_en":  _ahora_gh,
+                "responsable": _resp_gh,
+                "preview":     _rec["preview"],
+                "n_productos": _rec["n_productos"],
+            })
+            _store["historial"].append({
+                "Fecha":       _ahora_gh,
+                "Responsable": _resp_gh,
+                "Accion":      "Carga desde GitHub Gist",
+                "Archivo":     _nom_orig,
+                "Productos":   _rec["n_productos"],
+            })
+            _ya.add(_nom_orig)
+            _cargados += 1
+
+        if _cargados:
+            _recompute()
+
+        _n_movs = len(_store.get("movimientos", []))
+        if _cargados:
+            _msg = f"{_cargados} archivo(s) cargado(s) desde GitHub Gist."
+            if _n_movs:
+                _msg += f" + {_n_movs} movimiento(s) recuperados."
+        elif _n_movs:
+            _msg = f"Sin archivos nuevos. {_n_movs} movimiento(s) recuperados."
+        else:
+            _msg = "No hay datos nuevos en el Gist."
+        return _cargados, _msg
+
     except Exception as _e:
-        return False, str(_e)
-
-
-def _gd_cargar_desde_drive():
-    """Descarga y procesa todos los archivos de la carpeta Drive.
-    Retorna (n_cargados, mensaje)."""
-    _svc = _gd_service()
-    _fid = _gd_folder_id()
-    if not _svc or not _fid:
-        return 0, "Drive no configurado"
-    _files = _gd_list_files(_svc, _fid)
-    if not _files:
-        return 0, "No hay archivos en la carpeta de Drive"
-    _s_gd    = _store_global()
-    _ya_gd   = {a["nombre"] for a in _s_gd["archivos"]}
-    _cargados = 0
-    _tz_gd   = pytz.timezone("America/Santiago")
-    _ahora_gd = pd.Timestamp.now(tz=_tz_gd).strftime("%Y-%m-%d %H:%M")
-    _resp_gd  = _s_gd.get("responsable", "") or "Google Drive"
-    for _gdf in _files:
-        _nom_gd = _gdf["name"]
-        if _nom_gd == "SAVIA_movimientos.xlsx":   # archivo interno — no reprocesar
-            continue
-        if _nom_gd in _ya_gd:                     # ya cargado
-            continue
-        _bytes_gd = _gd_download_file(_svc, _gdf["id"])
-        if _bytes_gd is None:
-            continue
-        _rec_gd = _parsear_archivo(_nom_gd, _bytes_gd)
-        if _rec_gd is None:
-            continue
-        if len(_bytes_gd) <= 5 * 1024 * 1024:
-            _s_gd.setdefault("archivos_bytes", {})[_nom_gd] = _bytes_gd
-        _s_gd.setdefault("gd_file_ids", {})[_nom_gd] = _gdf["id"]
-        _s_gd["archivos"].append({
-            "nombre":      _nom_gd,
-            "size":        len(_bytes_gd),
-            "mov":         _rec_gd["mov"],
-            "inv_extra":   _rec_gd["inv_extra"],
-            "inv_directo": _rec_gd["inv_directo"],
-            "cargado_en":  _ahora_gd,
-            "responsable": _resp_gd,
-            "preview":     _rec_gd["preview"],
-            "n_productos": _rec_gd["n_productos"],
-        })
-        _s_gd["historial"].append({
-            "Fecha":       _ahora_gd,
-            "Responsable": _resp_gd,
-            "Accion":      "Carga desde Drive",
-            "Archivo":     _nom_gd,
-            "Productos":   _rec_gd["n_productos"],
-        })
-        _ya_gd.add(_nom_gd)
-        _cargados += 1
-    if _cargados:
-        _recompute()
-    return _cargados, (f"{_cargados} archivo(s) cargado(s) correctamente desde Drive."
-                       if _cargados else "No hay archivos nuevos para cargar.")
+        return 0, str(_e)
 
 
 def _df_a_preview(df):
@@ -1184,10 +1203,9 @@ with st.sidebar:
         _recompute()
         if _n_ok:
             st.success(f"{_n_ok} archivo(s) procesado(s) correctamente.")
-            # Auto-guardar en Google Drive si está configurado
-            if _gd_service() and _gd_folder_id():
-                for _nom_ag, _bytes_ag in _s.get("archivos_bytes", {}).items():
-                    _gd_guardar_original(_nom_ag, _bytes_ag)
+            # Auto-guardar en GitHub Gist si está configurado
+            if _gh_token():
+                _gh_guardar_en_gist()
         else:
             st.error("No se pudo procesar ningún archivo. Verifica el formato.")
 
@@ -1267,60 +1285,40 @@ with st.sidebar.expander("Alertas automáticas (Make.com)", expanded=False):
     if _wh_input != _wh_stored:
         _store_global()["webhook_url"] = _wh_input.strip()
 
-# ── Google Drive (persistencia de datos entre sesiones) ───────────────────────
-with st.sidebar.expander("Google Drive (persistencia)", expanded=False):
-    _gd_svc_sb  = _gd_service()
-    _gd_fid_sb  = _gd_folder_id()
-    _gd_conn_sb = (_gd_svc_sb is not None) and (_gd_fid_sb is not None)
-
-    if not _gd_conn_sb:
+# ── GitHub Gist (persistencia gratuita entre sesiones) ────────────────────────
+with st.sidebar.expander("GitHub Gist (persistencia)", expanded=False):
+    _gh_tok_sb = _gh_token()
+    if not _gh_tok_sb:
         st.caption(
-            "Sin credenciales configuradas. "
-            "Agrega `gcp_service_account` y `google_drive.folder_id` "
-            "en `.streamlit/secrets.toml` para activar la persistencia automática."
+            "Sin token configurado. Agrega `[github] token = \"ghp_...\"` "
+            "en `.streamlit/secrets.toml` para activar la persistencia gratuita."
         )
     else:
-        st.success("✅ Conectado a Google Drive")
-        _gd_files_sb = _gd_list_files(_gd_svc_sb, _gd_fid_sb)
-
-        # Mostrar archivos en Drive
-        if _gd_files_sb:
-            _nombres_gd = [f for f in _gd_files_sb if f["name"] != "SAVIA_movimientos.xlsx"]
-            if _nombres_gd:
-                st.caption(f"Archivos en Drive ({len(_nombres_gd)}):")
-                for _gdf_sb in _nombres_gd[:6]:
-                    _ts_sb = _gdf_sb.get("modifiedTime", "")[:10]
-                    st.caption(f"  📄 {_gdf_sb['name']}  ·  {_ts_sb}")
-                if len(_nombres_gd) > 6:
-                    st.caption(f"  … y {len(_nombres_gd) - 6} más")
-            else:
-                st.caption("No hay archivos de datos en Drive aún.")
+        st.success("✅ Token de GitHub configurado")
+        _gh_gid_sb = _store_global().get("gh_gist_id") or _gh_find_gist()
+        if _gh_gid_sb:
+            st.caption(f"Gist activo: `{_gh_gid_sb[:12]}…`")
         else:
-            st.caption("La carpeta de Drive está vacía.")
+            st.caption("Sin Gist aún — se creará al guardar por primera vez.")
 
-        # Botón: cargar desde Drive
-        if st.button("⬇ Cargar desde Drive", key="gd_load_btn", use_container_width=True):
-            with st.spinner("Descargando desde Drive…"):
-                _n_gd, _msg_gd = _gd_cargar_desde_drive()
-            if _n_gd:
-                st.success(_msg_gd)
+        # Botón: cargar desde Gist
+        if st.button("⬇ Cargar desde Gist", key="gh_load_btn", use_container_width=True):
+            with st.spinner("Descargando desde GitHub Gist…"):
+                _n_gh, _msg_gh = _gh_cargar_desde_gist()
+            if _n_gh:
+                st.success(_msg_gh)
                 st.rerun()
             else:
-                st.info(_msg_gd)
+                st.info(_msg_gh)
 
-        # Botón: guardar manualmente en Drive
-        if st.button("⬆ Guardar en Drive ahora", key="gd_save_btn", use_container_width=True):
-            _s_gd_sb = _store_global()
-            _saved_gd = 0
-            with st.spinner("Subiendo archivos a Drive…"):
-                for _n_gd_sb, _b_gd_sb in _s_gd_sb.get("archivos_bytes", {}).items():
-                    _ok_gd_sb, _ = _gd_guardar_original(_n_gd_sb, _b_gd_sb)
-                    if _ok_gd_sb:
-                        _saved_gd += 1
-            if _saved_gd:
-                st.success(f"✓ {_saved_gd} archivo(s) guardado(s) en Drive.")
+        # Botón: guardar manualmente
+        if st.button("⬆ Guardar en Gist ahora", key="gh_save_btn", use_container_width=True):
+            with st.spinner("Guardando en GitHub Gist…"):
+                _ok_gh, _msg_gh2 = _gh_guardar_en_gist()
+            if _ok_gh:
+                st.success(_msg_gh2)
             else:
-                st.info("No hay archivos para guardar (carga datos primero).")
+                st.error(_msg_gh2)
 
 # ──────────────────────────────────────────────────────────────────────────────
 # CARGA DE DATOS (función auxiliar para ejemplo)
@@ -1333,29 +1331,27 @@ def cargar_ejemplo():
 
 _g = _store_global()
 if _g["inv"] is None:
-    # ── Opción de cargar desde Google Drive antes de pedir subida manual ──
-    _gd_svc_main = _gd_service()
-    _gd_fid_main = _gd_folder_id()
-    if _gd_svc_main and _gd_fid_main:
-        _gd_fl_main = _gd_list_files(_gd_svc_main, _gd_fid_main)
-        _gd_fl_data = [f for f in _gd_fl_main if f["name"] != "SAVIA_movimientos.xlsx"]
-        if _gd_fl_data:
+    # ── Opción de cargar desde GitHub Gist antes de pedir subida manual ──
+    if _gh_token():
+        _gh_gid_main = _store_global().get("gh_gist_id") or _gh_find_gist()
+        if _gh_gid_main:
             st.info(
-                f"Se encontraron **{len(_gd_fl_data)} archivo(s)** guardados en Google Drive. "
-                "¿Deseas cargarlos automáticamente?"
+                "Se encontró un Gist de SAVIA guardado en GitHub. "
+                "¿Deseas cargar los archivos automáticamente?"
             )
-            _col_gd1, _col_gd2 = st.columns(2)
-            with _col_gd1:
-                if st.button("Cargar desde Drive", type="primary", use_container_width=True, key="gd_autoload"):
-                    with st.spinner("Descargando desde Drive…"):
-                        _n_gd_main, _msg_gd_main = _gd_cargar_desde_drive()
-                    if _n_gd_main:
-                        st.success(_msg_gd_main)
+            _col_gh1, _col_gh2 = st.columns(2)
+            with _col_gh1:
+                if st.button("Cargar desde Gist", type="primary",
+                             use_container_width=True, key="gh_autoload"):
+                    with st.spinner("Descargando desde GitHub Gist…"):
+                        _n_gh_main, _msg_gh_main = _gh_cargar_desde_gist()
+                    if _n_gh_main:
+                        st.success(_msg_gh_main)
                         st.rerun()
                     else:
-                        st.warning(_msg_gd_main)
-            with _col_gd2:
-                if st.button("Subir archivo nuevo", use_container_width=True, key="gd_skip"):
+                        st.warning(_msg_gh_main)
+            with _col_gh2:
+                if st.button("Subir archivo nuevo", use_container_width=True, key="gh_skip"):
                     st.info("Usa el panel izquierdo para subir tus archivos.")
             st.stop()
     st.info("Sube un archivo en el panel izquierdo")
@@ -3174,9 +3170,9 @@ with tab3:
                 f"Movimiento registrado: **{_mv_tipo}** de **{_mv_cant_calc:,} u** de {_mv_med}  \n"
                 f"Stock en inventario actualizado ({_inv_delta_txt} u). Descarga los archivos actualizados arriba."
             )
-            # Auto-guardar movimientos en Google Drive si está configurado
-            if _gd_service() and _gd_folder_id():
-                _gd_guardar_movimientos()
+            # Auto-guardar movimientos en GitHub Gist si está configurado
+            if _gh_token():
+                _gh_guardar_en_gist()
 
             # ── Verificar si el stock ajustado cae bajo el punto de reorden ──
             _mv_row = resumen[resumen[COL_NOMBRE] == _mv_med]
