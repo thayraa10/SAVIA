@@ -1325,9 +1325,12 @@ if _g["inv"] is None:
 # Aviso cuando se cargó un archivo de consumos del hospital (sin stock ni vencimiento)
 if _g.get("formato_hospital", False):
     st.info(
-        "Archivo de consumos del hospital cargado correctamente.  \n"
-        "Los datos de **existencias actuales** y **fecha de vencimiento** no están en este tipo de archivo, "
-        "por lo que las alertas de vencimiento no estarán disponibles.  \n"
+        "**Archivo de consumos cargado correctamente.**  \n"
+        "Este tipo de archivo registra el **historial de consumo** de los medicamentos mes a mes, "
+        "pero no incluye el inventario físico del establecimiento. "
+        "Por eso las columnas de stock actual y fecha de vencimiento no están disponibles: "
+        "esa información se lleva por separado en el registro de bodega.  \n"
+        "Si tienes un archivo con las existencias actuales, puedes cargarlo adicionalmente desde el panel lateral."
     )
 
 # Leer DataFrames directamente desde el store compartido (nunca desde session_state)
