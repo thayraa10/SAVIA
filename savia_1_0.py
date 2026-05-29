@@ -1590,7 +1590,7 @@ if formato_hospital:
 tab1, tab2, tab3 = st.tabs([
     "Panel Principal",
     "Seguimiento",
-    "Abastecimiento",
+    "Planificación",
 ])
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -2977,119 +2977,341 @@ with tab2:
                 st.info("Sube el archivo de movimientos para ver el historial de consumo.")
 
 # ══════════════════════════════════════════════════════════════════════════════
+# MÓDULO 3 — PLANIFICACIÓN
 # ══════════════════════════════════════════════════════════════════════════════
-# MÓDULO 3 — ABASTECIMIENTO Y SIMULACIÓN
-# ══════════════════════════════════════════════════════════════════════════════
-# ══════════════════════════════════════════════════════════════════════════════
+def _disparar_webhook_plan(payload: dict):
+    """Dispara un webhook a Make.com con el payload dado. Retorna (ok, msg)."""
+    _wh = _store_global().get("webhook_url", "").strip()
+    if not _wh:
+        return False, "Sin URL configurada"
+    try:
+        _r = _requests.post(_wh, json=payload, timeout=6)
+        return _r.status_code < 300, f"HTTP {_r.status_code}"
+    except Exception as _e:
+        return False, str(_e)
+
 with tab3:
-    st.markdown(_ayuda(
-        "<b>Modulo de Abastecimiento</b> — Calcula automaticamente las politicas optimas de reposicion para cada medicamento, basandose en el historial de consumo y los parametros configurados en el panel lateral. "
-        "<b>Punto de reorden (s)</b>: nivel de existencias al que se debe emitir un nuevo pedido para no quedarse sin existencias durante el tiempo de entrega. "
-        "<b>Cantidad a pedir (EOQ)</b>: cantidad economicamente optima que minimiza la suma de costos de ordenar y de mantener inventario. "
-        "<b>Reserva de seguridad (SS)</b>: existencias extra para absorber variaciones inesperadas en la demanda o en el tiempo de entrega. "
-        "<b>Nivel maximo (S)</b>: techo de inventario para evitar exceso de existencias. "
-        "La tabla esta ordenada por urgencia: primero los productos que requieren accion inmediata."
-    ), unsafe_allow_html=True)
-    if not tiene_movimientos:
-        st.warning("Se requiere el archivo de movimientos para calcular las políticas.")
-    else:
-        # Calcular políticas para todos los productos (una sola vez)
-        filas_politicas = []
-        for i in range(len(resumen)):
-            fila = resumen.iloc[i]
-            if fila["media_diaria"] <= 0:
-                continue
-            var_d      = max(fila["var_diaria"], 0.001)
-            p          = calcular_politicas(fila["media_diaria"], var_d, costo_orden, costo_mantener, lead_time, periodo_revision, Z)
-            R_etiqueta = f"Cada {int(periodo_revision)} días"
-            dias_cob = fila["dias_cobertura"]
-            if fila["estado"] == "VENCIDO":
-                accion = "DAR DE BAJA — reponer"
-            elif fila["stock_total"] < p["s"]:
-                accion = "Pedir ahora"
-            elif dias_cob is not None and not pd.isna(dias_cob) and dias_cob < (lead_time + periodo_revision) * 1.5:
-                accion = "Pedir pronto"
-            else:
-                accion = "Existencias suficientes"
-            filas_politicas.append({
-                "Código":                       fila[COL_CODIGO],
-                "Medicamento":                  fila[COL_NOMBRE],
-                "Consumo diario promedio":       str(round(fila["media_diaria"], 1)) + " u/día",
-                "Existencias actuales":          math.floor(fila["stock_total"]),
-                "Pedir cuando queden menos de": math.ceil(p["s"]),
-                "Cuánto pedir":                 math.ceil(p["Q"]),
-                "Nivel máximo recomendado":      math.ceil(p["S"]),
-                "Reserva de seguridad":         math.ceil(p["SS"]),
-                "Días de existencias disponibles": dias_cob if dias_cob is not None and not pd.isna(dias_cob) else "—",
-                "Revisar cada":                 R_etiqueta,
-                "Acción recomendada":           accion,
-                "_media":                       fila["media_diaria"],
-            })
+    _t3_pron, _t3_ab = st.tabs(["Pronóstico", "Abastecimiento"])
 
-        if len(filas_politicas) == 0:
-            st.warning("No hay medicamentos con datos de demanda suficientes.")
+    # ══════════════════════════════════════════════════════════════════════
+    # SUB-TAB: PRONÓSTICO
+    # ══════════════════════════════════════════════════════════════════════
+    with _t3_pron:
+        st.markdown(_ayuda(
+            "<b>Pronóstico de demanda</b> — Visualiza el consumo real de las últimas 12 semanas "
+            "y la demanda proyectada para las próximas 4 semanas por medicamento. "
+            "La tabla inferior identifica los productos cuyo stock proyectado será insuficiente. "
+            "Si el stock cae bajo el punto de reorden dentro de 2 semanas, se dispara una alerta preventiva al webhook configurado."
+        ), unsafe_allow_html=True)
+
+        if not tiene_movimientos:
+            st.warning("Se requiere el archivo de movimientos para calcular el pronóstico.")
         else:
-            df_politicas = pd.DataFrame(filas_politicas)
-            orden_accion = {"DAR DE BAJA — reponer": 0, "Pedir ahora": 1, "Pedir pronto": 2, "Existencias suficientes": 3}
-            df_politicas["_orden"] = df_politicas["Acción recomendada"].map(orden_accion).fillna(4)
-            df_politicas = df_politicas.sort_values("_orden").drop(columns="_orden")
+            # ── Preparar datos semanales de consumo ───────────────────────
+            _df_mov_p = datos_movimientos.copy()
+            try:
+                _df_mov_p[COL_MOV_FECHA] = pd.to_datetime(_df_mov_p[COL_MOV_FECHA], errors="coerce")
+                _df_mov_p[COL_MOV_CANTIDAD] = pd.to_numeric(_df_mov_p[COL_MOV_CANTIDAD], errors="coerce").fillna(0)
+                _df_mov_p = _df_mov_p.dropna(subset=[COL_MOV_FECHA])
+                _df_mov_p["_semana"] = _df_mov_p[COL_MOV_FECHA].dt.to_period("W").dt.start_time
+                _hoy = pd.Timestamp.today().normalize()
+                _inicio_hist = _hoy - pd.Timedelta(weeks=12)
+                _df_mov_hist = _df_mov_p[_df_mov_p["_semana"] >= _inicio_hist]
+                _tiene_hist = len(_df_mov_hist) > 0
+            except Exception:
+                _tiene_hist = False
 
-            NOMBRES = {"(R,s,Q)": "Cantidad fija", "(R,S)": "Reponer hasta el máximo", "(R,s,S)": "Variable hasta el máximo"}
-            DESCRIPCION = {
-                "(R,s,Q)": "Si las existencias están bajas, pide siempre la misma cantidad fija.",
-                "(R,S)":   "Pide lo necesario para llegar al nivel máximo de existencias.",
-                "(R,s,S)": "Si las existencias están bajas, pide lo necesario para llegar al máximo.",
-            }
+            # ── Selector de medicamento ───────────────────────────────────
+            _res_med = resumen[resumen["media_diaria"] > 0].copy()
+            _med_pron_lista = _res_med.sort_values("media_diaria", ascending=False)[COL_NOMBRE].dropna().tolist()
+            if not _med_pron_lista:
+                st.warning("No hay medicamentos con datos de demanda.")
+                st.stop()
 
-            # ── SECCIÓN 1: tabla de políticas ──────────────────────────────────
-            with st.expander("Detalle de abastecimiento", expanded=True):
-                t3a, t3b = st.columns([3, 2])
-                busq_t3 = t3a.text_input("Buscar:", placeholder="Nombre del producto...", key="busq_t3")
-                # Filtrar solo las acciones que aparecen en los datos actuales
-                acciones_disp = []
-                for accion in ["DAR DE BAJA — reponer", "Pedir ahora", "Pedir pronto", "Existencias suficientes"]:
-                    if accion in df_politicas["Acción recomendada"].values:
-                        acciones_disp.append(accion)
-                filtro_accion = t3b.multiselect("Filtrar por acción:", acciones_disp, default=acciones_disp, key="filtro_accion_t3")
-                df_vis = df_politicas[df_politicas["Acción recomendada"].isin(filtro_accion)].drop(columns="_media", errors="ignore")
-                if busq_t3.strip():
-                    df_vis = df_vis[df_vis["Medicamento"].str.contains(busq_t3.strip(), case=False, na=False)]
-                st.caption(f"{len(df_vis)} producto(s)")
-                st.dataframe(_safe_df(df_vis), use_container_width=True, hide_index=True, height=400)
-                st.info("**Guía:** *Pedir cuando queden menos de X* = punto de reorden. *Cuánto pedir* = cantidad más económica (EOQ). *Reserva de seguridad* = colchón para imprevistos.")
+            _med_pron = st.selectbox(
+                "Medicamento:", _med_pron_lista,
+                key="pron_med_sel",
+                help="Ordenados de mayor a menor consumo promedio.",
+            )
+            _fila_pron = _res_med[_res_med[COL_NOMBRE] == _med_pron].iloc[0]
+            _cod_pron  = str(_fila_pron[COL_CODIGO])
+            _media_sem = float(_fila_pron["media_diaria"]) * 7          # consumo semanal proyectado
+            _stock_act = float(_fila_pron["stock_total"])
+            _s_reorden = float(pd.to_numeric(_fila_pron.get("STC_MIN", None), errors="coerce") or 0)
+            if _s_reorden == 0:
+                # Calcular punto de reorden si no viene en el archivo
+                _var_p = max(float(_fila_pron.get("var_diaria", _fila_pron["media_diaria"])), 0.001)
+                _pol_p = calcular_politicas(_fila_pron["media_diaria"], _var_p, costo_orden, costo_mantener, lead_time, periodo_revision, Z)
+                _s_reorden = float(_pol_p["s"])
 
-            # ── SECCIÓN 2: frecuencia de revisión ──────────────────────────────
+            # ── Gráfico consumo real + proyectado ─────────────────────────
+            _fig_pron = go.Figure()
 
-            # ── SECCIÓN 3: simulación de estrategias ───────────────────────────
-            with st.expander("Comparación de estrategias de pedido"):
-                st.caption("Simula el costo anual de tres estrategias distintas para un medicamento.")
-                # Ordenar los medicamentos de mayor a menor consumo para que el default sea relevante
-                meds_sim_ord = df_politicas.sort_values("_media", ascending=False)["Medicamento"].tolist()
-                med_sim = st.selectbox("Medicamento a simular:", meds_sim_ord, key="sim_med")
-                # Obtener los datos del medicamento seleccionado
-                fila_simulacion = resumen[resumen[COL_NOMBRE] == med_sim].iloc[0]
-                media_sim = max(fila_simulacion["media_diaria"], 0.001)
-                # var_diaria ya contiene min(Media, var_batch) del proceso de estimación
-                var_diaria_raw = fila_simulacion["var_diaria"]
-                var_sim = max(float(var_diaria_raw) if not pd.isna(var_diaria_raw) else media_sim, 0.001)
-                params_sim = calcular_politicas(media_sim, var_sim, costo_orden, costo_mantener, lead_time, periodo_revision, Z)
-                R_opt_sim, _ = recomendar_periodo(media_sim, var_sim, costo_orden, costo_mantener, lead_time)
+            if _tiene_hist:
+                # Consumo semanal histórico de este medicamento
+                _cod_col = COL_MOV_CODIGO
+                _df_med_h = _df_mov_hist[
+                    _df_mov_hist[_cod_col].astype(str).str.strip() == _cod_pron
+                ].groupby("_semana")[COL_MOV_CANTIDAD].sum().reset_index()
+                _df_med_h.columns = ["Semana", "Consumo real"]
+                _df_med_h = _df_med_h.sort_values("Semana")
 
-                # Nivel máximo (S_inicio) según la política — igual que el notebook de referencia:
-                #   (R,s,Q) → inventario inicial = s+Q+U; pide Q fija cuando IP ≤ s
-                #   (R,S)   → S_inicio = s;     repone hasta s en CADA revisión
-                #   (R,s,S) → S_inicio = s+Q;   repone hasta s+Q solo cuando IP ≤ s
-                s_sim  = params_sim["s"]
-                Q_sim  = params_sim["Q"]
-                S_rsq  = params_sim["S"]   # = s + Q + U  (inventario inicial (R,s,Q))
-                S_rs   = s_sim             # (R,S)  ordena hasta el propio punto de reorden
-                S_rss  = s_sim + Q_sim     # (R,s,S) ordena hasta s + Q
+                if len(_df_med_h) > 0:
+                    _fig_pron.add_trace(go.Scatter(
+                        x=_df_med_h["Semana"], y=_df_med_h["Consumo real"],
+                        mode="lines+markers", name="Consumo real",
+                        line=dict(color="#3182CE", width=2.5),
+                        marker=dict(size=6),
+                    ))
+                    # Línea de promedio histórico
+                    _avg_real = _df_med_h["Consumo real"].mean()
+                    _fig_pron.add_hline(y=_avg_real, line_dash="dot", line_color="#3182CE",
+                                        line_width=1.2, opacity=0.5,
+                                        annotation_text=f"Promedio real ({_avg_real:.0f} u/sem)",
+                                        annotation_position="right",
+                                        annotation_font_size=10)
 
-                # ── Resumen de parámetros de simulación ───────────────────────
-                pc1, pc2, pc3 = st.columns(3)
-                with pc1:
-                    st.markdown("**Demanda**")
-                    st.markdown(f"""
+            # Proyección: próximas 4 semanas
+            _semanas_futuras = [_hoy + pd.Timedelta(weeks=i) for i in range(1, 6)]
+            _x_fut  = [_hoy] + _semanas_futuras
+            _y_fut  = [_stock_act] + [max(0, _stock_act - _media_sem * i) for i in range(1, 6)]
+
+            _fig_pron.add_trace(go.Scatter(
+                x=_x_fut, y=_y_fut,
+                mode="lines+markers", name="Stock proyectado",
+                line=dict(color="#DD6B20", width=2, dash="dash"),
+                marker=dict(size=7, symbol="diamond"),
+            ))
+
+            # Consumo proyectado (barras semana a semana)
+            _x_cons = _semanas_futuras
+            _y_cons = [_media_sem] * 5
+            _fig_pron.add_trace(go.Bar(
+                x=_x_cons, y=_y_cons,
+                name="Consumo proyectado / sem",
+                marker_color="#9AE6B4", opacity=0.55,
+                yaxis="y2",
+            ))
+
+            # Línea de punto de reorden
+            if _s_reorden > 0:
+                _fig_pron.add_hline(y=_s_reorden, line_dash="dash", line_color="#E53E3E",
+                                    line_width=1.5,
+                                    annotation_text=f"Punto de reorden ({int(_s_reorden)} u)",
+                                    annotation_position="right",
+                                    annotation_font_size=10)
+
+            _fig_pron.update_layout(
+                height=360,
+                margin=dict(t=20, b=40, l=60, r=140),
+                legend=dict(orientation="h", y=-0.18, x=0),
+                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="#f8fafc",
+                xaxis=dict(title="Semana", showgrid=True, gridcolor="#e2e8f0"),
+                yaxis=dict(title="Unidades en stock / consumo real", showgrid=True,
+                           gridcolor="#e2e8f0", tickformat=","),
+                yaxis2=dict(title="Consumo proyectado (u/sem)",
+                            overlaying="y", side="right", showgrid=False),
+                barmode="overlay",
+            )
+            st.plotly_chart(_fig_pron, use_container_width=True)
+            st.caption(
+                "🔵 Consumo real semanal  |  🟠 Stock proyectado (descontando consumo promedio)  |  "
+                "🟩 Consumo proyectado por semana  |  🔴 Punto de reorden"
+            )
+
+            st.divider()
+
+            # ── Tabla: productos con stock insuficiente en 4 semanas ─────
+            st.markdown("#### Alertas de stock proyectado — próximas 4 semanas")
+            _filas_alerta = []
+            _alertas_webhook = []
+            for _, _rr in _res_med.iterrows():
+                _md   = float(_rr["media_diaria"])
+                if _md <= 0:
+                    continue
+                _stk  = float(_rr["stock_total"])
+                _nom_a = _rr[COL_NOMBRE]
+                _cod_a = str(_rr[COL_CODIGO])
+                _s_a   = float(pd.to_numeric(_rr.get("STC_MIN", None), errors="coerce") or 0)
+                if _s_a == 0:
+                    _vd_a = max(float(_rr.get("var_diaria", _md)), 0.001)
+                    _s_a  = float(calcular_politicas(_md, _vd_a, costo_orden, costo_mantener, lead_time, periodo_revision, Z)["s"])
+
+                _stk_2s = max(0.0, _stk - _md * 14)   # stock en 2 semanas
+                _stk_4s = max(0.0, _stk - _md * 28)   # stock en 4 semanas
+
+                _bajo_2s = _stk_2s < _s_a and _s_a > 0
+                _bajo_4s = _stk_4s < _s_a and _s_a > 0
+
+                if not (_bajo_2s or _bajo_4s):
+                    continue
+
+                _estado_a = "⚠️ Crítico — pedir esta semana" if _bajo_2s else "🔔 Atención — pedir pronto"
+                _filas_alerta.append({
+                    "Medicamento":               _nom_a,
+                    "Stock actual (u)":          int(_stk),
+                    "Consumo prom. semanal (u)": round(_md * 7, 1),
+                    "Stock en 2 semanas (u)":    int(_stk_2s),
+                    "Stock en 4 semanas (u)":    int(_stk_4s),
+                    "Punto de reorden (u)":      int(_s_a),
+                    "Estado":                    _estado_a,
+                })
+                if _bajo_2s:
+                    _alertas_webhook.append({
+                        "tipo_alerta":        "pronostico_stock_bajo",
+                        "medicamento":        _nom_a,
+                        "codigo":             _cod_a,
+                        "stock_actual":       int(_stk),
+                        "stock_en_2_semanas": int(_stk_2s),
+                        "punto_reorden":      int(_s_a),
+                        "consumo_semanal":    round(_md * 7, 1),
+                        "fecha_calculo":      date.today().strftime("%d/%m/%Y"),
+                    })
+
+            if _filas_alerta:
+                _df_alert = pd.DataFrame(_filas_alerta)
+                _ord_alert = {"⚠️ Crítico — pedir esta semana": 0, "🔔 Atención — pedir pronto": 1}
+                _df_alert["_ord"] = _df_alert["Estado"].map(_ord_alert)
+                _df_alert = _df_alert.sort_values("_ord").drop(columns="_ord").reset_index(drop=True)
+
+                _n_crit = len(_df_alert[_df_alert["Estado"].str.startswith("⚠️")])
+                _n_warn = len(_df_alert[_df_alert["Estado"].str.startswith("🔔")])
+                _c1a, _c2a = st.columns(2)
+                _c1a.metric("Críticos (≤ 2 semanas)", _n_crit, delta="Pedir esta semana" if _n_crit else None, delta_color="inverse")
+                _c2a.metric("Atencion (≤ 4 semanas)", _n_warn)
+
+                st.dataframe(_safe_df(_df_alert), use_container_width=True, hide_index=True, height=350)
+
+                # ── Webhook preventivo (una vez por sesión) ───────────────
+                if _alertas_webhook:
+                    _wh_key = f"_pron_wh_{date.today().isoformat()}"
+                    if not st.session_state.get(_wh_key):
+                        _ok_wh, _msg_wh = _disparar_webhook_plan({
+                            "tipo_alerta":   "pronostico_preventivo",
+                            "fecha_calculo": date.today().strftime("%d/%m/%Y"),
+                            "n_criticos":    len(_alertas_webhook),
+                            "productos":     _alertas_webhook,
+                        })
+                        st.session_state[_wh_key] = True
+                        if _ok_wh:
+                            st.info(f"Alerta preventiva enviada al webhook: {len(_alertas_webhook)} medicamento(s) bajo punto de reorden en ≤ 2 semanas.")
+                        elif _store_global().get("webhook_url", ""):
+                            st.warning(f"No se pudo enviar la alerta preventiva: {_msg_wh}")
+            else:
+                st.success("Todos los medicamentos tienen stock proyectado suficiente para las próximas 4 semanas.")
+
+    # ══════════════════════════════════════════════════════════════════════
+    # SUB-TAB: ABASTECIMIENTO
+    # ══════════════════════════════════════════════════════════════════════
+    with _t3_ab:
+        st.markdown(_ayuda(
+            "<b>Modulo de Abastecimiento</b> — Calcula automaticamente las politicas optimas de reposicion para cada medicamento, basandose en el historial de consumo y los parametros configurados en el panel lateral. "
+            "<b>Punto de reorden (s)</b>: nivel de existencias al que se debe emitir un nuevo pedido para no quedarse sin existencias durante el tiempo de entrega. "
+            "<b>Cantidad a pedir (EOQ)</b>: cantidad economicamente optima que minimiza la suma de costos de ordenar y de mantener inventario. "
+            "<b>Reserva de seguridad (SS)</b>: existencias extra para absorber variaciones inesperadas en la demanda o en el tiempo de entrega. "
+            "<b>Nivel maximo (S)</b>: techo de inventario para evitar exceso de existencias. "
+            "La tabla esta ordenada por urgencia: primero los productos que requieren accion inmediata."
+        ), unsafe_allow_html=True)
+        if not tiene_movimientos:
+            st.warning("Se requiere el archivo de movimientos para calcular las políticas.")
+        else:
+            # Calcular políticas para todos los productos (una sola vez)
+            filas_politicas = []
+            for i in range(len(resumen)):
+                fila = resumen.iloc[i]
+                if fila["media_diaria"] <= 0:
+                    continue
+                var_d      = max(fila["var_diaria"], 0.001)
+                p          = calcular_politicas(fila["media_diaria"], var_d, costo_orden, costo_mantener, lead_time, periodo_revision, Z)
+                R_etiqueta = f"Cada {int(periodo_revision)} días"
+                dias_cob = fila["dias_cobertura"]
+                if fila["estado"] == "VENCIDO":
+                    accion = "DAR DE BAJA — reponer"
+                elif fila["stock_total"] < p["s"]:
+                    accion = "Pedir ahora"
+                elif dias_cob is not None and not pd.isna(dias_cob) and dias_cob < (lead_time + periodo_revision) * 1.5:
+                    accion = "Pedir pronto"
+                else:
+                    accion = "Existencias suficientes"
+                filas_politicas.append({
+                    "Código":                       fila[COL_CODIGO],
+                    "Medicamento":                  fila[COL_NOMBRE],
+                    "Consumo diario promedio":       str(round(fila["media_diaria"], 1)) + " u/día",
+                    "Existencias actuales":          math.floor(fila["stock_total"]),
+                    "Pedir cuando queden menos de": math.ceil(p["s"]),
+                    "Cuánto pedir":                 math.ceil(p["Q"]),
+                    "Nivel máximo recomendado":      math.ceil(p["S"]),
+                    "Reserva de seguridad":         math.ceil(p["SS"]),
+                    "Días de existencias disponibles": dias_cob if dias_cob is not None and not pd.isna(dias_cob) else "—",
+                    "Revisar cada":                 R_etiqueta,
+                    "Acción recomendada":           accion,
+                    "_media":                       fila["media_diaria"],
+                })
+
+            if len(filas_politicas) == 0:
+                st.warning("No hay medicamentos con datos de demanda suficientes.")
+            else:
+                df_politicas = pd.DataFrame(filas_politicas)
+                orden_accion = {"DAR DE BAJA — reponer": 0, "Pedir ahora": 1, "Pedir pronto": 2, "Existencias suficientes": 3}
+                df_politicas["_orden"] = df_politicas["Acción recomendada"].map(orden_accion).fillna(4)
+                df_politicas = df_politicas.sort_values("_orden").drop(columns="_orden")
+
+                NOMBRES = {"(R,s,Q)": "Cantidad fija", "(R,S)": "Reponer hasta el máximo", "(R,s,S)": "Variable hasta el máximo"}
+                DESCRIPCION = {
+                    "(R,s,Q)": "Si las existencias están bajas, pide siempre la misma cantidad fija.",
+                    "(R,S)":   "Pide lo necesario para llegar al nivel máximo de existencias.",
+                    "(R,s,S)": "Si las existencias están bajas, pide lo necesario para llegar al máximo.",
+                }
+
+                # ── SECCIÓN 1: tabla de políticas ──────────────────────────────────
+                with st.expander("Detalle de abastecimiento", expanded=True):
+                    t3a, t3b = st.columns([3, 2])
+                    busq_t3 = t3a.text_input("Buscar:", placeholder="Nombre del producto...", key="busq_t3")
+                    # Filtrar solo las acciones que aparecen en los datos actuales
+                    acciones_disp = []
+                    for accion in ["DAR DE BAJA — reponer", "Pedir ahora", "Pedir pronto", "Existencias suficientes"]:
+                        if accion in df_politicas["Acción recomendada"].values:
+                            acciones_disp.append(accion)
+                    filtro_accion = t3b.multiselect("Filtrar por acción:", acciones_disp, default=acciones_disp, key="filtro_accion_t3")
+                    df_vis = df_politicas[df_politicas["Acción recomendada"].isin(filtro_accion)].drop(columns="_media", errors="ignore")
+                    if busq_t3.strip():
+                        df_vis = df_vis[df_vis["Medicamento"].str.contains(busq_t3.strip(), case=False, na=False)]
+                    st.caption(f"{len(df_vis)} producto(s)")
+                    st.dataframe(_safe_df(df_vis), use_container_width=True, hide_index=True, height=400)
+                    st.info("**Guía:** *Pedir cuando queden menos de X* = punto de reorden. *Cuánto pedir* = cantidad más económica (EOQ). *Reserva de seguridad* = colchón para imprevistos.")
+
+                # ── SECCIÓN 2: frecuencia de revisión ──────────────────────────────
+
+                # ── SECCIÓN 3: simulación de estrategias ───────────────────────────
+                with st.expander("Comparación de estrategias de pedido"):
+                    st.caption("Simula el costo anual de tres estrategias distintas para un medicamento.")
+                    # Ordenar los medicamentos de mayor a menor consumo para que el default sea relevante
+                    meds_sim_ord = df_politicas.sort_values("_media", ascending=False)["Medicamento"].tolist()
+                    med_sim = st.selectbox("Medicamento a simular:", meds_sim_ord, key="sim_med")
+                    # Obtener los datos del medicamento seleccionado
+                    fila_simulacion = resumen[resumen[COL_NOMBRE] == med_sim].iloc[0]
+                    media_sim = max(fila_simulacion["media_diaria"], 0.001)
+                    # var_diaria ya contiene min(Media, var_batch) del proceso de estimación
+                    var_diaria_raw = fila_simulacion["var_diaria"]
+                    var_sim = max(float(var_diaria_raw) if not pd.isna(var_diaria_raw) else media_sim, 0.001)
+                    params_sim = calcular_politicas(media_sim, var_sim, costo_orden, costo_mantener, lead_time, periodo_revision, Z)
+                    R_opt_sim, _ = recomendar_periodo(media_sim, var_sim, costo_orden, costo_mantener, lead_time)
+
+                    # Nivel máximo (S_inicio) según la política — igual que el notebook de referencia:
+                    #   (R,s,Q) → inventario inicial = s+Q+U; pide Q fija cuando IP ≤ s
+                    #   (R,S)   → S_inicio = s;     repone hasta s en CADA revisión
+                    #   (R,s,S) → S_inicio = s+Q;   repone hasta s+Q solo cuando IP ≤ s
+                    s_sim  = params_sim["s"]
+                    Q_sim  = params_sim["Q"]
+                    S_rsq  = params_sim["S"]   # = s + Q + U  (inventario inicial (R,s,Q))
+                    S_rs   = s_sim             # (R,S)  ordena hasta el propio punto de reorden
+                    S_rss  = s_sim + Q_sim     # (R,s,S) ordena hasta s + Q
+
+                    # ── Resumen de parámetros de simulación ───────────────────────
+                    pc1, pc2, pc3 = st.columns(3)
+                    with pc1:
+                        st.markdown("**Demanda**")
+                        st.markdown(f"""
 | Parámetro | Valor |
 |---|---|
 | Tasa de demanda (λ) | **{round(media_sim, 2)} u/día** |
