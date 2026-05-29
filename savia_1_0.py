@@ -2464,6 +2464,15 @@ with tab2:
         st.caption(f"{_t2n:,} producto(s) — ordenados por urgencia")
         st.dataframe(_safe_df(tabla), use_container_width=True, hide_index=True,
                      height=520, column_config=_ccfg)
+        _buf_inv_dl = io.BytesIO()
+        _safe_df(tabla).to_excel(_buf_inv_dl, index=False, engine="openpyxl")
+        st.download_button(
+            label=f"Descargar tabla de inventario ({_t2n:,} productos)",
+            data=_buf_inv_dl.getvalue(),
+            file_name=f"inventario_SAVIA_{date.today().strftime('%Y%m%d')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="dl_inventario",
+        )
 
     # ══════════════════════════════════════════════════════════════════════════
     # SUB-TAB 2 — VENCIMIENTOS
@@ -2728,6 +2737,42 @@ with tab2:
                         height=min(420, max(80, len(_df_sec) * 35 + 40)),
                     )
 
+            # ── Descargar tabla de vencimientos ──────────────────────────────
+            if len(_venc_vis) > 0:
+                _venc_dl_cols = [_venc_nom]
+                if _venc_lote and _venc_lote in _venc_vis.columns:
+                    _venc_dl_cols.append(_venc_lote)
+                if _venc_stk and _venc_stk in _venc_vis.columns:
+                    _venc_dl_cols.append(_venc_stk)
+                if IL_VENC and IL_VENC in _venc_vis.columns and IL_VENC not in _venc_dl_cols:
+                    _venc_dl_cols.append(IL_VENC)
+                _venc_dl_cols.append("dias_vencer")
+                _venc_export = _venc_vis[
+                    [c for c in _venc_dl_cols if c in _venc_vis.columns]
+                ].copy()
+                if IL_VENC and IL_VENC in _venc_export.columns:
+                    _venc_export[IL_VENC] = (
+                        pd.to_datetime(_venc_export[IL_VENC], errors="coerce")
+                        .dt.strftime("%d/%m/%Y").fillna("—")
+                    )
+                _venc_ren = {"dias_vencer": "Días hasta vencer"}
+                if _venc_nom: _venc_ren[_venc_nom] = "Medicamento"
+                if _venc_lote and _venc_lote != _venc_nom: _venc_ren[_venc_lote] = "Lote"
+                if _venc_stk  and _venc_stk  not in (_venc_nom, _venc_lote): _venc_ren[_venc_stk]  = "Unidades"
+                if IL_VENC    and IL_VENC    not in _venc_ren:                _venc_ren[IL_VENC]    = "Fecha vencimiento"
+                _venc_export = _venc_export.rename(
+                    columns={k: v for k, v in _venc_ren.items() if k}
+                )
+                _buf_venc_dl = io.BytesIO()
+                _safe_df(_venc_export).to_excel(_buf_venc_dl, index=False, engine="openpyxl")
+                st.download_button(
+                    label=f"Descargar tabla de vencimientos ({len(_venc_vis):,} lotes)",
+                    data=_buf_venc_dl.getvalue(),
+                    file_name=f"vencimientos_SAVIA_{date.today().strftime('%Y%m%d')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="dl_vencimientos",
+                )
+
     # ══════════════════════════════════════════════════════════════════════════
     # SUB-TAB 3 — DETALLE POR MEDICAMENTO
     # ══════════════════════════════════════════════════════════════════════════
@@ -2788,6 +2833,70 @@ with tab2:
                             help="No hay datos suficientes para estimar la cobertura (sin historial de consumo).")
             _dk4.metric("Sugerido pedir", f"{math.ceil(_d_sug):,} u" if _d_sug > 0 else "No requerido",
                         help="Cantidad recomendada para la próxima orden de compra, según el modelo de inventario y los parámetros configurados.")
+
+            # ── Fila adicional: quiebres históricos + comparativa mensual ─────
+            if tiene_movimientos and datos_movimientos is not None and _d_med > 0:
+                _hmov_q = datos_movimientos[
+                    datos_movimientos[COL_MOV_CODIGO] == _cod_d
+                ].copy()
+                _hmov_q[COL_MOV_FECHA]    = pd.to_datetime(_hmov_q[COL_MOV_FECHA], dayfirst=True, errors="coerce")
+                _hmov_q[COL_MOV_CANTIDAD] = pd.to_numeric(_hmov_q[COL_MOV_CANTIDAD], errors="coerce").fillna(0)
+                _hmov_q = _hmov_q.dropna(subset=[COL_MOV_FECHA])
+                _hoy_q      = pd.Timestamp.today().normalize()
+                _hace_12m_q = _hoy_q - pd.DateOffset(months=12)
+                _hm_q = (
+                    _hmov_q[_hmov_q[COL_MOV_FECHA] >= _hace_12m_q]
+                    .set_index(COL_MOV_FECHA)
+                    .resample("MS")[COL_MOV_CANTIDAD].sum()
+                )
+                _mes_act_ts_q  = _hoy_q.to_period("M").to_timestamp()
+                _meses_hist_q  = _hm_q[_hm_q.index < _mes_act_ts_q]
+                _dias_transc_q = max((_hoy_q - _mes_act_ts_q).days + 1, 1)
+                _dias_en_mes_q = ((_mes_act_ts_q + pd.DateOffset(months=1)) - _mes_act_ts_q).days
+                _consumo_mes_q = float(
+                    _hmov_q[_hmov_q[COL_MOV_FECHA] >= _mes_act_ts_q][COL_MOV_CANTIDAD].sum()
+                )
+                _dkq1, _dkq2 = st.columns(2)
+
+                # KPI: meses sin dispensación (posibles quiebres)
+                if len(_meses_hist_q) > 0:
+                    _n_quiebres_q = int((_meses_hist_q == 0).sum())
+                    _dkq1.metric(
+                        "Meses sin dispensación (últ. 12 m.)",
+                        f"{_n_quiebres_q} de {len(_meses_hist_q)}",
+                        help="Meses completos en que no hubo ninguna dispensación para este medicamento. "
+                             "Con demanda activa, estos meses pueden indicar quiebres de stock no formalizados.",
+                    )
+                else:
+                    _dkq1.metric("Meses sin dispensación (últ. 12 m.)", "—")
+
+                # KPI: consumo mes actual vs promedio histórico (por tasa diaria)
+                if len(_meses_hist_q) >= 2:
+                    _avg_hist_q    = float(_meses_hist_q.mean())
+                    _tasa_actual_q = _consumo_mes_q / _dias_transc_q
+                    _tasa_hist_q   = _avg_hist_q / max(_dias_en_mes_q, 1)
+                    if _tasa_hist_q > 0:
+                        _pct_q = (_tasa_actual_q - _tasa_hist_q) / _tasa_hist_q * 100
+                        _dkq2.metric(
+                            f"Consumo mes actual ({_dias_transc_q} d de {_dias_en_mes_q} d)",
+                            f"{int(_consumo_mes_q):,} u",
+                            delta=f"{'+' if _pct_q >= 0 else ''}{_pct_q:.1f}% vs promedio",
+                            delta_color="off",
+                            help=f"Tasa diaria actual: {_tasa_actual_q:.1f} u/día. "
+                                 f"Promedio histórico: {_tasa_hist_q:.1f} u/día. "
+                                 f"Se compara la tasa diaria para no penalizar por mes incompleto.",
+                        )
+                    else:
+                        _dkq2.metric(
+                            f"Consumo mes actual ({_dias_transc_q} d)",
+                            f"{int(_consumo_mes_q):,} u",
+                        )
+                else:
+                    _dkq2.metric(
+                        "Consumo mes actual",
+                        f"{int(_consumo_mes_q):,} u",
+                        help="Historial insuficiente para calcular la comparativa mensual.",
+                    )
 
             st.divider()
 
@@ -3235,6 +3344,37 @@ with tab3:
                     st.caption(f"{len(df_vis)} producto(s)")
                     st.dataframe(_safe_df(df_vis), use_container_width=True, hide_index=True, height=400)
                     st.info("**Guía:** *Pedir cuando queden menos de X* = punto de reorden. *Cuánto pedir* = cantidad más económica (EOQ). *Reserva de seguridad* = colchón para imprevistos.")
+
+                    # ── Descargar plan de pedido ──────────────────────────────────────
+                    _df_pedido_dl = df_politicas[
+                        df_politicas["Acción recomendada"].isin(
+                            ["DAR DE BAJA — reponer", "Pedir ahora", "Pedir pronto"]
+                        )
+                    ].drop(columns="_media", errors="ignore").copy()
+                    if len(_df_pedido_dl) > 0:
+                        _costo_vals_ab = (
+                            pd.to_numeric(resumen["costo_unitario"], errors="coerce").fillna(0)
+                            if "costo_unitario" in resumen.columns
+                            else pd.Series(0.0, index=resumen.index)
+                        )
+                        _costo_map_ab = dict(zip(resumen[COL_CODIGO].astype(str), _costo_vals_ab))
+                        _df_pedido_dl["Costo unitario (CLP)"] = (
+                            _df_pedido_dl["Código"].astype(str).map(_costo_map_ab).fillna(0)
+                        )
+                        _df_pedido_dl["Costo estimado pedido (CLP)"] = (
+                            pd.to_numeric(_df_pedido_dl["Cuánto pedir"], errors="coerce").fillna(0) *
+                            _df_pedido_dl["Costo unitario (CLP)"]
+                        ).round(0).astype(int)
+                        _buf_ped = io.BytesIO()
+                        _df_pedido_dl.to_excel(_buf_ped, index=False, engine="openpyxl")
+                        st.download_button(
+                            label=f"Descargar plan de pedido  ({len(_df_pedido_dl)} producto(s) a reponer)",
+                            data=_buf_ped.getvalue(),
+                            file_name=f"plan_pedido_SAVIA_{date.today().strftime('%Y%m%d')}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            use_container_width=True,
+                            key="dl_plan_pedido",
+                        )
 
                 # ── SECCIÓN 2: frecuencia de revisión ──────────────────────────────
 
