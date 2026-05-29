@@ -241,9 +241,9 @@ def encontrar_columna(df, palabras_clave, ya_usadas):
 # ──────────────────────────────────────────────────────────────────────────────
 def calcular_estado(dias):
     if pd.isna(dias): return "Sin fecha"
-    if días < 0:      return "VENCIDO"
-    if días <= 30:    return "CRITICO"
-    if días <= 90:    return "ADVERTENCIA"
+    if dias < 0:      return "VENCIDO"
+    if dias <= 30:    return "CRITICO"
+    if dias <= 90:    return "ADVERTENCIA"
     return "NORMAL"
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1667,17 +1667,28 @@ with tab1:
 
     _fi5.metric("Total productos",  f"{len(resumen):,}",
                 help="Cantidad de medicamentos distintos actualmente en el inventario.")
-    _vv_fmt = (f"${_valor_vencido/1_000_000:.1f}M" if _valor_vencido >= 1_000_000
-               else f"${_valor_vencido/1_000:.0f}K"  if _valor_vencido >= 100_000
-               else f"${_valor_vencido:,.0f}")
-    _fi6.metric(
-        "Valor vencido",
-        f"{_vv_fmt} CLP" if _valor_vencido > 0 else "$0 CLP",
-        delta=f"{_pct_perdida:.1f}% del inventario" if _valor_vencido > 0 else "Sin vencidos registrados",
-        delta_color="off",
-        help="Valor económico (en pesos chilenos) de los medicamentos cuya fecha de vencimiento ya superó la fecha actual. "
-             "Representa pérdida directa de recursos del establecimiento.",
-    )
+    if formato_hospital:
+        # Archivo de consumos: sin datos de vencimiento → mostrar quiebres de stock
+        _fi6.metric(
+            "Sin existencias",
+            f"{_n_quiebre:,}",
+            delta=f"{_n_quiebre / len(resumen) * 100:.1f}% del total" if len(resumen) else None,
+            delta_color="off",
+            help="Cantidad de medicamentos con stock igual a cero. "
+                 "El archivo cargado no contiene datos de vencimiento.",
+        )
+    else:
+        _vv_fmt = (f"${_valor_vencido/1_000_000:.1f}M" if _valor_vencido >= 1_000_000
+                   else f"${_valor_vencido/1_000:.0f}K"  if _valor_vencido >= 100_000
+                   else f"${_valor_vencido:,.0f}")
+        _fi6.metric(
+            "Valor vencido",
+            f"{_vv_fmt} CLP" if _valor_vencido > 0 else "$0 CLP",
+            delta=f"{_pct_perdida:.1f}% del inventario" if _valor_vencido > 0 else "Sin vencidos registrados",
+            delta_color="off",
+            help="Valor económico (en pesos chilenos) de los medicamentos cuya fecha de vencimiento ya superó la fecha actual. "
+                 "Representa pérdida directa de recursos del establecimiento.",
+        )
 
     st.markdown("<div style='margin:12px 0'></div>", unsafe_allow_html=True)
 
