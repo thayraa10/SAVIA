@@ -194,6 +194,15 @@ hr { border-color: #e2e8f0 !important; }
 </style>
 """, unsafe_allow_html=True)
 
+def _m(n) -> str:
+    """Formatea un número entero con punto como separador de miles (estilo Chile).
+    Ej.: 1285 → '1.285', 37842 → '37.842'.
+    """
+    try:
+        return f"{int(round(float(n))):,}".replace(",", ".")
+    except Exception:
+        return str(n)
+
 # ──────────────────────────────────────────────────────────────────────────────
 def _safe_df(df):
     """Sanitiza un DataFrame para st.dataframe():
@@ -1665,13 +1674,13 @@ with tab1:
         </div>
         """, unsafe_allow_html=True)
 
-    _fi5.metric("Total productos",  f"{len(resumen):,}",
+    _fi5.metric("Total productos",  f"{_m(len(resumen))}",
                 help="Cantidad de medicamentos distintos actualmente en el inventario.")
     if formato_hospital:
         # Archivo de consumos: sin datos de vencimiento → mostrar quiebres de stock
         _fi6.metric(
             "Sin existencias",
-            f"{_n_quiebre:,}",
+            f"{_m(_n_quiebre)}",
             delta=f"{_n_quiebre / len(resumen) * 100:.1f}% del total" if len(resumen) else None,
             delta_color="off",
             help="Cantidad de medicamentos con stock igual a cero. "
@@ -1842,7 +1851,7 @@ with tab1:
             _n10  = len(_top10)
             _noms = [n[:30] + "…" if len(n) > 30 else n for n in _top10[COL_NOMBRE]]
             _cb   = [f"rgba(49,130,206,{1 - i * 0.06})" for i in range(_n10)]
-            _lb   = [f"{int(v):,}" for v in _top10["consumo_mensual"]]
+            _lb   = [f"{_m(int(v))}" for v in _top10["consumo_mensual"]]
             _fig_bar = go.Figure(go.Bar(
                 x=_top10["consumo_mensual"], y=_noms,
                 orientation="h", marker_color=_cb, text=_lb, textposition="outside",
@@ -1925,7 +1934,7 @@ with tab1:
                 _vc_df["_ord"] = _vc_df["Estado"].map(_vc_orden).fillna(9)
                 _vc_df = _vc_df.sort_values("_ord").reset_index(drop=True)
                 _vc_title = "Unidades en existencias por estado"
-                _vc_fmt   = [f"{int(v):,}" for v in _vc_df["Valor"]]
+                _vc_fmt   = [f"{_m(int(v))}" for v in _vc_df["Valor"]]
                 _vc_hover = "<b>%{x}</b><br>%{y:,} unidades<extra></extra>"
 
             _vc_colors = [_vc_pal.get(e, "#A0AEC0") for e in _vc_df["Estado"]]
@@ -2011,8 +2020,8 @@ with tab1:
             _val_ped = float((_sug_all2[_df_sel.index] * _df_sel["costo_unitario"]).sum()) if "costo_unitario" in _df_sel.columns else 0
 
             _rk1, _rk2, _rk3, _rk4 = st.columns(4)
-            _rk1.metric("Productos en estado selecciónado", f"{_n_prod:,}")
-            _rk2.metric("Requieren pedido",                 f"{_n_pedir:,}")
+            _rk1.metric("Productos en estado selecciónado", f"{_m(_n_prod)}")
+            _rk2.metric("Requieren pedido",                 f"{_m(_n_pedir)}")
             _rk3.metric("Valor en existencias (selección)", f"${_val_sel:,.0f} CLP")
             _rk4.metric("Valor estimado a pedir",           f"${_val_ped:,.0f} CLP")
 
@@ -2043,8 +2052,8 @@ with tab1:
                 _tbl_html += (
                     f'<tr style="border-bottom:1px solid #e2e8f0;">'
                     f'<td style="padding:8px 12px">{_badge}</td>'
-                    f'<td style="padding:8px 12px;text-align:right;font-weight:600">{int(_drow["Productos"]):,}</td>'
-                    f'<td style="padding:8px 12px;text-align:right">{int(_drow["Unidades_totales"]):,}</td>'
+                    f'<td style="padding:8px 12px;text-align:right;font-weight:600">{_m(int(_drow["Productos"]))}</td>'
+                    f'<td style="padding:8px 12px;text-align:right">{_m(int(_drow["Unidades_totales"]))}</td>'
                     f'</tr>'
                 )
             _tbl_html += '</tbody></table>'
@@ -2177,8 +2186,8 @@ with tab2:
                 f'<div style="background:white;border-radius:8px;padding:10px 14px;margin-top:24px;'
                 f'box-shadow:0 1px 3px rgba(0,0,0,0.07)">'
                 f'<div style="font-size:0.60rem;color:#94a3b8;font-weight:600;text-transform:uppercase">Unidades totales en existencia</div>'
-                f'<div style="font-size:1.15rem;font-weight:800;color:#0f172a">{int(_bd_total):,} u</div>'
-                f'<div style="font-size:0.75rem;color:#64748b">{len(_bod_cols)} bodegas · {len(resumen):,} medicamentos</div>'
+                f'<div style="font-size:1.15rem;font-weight:800;color:#0f172a">{_m(int(_bd_total))} u</div>'
+                f'<div style="font-size:0.75rem;color:#64748b">{len(_bod_cols)} bodegas · {_m(len(resumen))} medicamentos</div>'
                 f'</div>',
                 unsafe_allow_html=True,
             )
@@ -2231,7 +2240,7 @@ with tab2:
             ]
             _bd_hover = [
                 f"<b>{_bod_clean_name(k)}</b><br>"
-                f"Existencias: <b>{int(_bd_stk[k]):,}</b> u<br>"
+                f"Existencias: <b>{_m(int(_bd_stk[k]))}</b> u<br>"
                 f"Participación: {_bd_pct[i]}<extra></extra>"
                 for i, k in enumerate(_bod_cols)
             ]
@@ -2318,7 +2327,7 @@ with tab2:
 
                 st.markdown(
                     f'<div style="font-size:0.80rem;color:#64748b;margin-bottom:6px">'
-                    f'<b>{len(_bd_show):,}</b> productos con existencias en <b>{_bd_det_sel}</b></div>',
+                    f'<b>{_m(len(_bd_show))}</b> productos con existencias en <b>{_bd_det_sel}</b></div>',
                     unsafe_allow_html=True,
                 )
                 st.dataframe(_safe_df(_bd_show), use_container_width=True, hide_index=True, height=320)
@@ -2405,13 +2414,13 @@ with tab2:
                      else f"${_t2_val/1e6:.1f}M" if _t2_val >= 1e6 else f"${_t2_val:,.0f}")
 
         _t2c1, _t2c2, _t2c3, _t2c4 = st.columns(4)
-        _t2c1.metric("Productos en vista",   f"{_t2n:,}",    delta="según filtros activos",
+        _t2c1.metric("Productos en vista",   f"{_m(_t2n)}",    delta="según filtros activos",
                      delta_color="off",
                      help="Total de medicamentos visibles con los filtros de estado y búsqueda activos.")
-        _t2c2.metric("Sin existencias",      f"{_t2_sin:,}", delta=_t2_pct if _t2_pct else None,
+        _t2c2.metric("Sin existencias",      f"{_m(_t2_sin)}", delta=_t2_pct if _t2_pct else None,
                      delta_color="off",
                      help="Medicamentos con stock igual a cero dentro de la selección actual.")
-        _t2c3.metric("Requieren pedido",     f"{_t2_ped:,}", delta="cant. sugerida > 0",
+        _t2c3.metric("Requieren pedido",     f"{_m(_t2_ped)}", delta="cant. sugerida > 0",
                      delta_color="off",
                      help="Medicamentos con cantidad sugerida mayor a cero en la selección actual.")
         _t2c4.metric("Valor en existencias", _t2_val_s,      delta="CLP — selección actual",
@@ -2448,11 +2457,11 @@ with tab2:
         # Pre-formatear columnas de dinero con separador de miles
         if "costo_unitario" in tabla.columns:
             tabla["costo_unitario"] = tabla["costo_unitario"].apply(
-                lambda v: f"${int(v):,}" if pd.notna(v) and v > 0 else "—"
+                lambda v: f"${_m(int(v))}" if pd.notna(v) and v > 0 else "—"
             )
         if "valor_inventario" in tabla.columns:
             tabla["valor_inventario"] = tabla["valor_inventario"].apply(
-                lambda v: f"${int(v):,}" if pd.notna(v) and v > 0 else "—"
+                lambda v: f"${_m(int(v))}" if pd.notna(v) and v > 0 else "—"
             )
 
         tabla = tabla.rename(columns={
@@ -2488,13 +2497,13 @@ with tab2:
             _ccfg["Días p/Vencer"] = st.column_config.NumberColumn("Días p/Vencer", format="%d d",
                            help="Días que faltan para que venza el lote más próximo a caducar. Negativo = ya vencido.")
 
-        st.caption(f"{_t2n:,} producto(s) — ordenados por urgencia")
+        st.caption(f"{_m(_t2n)} producto(s) — ordenados por urgencia")
         st.dataframe(_safe_df(tabla), use_container_width=True, hide_index=True,
                      height=520, column_config=_ccfg)
         _buf_inv_dl = io.BytesIO()
         _safe_df(tabla).to_excel(_buf_inv_dl, index=False, engine="openpyxl")
         st.download_button(
-            label=f"Descargar tabla con filtros aplicados ({_t2n:,} productos)",
+            label=f"Descargar tabla con filtros aplicados ({_m(_t2n)} productos)",
             data=_buf_inv_dl.getvalue(),
             file_name=f"inventario_SAVIA_{date.today().strftime('%Y%m%d')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -2567,13 +2576,13 @@ with tab2:
             _nv_ok   = int((_venc_df["dias_vencer"] >= 90).sum())
             _vkc1, _vkc2, _vkc3, _vkc4 = st.columns(4)
             for _vc, _vl_lbl, _vv, _vcolor, _vhelp in [
-                (_vkc1, "Lotes vencidos",       f"{_nv_venc:,}", "#E53E3E",
+                (_vkc1, "Lotes vencidos",       f"{_m(_nv_venc)}", "#E53E3E",
                  "Lotes cuya fecha de vencimiento ya pasó. Deben darse de baja del inventario."),
-                (_vkc2, "Vencen en <30 días",   f"{_nv_crit:,}", "#DD6B20",
+                (_vkc2, "Vencen en <30 días",   f"{_m(_nv_crit)}", "#DD6B20",
                  "Lotes con menos de 30 días antes de caducar. Requieren acción inmediata."),
-                (_vkc3, "Vencen en 30–90 días", f"{_nv_adv:,}",  "#D69E2E",
+                (_vkc3, "Vencen en 30–90 días", f"{_m(_nv_adv)}",  "#D69E2E",
                  "Lotes con entre 1 y 3 meses de vida útil restánte. Monitorear y planificar."),
-                (_vkc4, "Vencen en >90 días",   f"{_nv_ok:,}",   "#38A169",
+                (_vkc4, "Vencen en >90 días",   f"{_m(_nv_ok)}",   "#38A169",
                  "Lotes con más de 3 meses hasta su vencimiento. Estado adecuado."),
             ]:
                 _vc.markdown(
@@ -2679,10 +2688,10 @@ with tab2:
                 # Situación en texto natural (reemplaza número crudo)
                 def _dias_legible(d):
                     d = int(d)
-                    if d < 0:   return f"Vencido hace {abs(d):,} días"
+                    if d < 0:   return f"Vencido hace {_m(abs(d))} días"
                     if d == 0:  return "Vence hoy"
                     if d == 1:  return "Vence mañana"
-                    return f"Vence en {d:,} días"
+                    return f"Vence en {_m(d)} días"
 
                 _crit_show["Situación"]  = _crit_show["dias_vencer"].apply(_dias_legible)
                 _crit_show["_estado"]    = _crit_show["dias_vencer"].apply(
@@ -2793,7 +2802,7 @@ with tab2:
                 _buf_venc_dl = io.BytesIO()
                 _safe_df(_venc_export).to_excel(_buf_venc_dl, index=False, engine="openpyxl")
                 st.download_button(
-                    label=f"Descargar tabla de vencimientos ({len(_venc_vis):,} lotes)",
+                    label=f"Descargar tabla de vencimientos ({_m(len(_venc_vis))} lotes)",
                     data=_buf_venc_dl.getvalue(),
                     file_name=f"vencimientos_SAVIA_{date.today().strftime('%Y%m%d')}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -2850,7 +2859,7 @@ with tab2:
 
             # ── KPI strip ─────────────────────────────────────────────────────
             _dk1, _dk2, _dk3, _dk4 = st.columns(4)
-            _dk1.metric("Existencias actuales", f"{math.floor(_d_stk):,} u",
+            _dk1.metric("Existencias actuales", f"{_m(math.floor(_d_stk))} u",
                         help="Total de unidades fisicas disponibles en todas las bodegas para este medicamento.")
             _dk2.metric("Consumo prom. mensual", f"{_d_med*30:,.0f} u/mes" if _d_med > 0 else "—",
                         help="Promedio de unidades dispensadas por mes, calculado a partir del historial de movimientos.")
@@ -2863,7 +2872,7 @@ with tab2:
             else:
                 _dk3.metric("Cobertura", "—",
                             help="No hay datos suficientes para estimar la cobertura (sin historial de consumo).")
-            _dk4.metric("Sugerido pedir", f"{math.ceil(_d_sug):,} u" if _d_sug > 0 else "No requerido",
+            _dk4.metric("Sugerido pedir", f"{_m(math.ceil(_d_sug))} u" if _d_sug > 0 else "No requerido",
                         help="Cantidad recomendada para la próxima orden de compra, según el modelo de inventario y los parámetros configurados.")
 
             # ── Fila adicional: quiebres históricos + comparativa mensual ─────
@@ -2915,7 +2924,7 @@ with tab2:
                         _signo = "+" if _pct_q >= 0 else ""
                         _dkq2.metric(
                             "Consumo del mes en curso",
-                            f"{int(_consumo_mes_q):,} u",
+                            f"{_m(int(_consumo_mes_q))} u",
                             delta=f"{_signo}{_pct_q:.1f}% vs promedio mensual histórico",
                             delta_color="off",
                             help=f"Unidades consumidas en lo que va del mes ({_dias_transc_q} de {_dias_en_mes_q} días). "
@@ -2926,14 +2935,14 @@ with tab2:
                     else:
                         _dkq2.metric(
                             "Consumo del mes en curso",
-                            f"{int(_consumo_mes_q):,} u",
+                            f"{_m(int(_consumo_mes_q))} u",
                             delta=f"{_dias_transc_q} de {_dias_en_mes_q} días transcurridos",
                             delta_color="off",
                         )
                 else:
                     _dkq2.metric(
                         "Consumo del mes en curso",
-                        f"{int(_consumo_mes_q):,} u",
+                        f"{_m(int(_consumo_mes_q))} u",
                         help="Historial insuficiente para calcular la comparativa mensual.",
                     )
 
@@ -2988,26 +2997,26 @@ with tab2:
                 )
                 st.plotly_chart(_fig_g, use_container_width=True)
                 if _d_smax > 0 and _d_smin > 0:
-                    _stk_fmt = f"{int(_d_stk):,}"
-                    _min_fmt = f"{int(_d_smin):,}"
+                    _stk_fmt = f"{_m(int(_d_stk))}"
+                    _min_fmt = f"{_m(int(_d_smin))}"
                     if _d_scrit > 0 and _d_stk <= _d_scrit:
                         _gauge_txt = (
                             f"Existencias actuales: {_stk_fmt} u — nivel crítico. "
-                            f"El stock ha caído por debajo del umbral de emergencia ({int(_d_scrit):,} u). "
+                            f"El stock ha caído por debajo del umbral de emergencia ({_m(int(_d_scrit))} u). "
                             f"Se requiere pedido urgente para evitar quiebre total."
                         )
                     elif _d_stk <= _d_smin:
                         _falta = int(_d_smin - _d_stk)
                         _gauge_txt = (
                             f"Existencias actuales: {_stk_fmt} u — por debajo del mínimo recomendado. "
-                            f"Se necesitan al menos {_min_fmt} u para estar cubiertos; faltan {_falta:,} u. "
+                            f"Se necesitan al menos {_min_fmt} u para estar cubiertos; faltan {_m(_falta)} u. "
                             f"Se recomienda realizar un pedido pronto."
                         )
                     else:
                         _sobre = int(_d_stk - _d_smin)
                         _gauge_txt = (
                             f"Existencias actuales: {_stk_fmt} u — nivel adecuado. "
-                            f"Se superan las {_min_fmt} u mínimas recomendadas en {_sobre:,} u. "
+                            f"Se superan las {_min_fmt} u mínimas recomendadas en {_m(_sobre)} u. "
                             f"No se requiere pedido en este momento."
                         )
                     st.caption(_gauge_txt)
@@ -3037,7 +3046,7 @@ with tab2:
                     st.markdown("**Información del producto**")
                     _info_rows = [
                         {"Campo": "Código",       "Valor": str(_cod_d)},
-                        {"Campo": "Existencias actuales", "Valor": f"{math.floor(_d_stk):,} u"},
+                        {"Campo": "Existencias actuales", "Valor": f"{_m(math.floor(_d_stk))} u"},
                     ]
                     _badge_colors_d = {
                         "Sin existencias":   ("#FED7D7","#C53030"),
@@ -3508,8 +3517,8 @@ with tab3:
 | Tiempo de entrega (LT) | **{int(lead_time)} días** |
 | Período de revisión (R) | **{int(periodo_revision)} días** |
 | Nivel de servicio (Z) | **{Z} (~97 %)** |
-| Costo por orden (OC) | **${costo_orden:,} CLP** |
-| Costo mantener (HC) | **${costo_mantener:,} CLP/u/día** |
+| Costo por orden (OC) | **${_m(costo_orden)} CLP** |
+| Costo mantener (HC) | **${_m(costo_mantener)} CLP/u/día** |
 """)
                 with pc3:
                     st.markdown("**Parámetros de política**")
@@ -3583,8 +3592,8 @@ with tab3:
                             "Estrategia":        NOMBRES[pol],
                             "Cómo funciona":     DESCRIPCION[pol],
                             "Quiebres de stock": disponibilidad,
-                            "Costo diario ($)":  f"{costos_diarios[pol]:,}",
-                            "Costo anual ($)":   f"{costos_anuales[pol]:,}",
+                            "Costo diario ($)":  f"{_m(costos_diarios[pol])}",
+                            "Costo anual ($)":   f"{_m(costos_anuales[pol])}",
                             "Evaluación":        etiqueta,
                         })
                     st.dataframe(_safe_df(pd.DataFrame(filas_comparación)), use_container_width=True, hide_index=True)
