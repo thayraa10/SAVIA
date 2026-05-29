@@ -1275,50 +1275,6 @@ with st.sidebar:
 _guardar_params(fecha_revision, hora_revision, responsable,
                 costo_orden, costo_mantener, lead_time, periodo_revision)
 
-# ── Webhook Make.com (alertas automáticas) ────────────────────────────────────
-with st.sidebar.expander("Alertas automáticas (Make.com)", expanded=False):
-    st.caption("Pega aquí la URL del webhook de Make para recibir alertas cuando el stock baje del punto de reorden o cuando haya lotes rechazados.")
-    _wh_stored = _store_global().get("webhook_url", "")
-    _wh_input  = st.text_input("URL del webhook:", value=_wh_stored,
-                               placeholder="https://hook.eu2.make.com/...",
-                               key="wh_url_input", label_visibility="collapsed")
-    if _wh_input != _wh_stored:
-        _store_global()["webhook_url"] = _wh_input.strip()
-
-# ── GitHub Gist (persistencia gratuita entre sesiones) ────────────────────────
-with st.sidebar.expander("GitHub Gist (persistencia)", expanded=False):
-    _gh_tok_sb = _gh_token()
-    if not _gh_tok_sb:
-        st.caption(
-            "Sin token configurado. Agrega `[github] token = \"ghp_...\"` "
-            "en `.streamlit/secrets.toml` para activar la persistencia gratuita."
-        )
-    else:
-        st.success("✅ Token de GitHub configurado")
-        _gh_gid_sb = _store_global().get("gh_gist_id") or _gh_find_gist()
-        if _gh_gid_sb:
-            st.caption(f"Gist activo: `{_gh_gid_sb[:12]}…`")
-        else:
-            st.caption("Sin Gist aún — se creará al guardar por primera vez.")
-
-        # Botón: cargar desde Gist
-        if st.button("⬇ Cargar desde Gist", key="gh_load_btn", use_container_width=True):
-            with st.spinner("Descargando desde GitHub Gist…"):
-                _n_gh, _msg_gh = _gh_cargar_desde_gist()
-            if _n_gh:
-                st.success(_msg_gh)
-                st.rerun()
-            else:
-                st.info(_msg_gh)
-
-        # Botón: guardar manualmente
-        if st.button("⬆ Guardar en Gist ahora", key="gh_save_btn", use_container_width=True):
-            with st.spinner("Guardando en GitHub Gist…"):
-                _ok_gh, _msg_gh2 = _gh_guardar_en_gist()
-            if _ok_gh:
-                st.success(_msg_gh2)
-            else:
-                st.error(_msg_gh2)
 
 # ──────────────────────────────────────────────────────────────────────────────
 # CARGA DE DATOS (función auxiliar para ejemplo)
