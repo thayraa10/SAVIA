@@ -252,11 +252,11 @@ def calcular_estado(dias):
 # ──────────────────────────────────────────────────────────────────────────────
 def calcular_politicas(Media, V, OC, HC, LT, R, Z=1.645):
     # s cubre la demanda durante el lead time completo + un período de revisión
-    U  = math.ceil((Medía / (2 * V)) + ((V * R) / 2))
-    s  = math.ceil((Medía * (LT + R)) + Z * (V ** 0.5) * ((LT + R) ** 0.5))
+    U  = math.ceil((Media / (2 * V)) + ((V * R) / 2))
+    s  = math.ceil((Media * (LT + R)) + Z * (V ** 0.5) * ((LT + R) ** 0.5))
     Q  = math.ceil(((2 * OC * Media) / HC) ** 0.5)
     S  = s + Q + U
-    SS = max(0, math.ceil((Medía * R) + (Z * (V ** 0.5) * ((LT + R) ** 0.5) - U)))
+    SS = max(0, math.ceil((Media * R) + (Z * (V ** 0.5) * ((LT + R) ** 0.5) - U)))
 
     return {"s": s, "Q": Q, "S": S, "SS": SS, "U": U}
 
@@ -318,7 +318,7 @@ def _simular(Media, V, OC, HC, LT, R, s, Q, S_inicio, politica, NR=5, TiempoTota
     Inventario_final     = []
     Tiempo_final         = []
 
-    total_días = int(TiempoTotal + LT + R) + 10
+    total_dias = int(TiempoTotal + LT + R) + 10
 
     for replica in range(NR):
         np.random.seed(replica)
@@ -1465,7 +1465,7 @@ if tiene_movimientos:
         # Con un solo período no se puede calcular días entre llegadas → asumir 30 días
         if n == 1:
             lam   = batch_vals[0] / 30.0
-            medía = max(math.ceil(lam), 1)
+            media = max(math.ceil(lam), 1)
             return pd.Series({"media_diaria": float(media), "var_diaria": float(media)})
 
         # Días reales entre llegadas consecutivas (se requieren fechas válidas)
@@ -1487,7 +1487,7 @@ if tiene_movimientos:
         if lambda_estable <= 0 or np.isnan(lambda_estable):
             return pd.Series({"media_diaria": 0.0, "var_diaria": 0.0})
 
-        medía     = math.ceil(lambda_estable)
+        media     = math.ceil(lambda_estable)
         var_batch = float(pd.Series(batch_vals).var())
         if np.isnan(var_batch) or var_batch <= 0:
             var_batch = float(media)
