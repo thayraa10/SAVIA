@@ -2806,7 +2806,7 @@ with tab2:
     with _t2_det:
         st.markdown(_ayuda(
             "<b>Ficha completa de medicamento</b> — Selecciona cualquier producto para ver todos sus indicadores en detalle. "
-            "El <b>termometro (gauge)</b> muestra visualmente si las existencias están en zona crítica (rojo), de alerta (naranja) o adecuada (verde) respecto a las existencias mínimas y maximas definidas. "
+            "El <b>termómetro</b> muestra visualmente si las existencias están en zona crítica (rojo), de alerta (naranja) o adecuada (verde) respecto a las existencias mínimas y máximas definidas. "
             "La <b>tabla de información</b> resume parámetros operativos como existencias mínimas, máximas y críticas. "
             "El <b>historial mensual</b> permite identificar estacionalidad o tendencias de consumo. "
             "El buscador filtra el listado en tiempo real; el dropdown muestra primero los medicamentos de mayor consumo."
