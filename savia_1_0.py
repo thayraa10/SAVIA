@@ -2061,7 +2061,7 @@ with tab1:
         (3.5, 2.0, "Control de\nCalidad",  "#3182CE", "white"),
         (5.0, 2.8, "Aprobado",             "#38A169", "white"),
         (6.5, 2.8, "Bodega",               "#38A169", "white"),
-        (8.0, 2.8, "Dispensación",         "#276749", "white"),
+        (8.0, 2.8, "Entrega al\npaciente",   "#276749", "white"),
         (5.0, 1.2, "Rechazado",            "#C53030", "white"),
         (6.5, 1.2, "Reg. Pérdida",         "#C53030", "white"),
         (8.0, 1.2, "Desecho",              "#742A2A", "white"),
@@ -2089,7 +2089,7 @@ with tab1:
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
     )
     st.plotly_chart(_fig_flow_p1, use_container_width=True)
-    st.caption("Flujo estándar del ciclo de vida de un lote: desde la orden de compra hasta la dispensación o el desecho si es rechazado en control de calidad.")
+    st.caption("Flujo estándar del ciclo de vida de un lote: desde la orden de compra hasta la entrega al paciente o el desecho si es rechazado en control de calidad.")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 2 — INVENTARIO Y PRONÓSTICO
@@ -2303,7 +2303,7 @@ with tab2:
                     _bd_det_col: f"Existencias ({_bd_det_sel})",
                     "COSTO": "Costo unit.", "costo_unitario": "Costo unit.",
                     "STC_MIN": "Exist. mín.", "STC_MAX": "Exist. máx.",
-                    "ALCANCE": "Cobertura (m)",
+                    "ALCANCE": "Cobertura (meses)",
                 }).reset_index(drop=True)
 
                 st.markdown(
@@ -2318,7 +2318,7 @@ with tab2:
     # ══════════════════════════════════════════════════════════════════════════
     with _t2_inv:
         st.markdown(_ayuda(
-            "<b>Tabla de inventario</b> — Lista completa de medicamentos con sus existencias actuales, cobertura estimada y prioridad de reposición. "
+            "<b>Tabla de inventario</b> — Lista completa de medicamentos con sus existencias actuales y cobertura estimada. "
             "La tabla está ordenada por <b>urgencia</b>: primero aparecen los productos sin existencias, luego los críticos, y al final los que están bien abastecidos. "
             "<b>Cobertura (meses)</b>: tiempo estimado que duran las existencias actuales al ritmo de consumo histórico. "
             "<b>Cant. sugerida</b>: unidades recomendadas a pedir según el modelo de inventario configurado. "
@@ -2395,21 +2395,18 @@ with tab2:
                      else f"${_t2_val/1e6:.1f}M" if _t2_val >= 1e6 else f"${_t2_val:,.0f}")
 
         _t2c1, _t2c2, _t2c3, _t2c4 = st.columns(4)
-        for _cx, _lx, _vx, _sx, _cxc in [
-            (_t2c1, "Productos en vista",   f"{_t2n:,}",    "según filtros activos",  "#3182CE"),
-            (_t2c2, "Sin existencias",      f"{_t2_sin:,}", _t2_pct,                  "#E53E3E"),
-            (_t2c3, "Requieren pedido",     f"{_t2_ped:,}", "cant. sugerida > 0",     "#DD6B20"),
-            (_t2c4, "Valor en existencias", _t2_val_s,      "CLP — selección actual", "#38A169"),
-        ]:
-            _cx.markdown(
-                f'<div style="background:white;border-radius:10px;padding:12px 16px;margin:4px 0 10px 0;'
-                f'box-shadow:0 1px 3px rgba(0,0,0,0.07);border-top:3px solid {_cxc};">'
-                f'<div style="font-size:0.60rem;color:#64748b;font-weight:600;text-transform:uppercase;'
-                f'letter-spacing:0.05em;margin-bottom:4px">{_lx}</div>'
-                f'<div style="font-size:1.25rem;font-weight:800;color:#0f172a">{_vx}</div>'
-                f'<div style="font-size:0.62rem;color:#94a3b8;margin-top:2px">{_sx}</div>'
-                f'</div>', unsafe_allow_html=True,
-            )
+        _t2c1.metric("Productos en vista",   f"{_t2n:,}",    delta="según filtros activos",
+                     delta_color="off",
+                     help="Total de medicamentos visibles con los filtros de estado y búsqueda activos.")
+        _t2c2.metric("Sin existencias",      f"{_t2_sin:,}", delta=_t2_pct if _t2_pct else None,
+                     delta_color="off",
+                     help="Medicamentos con stock igual a cero dentro de la selección actual.")
+        _t2c3.metric("Requieren pedido",     f"{_t2_ped:,}", delta="cant. sugerida > 0",
+                     delta_color="off",
+                     help="Medicamentos con cantidad sugerida mayor a cero en la selección actual.")
+        _t2c4.metric("Valor en existencias", _t2_val_s,      delta="CLP — selección actual",
+                     delta_color="off",
+                     help="Valor económico total (existencias × costo unitario) de los productos en vista.")
 
         if formato_hospital and "_estado_cob" in tabla_base.columns:
             _ord2 = {"Sin existencias": 0, "Crítico (≤1 mes)": 1, "Bajo (1–3 meses)": 2, "Adecuado (>3 meses)": 3}
@@ -2487,7 +2484,7 @@ with tab2:
         _buf_inv_dl = io.BytesIO()
         _safe_df(tabla).to_excel(_buf_inv_dl, index=False, engine="openpyxl")
         st.download_button(
-            label=f"Descargar tabla de inventario ({_t2n:,} productos)",
+            label=f"Descargar tabla con filtros aplicados ({_t2n:,} productos)",
             data=_buf_inv_dl.getvalue(),
             file_name=f"inventario_SAVIA_{date.today().strftime('%Y%m%d')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -2883,17 +2880,17 @@ with tab2:
                 )
                 _dkq1, _dkq2 = st.columns(2)
 
-                # KPI: meses sin dispensación (posibles quiebres)
+                # KPI: meses sin consumo (posibles quiebres)
                 if len(_meses_hist_q) > 0:
                     _n_quiebres_q = int((_meses_hist_q == 0).sum())
                     _dkq1.metric(
-                        "Meses sin dispensación (últ. 12 m.)",
+                        "Meses sin consumo (últ. 12 m.)",
                         f"{_n_quiebres_q} de {len(_meses_hist_q)}",
-                        help="Meses completos en que no hubo ninguna dispensación para este medicamento. "
+                        help="Meses completos en que no hubo ningún consumo registrado para este medicamento. "
                              "Con demanda activa, estos meses pueden indicar quiebres de stock no formalizados.",
                     )
                 else:
-                    _dkq1.metric("Meses sin dispensación (últ. 12 m.)", "—")
+                    _dkq1.metric("Meses sin consumo (últ. 12 m.)", "—")
 
                 # KPI: consumo mes actual vs promedio histórico (por tasa diaria)
                 if len(_meses_hist_q) >= 2:
@@ -3304,7 +3301,7 @@ with tab3:
     # ══════════════════════════════════════════════════════════════════════
     with _t3_ab:
         st.markdown(_ayuda(
-            "<b>Módulo de Abastecimiento</b> — Calcula automáticamente las políticas recomendadas de reposición para cada medicamento, basándose en el historial de consumo y los parámetros configurados en el panel lateral. "
+            "<b>Módulo de Abastecimiento</b> — Calcula automáticamente las políticas de pedido recomendadas para cada medicamento, basándose en el historial de consumo y los parámetros configurados en el panel lateral. "
             "<b>Punto de reorden (s)</b>: nivel de existencias al que se debe emitir un nuevo pedido para no quedarse sin existencias durante el tiempo de entrega. "
             "<b>Cantidad a pedir (EOQ)</b>: cantidad económicamente recomendada que minimiza la suma de costos de ordenar y de mantener inventario. "
             "<b>Reserva de seguridad (SS)</b>: existencias extra para absorber variaciónes inesperadas en la demanda o en el tiempo de entrega. "
