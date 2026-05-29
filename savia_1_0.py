@@ -3350,36 +3350,6 @@ with tab3:
                     st.dataframe(_safe_df(df_vis), use_container_width=True, hide_index=True, height=400)
                     st.info("**Guía:** *Pedir cuando queden menos de X* = punto de reorden. *Cuánto pedir* = cantidad más económica (EOQ). *Reserva de seguridad* = colchón para imprevistos.")
 
-                    # ── Descargar plan de pedido ──────────────────────────────────────
-                    _df_pedido_dl = df_politicas[
-                        df_politicas["Acción recomendada"].isin(
-                            ["DAR DE BAJA — reponer", "Pedir ahora", "Pedir pronto"]
-                        )
-                    ].drop(columns="_media", errors="ignore").copy()
-                    if len(_df_pedido_dl) > 0:
-                        _costo_vals_ab = (
-                            pd.to_numeric(resumen["costo_unitario"], errors="coerce").fillna(0)
-                            if "costo_unitario" in resumen.columns
-                            else pd.Series(0.0, index=resumen.index)
-                        )
-                        _costo_map_ab = dict(zip(resumen[COL_CODIGO].astype(str), _costo_vals_ab))
-                        _df_pedido_dl["Costo unitario (CLP)"] = (
-                            _df_pedido_dl["Código"].astype(str).map(_costo_map_ab).fillna(0)
-                        )
-                        _df_pedido_dl["Costo estimado pedido (CLP)"] = (
-                            pd.to_numeric(_df_pedido_dl["Cuánto pedir"], errors="coerce").fillna(0) *
-                            _df_pedido_dl["Costo unitario (CLP)"]
-                        ).round(0).astype(int)
-                        _buf_ped = io.BytesIO()
-                        _df_pedido_dl.to_excel(_buf_ped, index=False, engine="openpyxl")
-                        st.download_button(
-                            label=f"Descargar plan de pedido  ({len(_df_pedido_dl)} producto(s) a reponer)",
-                            data=_buf_ped.getvalue(),
-                            file_name=f"plan_pedido_SAVIA_{date.today().strftime('%Y%m%d')}.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            use_container_width=True,
-                            key="dl_plan_pedido",
-                        )
 
                 # ── SECCIÓN 2: frecuencia de revisión ──────────────────────────────
 
