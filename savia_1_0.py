@@ -2055,18 +2055,28 @@ with tab1:
     # ── Diagrama: ciclo de vida de un lote ───────────────────────────────────
     st.divider()
     st.markdown("#### Flujo del ciclo de vida de un lote")
+    # Nodos: (x, y, etiqueta, color_fondo, color_texto)
+    # Después de Bodega el lote puede tener 3 destinos posibles
     _NODES_P1 = [
-        (0.5, 2.0, "Pedido OC",           "#3182CE", "white"),
-        (2.0, 2.0, "Llegada",              "#3182CE", "white"),
-        (3.5, 2.0, "Control de\nCalidad",  "#3182CE", "white"),
-        (5.0, 2.8, "Aprobado",             "#38A169", "white"),
-        (6.5, 2.8, "Bodega",               "#38A169", "white"),
-        (8.0, 2.8, "Entrega al\npaciente",   "#276749", "white"),
-        (5.0, 1.2, "Rechazado",            "#C53030", "white"),
-        (6.5, 1.2, "Reg. Pérdida",         "#C53030", "white"),
-        (8.0, 1.2, "Desecho",              "#742A2A", "white"),
+        (0.5, 2.2, "Pedido OC",              "#3182CE", "white"),   # 0
+        (2.0, 2.2, "Llegada",                "#3182CE", "white"),   # 1
+        (3.5, 2.2, "Control de\nCalidad",    "#3182CE", "white"),   # 2
+        (5.0, 3.0, "Aprobado",               "#38A169", "white"),   # 3
+        (6.5, 3.0, "Bodega",                 "#38A169", "white"),   # 4
+        (8.0, 3.7, "Entrega al\npaciente",   "#276749", "white"),   # 5  ← destino 1
+        (8.0, 3.0, "Bodega\nsecundaria",     "#276749", "white"),   # 6  ← destino 2
+        (8.0, 2.3, "Despacho a\notra bodega","#276749", "white"),   # 7  ← destino 3
+        (5.0, 1.4, "Rechazado",              "#C53030", "white"),   # 8
+        (6.5, 1.4, "Reg. Pérdida",           "#C53030", "white"),   # 9
+        (8.0, 1.4, "Desecho",                "#742A2A", "white"),   # 10
     ]
-    _EDGES_P1 = [(0,1),(1,2),(2,3),(3,4),(4,5),(2,6),(6,7),(7,8)]
+    # Aristas: (desde, hasta)
+    _EDGES_P1 = [
+        (0,1),(1,2),           # Pedido OC → Llegada → Control de Calidad
+        (2,3),(3,4),           # → Aprobado → Bodega
+        (4,5),(4,6),(4,7),     # Bodega → 3 destinos posibles
+        (2,8),(8,9),(9,10),    # Control de Calidad → Rechazado → Reg. Pérdida → Desecho
+    ]
     _fig_flow_p1 = go.Figure()
     for (_x1,_y1,_,_,_), (_x2,_y2,_,_,_) in [(_NODES_P1[a], _NODES_P1[b]) for a,b in _EDGES_P1]:
         _fig_flow_p1.add_trace(go.Scatter(
@@ -2083,13 +2093,13 @@ with tab1:
             showarrow=False, font=dict(size=10, color=_ntc), align="center",
         )
     _fig_flow_p1.update_layout(
-        height=220, margin=dict(t=10, b=10, l=10, r=10),
+        height=260, margin=dict(t=10, b=10, l=10, r=10),
         xaxis=dict(showgrid=False, zeroline=False, showticklabels=False, range=[-0.1, 8.6]),
-        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False, range=[0.7, 3.3]),
+        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False, range=[0.9, 4.1]),
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
     )
     st.plotly_chart(_fig_flow_p1, use_container_width=True)
-    st.caption("Flujo estándar del ciclo de vida de un lote: desde la orden de compra hasta la entrega al paciente o el desecho si es rechazado en control de calidad.")
+    st.caption("Flujo del ciclo de vida de un lote: tras pasar el control de calidad, el lote se almacena en bodega y puede destinarse a la entrega directa al paciente, quedarse en la bodega central o despacharse a otra bodega del establecimiento.")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 2 — INVENTARIO Y PRONÓSTICO
@@ -2884,13 +2894,16 @@ with tab2:
                 if len(_meses_hist_q) > 0:
                     _n_quiebres_q = int((_meses_hist_q == 0).sum())
                     _dkq1.metric(
-                        "Meses sin consumo (últ. 12 m.)",
-                        f"{_n_quiebres_q} de {len(_meses_hist_q)}",
-                        help="Meses completos en que no hubo ningún consumo registrado para este medicamento. "
-                             "Con demanda activa, estos meses pueden indicar quiebres de stock no formalizados.",
+                        "Meses sin actividad (últ. 12 m.)",
+                        f"{_n_quiebres_q} meses",
+                        delta=f"de {len(_meses_hist_q)} meses analizados",
+                        delta_color="off",
+                        help="Cuántos meses del último año no hubo ningún consumo registrado. "
+                             "0 = siempre tuvo movimiento (ideal). "
+                             "Un número alto puede indicar quiebres de stock o que el producto dejó de usarse.",
                     )
                 else:
-                    _dkq1.metric("Meses sin consumo (últ. 12 m.)", "—")
+                    _dkq1.metric("Meses sin actividad (últ. 12 m.)", "—")
 
                 # KPI: consumo mes actual vs promedio histórico (por tasa diaria)
                 if len(_meses_hist_q) >= 2:
@@ -2899,23 +2912,27 @@ with tab2:
                     _tasa_hist_q   = _avg_hist_q / max(_dias_en_mes_q, 1)
                     if _tasa_hist_q > 0:
                         _pct_q = (_tasa_actual_q - _tasa_hist_q) / _tasa_hist_q * 100
+                        _signo = "+" if _pct_q >= 0 else ""
                         _dkq2.metric(
-                            f"Consumo mes actual ({_dias_transc_q} d de {_dias_en_mes_q} d)",
+                            "Consumo del mes en curso",
                             f"{int(_consumo_mes_q):,} u",
-                            delta=f"{'+' if _pct_q >= 0 else ''}{_pct_q:.1f}% vs promedio",
+                            delta=f"{_signo}{_pct_q:.1f}% vs promedio mensual histórico",
                             delta_color="off",
-                            help=f"Tasa diaria actual: {_tasa_actual_q:.1f} u/día. "
+                            help=f"Unidades consumidas en lo que va del mes ({_dias_transc_q} de {_dias_en_mes_q} días). "
+                                 f"Tasa diaria actual: {_tasa_actual_q:.1f} u/día. "
                                  f"Promedio histórico: {_tasa_hist_q:.1f} u/día. "
-                                 f"Se compara la tasa diaria para no penalizar por mes incompleto.",
+                                 f"Un valor negativo no indica problema si el mes no ha terminado.",
                         )
                     else:
                         _dkq2.metric(
-                            f"Consumo mes actual ({_dias_transc_q} d)",
+                            "Consumo del mes en curso",
                             f"{int(_consumo_mes_q):,} u",
+                            delta=f"{_dias_transc_q} de {_dias_en_mes_q} días transcurridos",
+                            delta_color="off",
                         )
                 else:
                     _dkq2.metric(
-                        "Consumo mes actual",
+                        "Consumo del mes en curso",
                         f"{int(_consumo_mes_q):,} u",
                         help="Historial insuficiente para calcular la comparativa mensual.",
                     )
@@ -2971,9 +2988,25 @@ with tab2:
                 )
                 st.plotly_chart(_fig_g, use_container_width=True)
                 if _d_smax > 0 and _d_smin > 0:
-                    st.caption(f"Zona roja: existencias ≤ {int(_d_scrit)} u (crítico). Zona naranja: entre {int(_d_scrit)} y {int(_d_smin)} u (por debajo del mínimo). Zona verde: sobre {int(_d_smin)} u (adecuado). La marca naranja indica las existencias mínimas requeridas.")
+                    _estado_gauge = ("nivel crítico — se requiere pedido urgente" if _d_stk <= _d_scrit
+                                     else "bajo el mínimo recomendado — se recomienda pedir" if _d_stk <= _d_smin
+                                     else "nivel adecuado")
+                    st.caption(
+                        f"Stock actual: {int(_d_stk):,} u → {_estado_gauge}. "
+                        f"Rojo (0–{int(_d_scrit):,} u): crítico. "
+                        f"Naranja ({int(_d_scrit):,}–{int(_d_smin):,} u): bajo el mínimo. "
+                        f"Verde (más de {int(_d_smin):,} u): adecuado. "
+                        f"La línea vertical marca el mínimo recomendado."
+                    )
                 else:
-                    st.caption("Zona roja: cobertura ≤ 1 mes. Zona naranja: 1-3 meses. Zona verde: >3 meses. La marca naranja indica el umbral de 3 meses recomendado.")
+                    _estado_cob_txt = ("crítica (≤ 1 mes)" if _d_alc <= 1
+                                       else "baja (1–3 meses)" if _d_alc <= 3
+                                       else "adecuada (>3 meses)")
+                    st.caption(
+                        f"Cobertura actual: {round(_d_alc, 1)} meses → {_estado_cob_txt}. "
+                        f"Rojo: menos de 1 mes. Naranja: entre 1 y 3 meses. Verde: más de 3 meses. "
+                        f"La línea vertical marca el umbral de 3 meses."
+                    )
 
             with _tcol:
                 if formato_hospital:
