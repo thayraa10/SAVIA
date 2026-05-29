@@ -1704,10 +1704,10 @@ with tab1:
     # ── 3. Semáforo — un círculo por estado ──────────────────────────────────
     st.markdown(_ayuda(
         "<b>Semáforo de cobertura</b> — Cada círculo muestra cuántos medicamentos se encuentran en ese estado. "
-        "<b>Rojo</b> = sin existencias o vencidos (acción inmediata). "
-        "<b>Naranja</b> = cobertura crítica, menos de 1 mes de existencias. "
-        "<b>Amarillo</b> = cobertura baja, entre 1 y 3 meses. "
-        "<b>Verde</b> = cobertura adecuada, más de 3 meses."
+        "<span style='color:#E53E3E;font-weight:700'>Rojo</span> = sin existencias o vencidos (acción inmediata). "
+        "<span style='color:#DD6B20;font-weight:700'>Naranja</span> = cobertura crítica, menos de 1 mes de existencias. "
+        "<span style='color:#D69E2E;font-weight:700'>Amarillo</span> = cobertura baja, entre 1 y 3 meses. "
+        "<span style='color:#38A169;font-weight:700'>Verde</span> = cobertura adecuada, más de 3 meses."
     ), unsafe_allow_html=True)
     if _tiene_alc:
         _alc_s2 = pd.to_numeric(resumen["ALCANCE"], errors="coerce")
@@ -2338,10 +2338,13 @@ with tab2:
     with _t2_inv:
         st.markdown(_ayuda(
             "<b>Tabla de inventario</b> — Lista completa de medicamentos con sus existencias actuales y cobertura estimada. "
-            "La tabla está ordenada por <b>urgencia</b>: primero aparecen los productos sin existencias, luego los críticos, y al final los que están bien abastecidos. "
+            "La tabla está ordenada por <b>urgencia</b>: primero aparecen los productos "
+            "<span style='color:#E53E3E;font-weight:700'>sin existencias</span>, "
+            "luego los <span style='color:#DD6B20;font-weight:700'>críticos</span>, "
+            "y al final los que están <span style='color:#38A169;font-weight:700'>bien abastecidos</span>. "
             "<b>Cobertura (meses)</b>: tiempo estimado que duran las existencias actuales al ritmo de consumo histórico. "
             "<b>Cant. sugerida</b>: unidades recomendadas a pedir según el modelo de inventario configurado. "
-            "Usa el buscador y el filtro de estado para enfocarte en productos especificos."
+            "Usa el buscador y el filtro de estado para enfocarte en productos específicos."
         ), unsafe_allow_html=True)
 
         t2_busq, t2_fil = st.columns([3, 2])
@@ -2516,10 +2519,12 @@ with tab2:
     with _t2_venc:
         st.markdown(_ayuda(
             "<b>Control de vencimientos por lote</b> — Muestra cada lote de medicamento con su fecha de caducidad real. "
-            "Un mismo medicamento puede aparecer varias veces si tiene multiples lotes con fechas distintas. "
-            "La logica recomendada es <b>FEFO</b> (First Expired, First Out): el lote que vence primero debe dispensarse primero para evitar perdidas. "
-            "<b>Dias restántes</b>: días entre hoy y la fecha de vencimiento del lote. Un valor negativo significa que el lote ya esta vencido. "
-            "La tabla inferior lista solo los lotes que vencen en menos de 30 dias, con una accion sugerida para cada uno."
+            "Un mismo medicamento puede aparecer varias veces si tiene múltiples lotes con fechas distintas. "
+            "La lógica recomendada es <span style='color:#3182CE;font-weight:700'>FEFO</span> (First Expired, First Out): "
+            "el lote que vence primero debe usarse primero para evitar pérdidas. "
+            "<b>Días restantes</b>: días entre hoy y la fecha de vencimiento del lote. "
+            "Un valor <span style='color:#E53E3E;font-weight:700'>negativo</span> significa que el lote ya está <span style='color:#E53E3E;font-weight:700'>vencido</span>. "
+            "La tabla inferior lista solo los lotes que vencen en menos de 30 días, con una acción sugerida para cada uno."
         ), unsafe_allow_html=True)
         # ── Origen de datos ───────────────────────────────────────────────────
         _venc_df   = pd.DataFrame()
@@ -2815,10 +2820,14 @@ with tab2:
     with _t2_det:
         st.markdown(_ayuda(
             "<b>Ficha completa de medicamento</b> — Selecciona cualquier producto para ver todos sus indicadores en detalle. "
-            "El <b>termómetro</b> muestra visualmente si las existencias están en zona crítica (rojo), de alerta (naranja) o adecuada (verde) respecto a las existencias mínimas y máximas definidas. "
+            "El <b>termómetro</b> muestra visualmente si las existencias están en zona "
+            "<span style='color:#E53E3E;font-weight:700'>crítica</span>, "
+            "de <span style='color:#DD6B20;font-weight:700'>alerta</span> o "
+            "<span style='color:#38A169;font-weight:700'>adecuada</span> "
+            "respecto a las existencias mínimas y máximas definidas. "
             "La <b>tabla de información</b> resume parámetros operativos como existencias mínimas, máximas y críticas. "
             "El <b>historial mensual</b> permite identificar estacionalidad o tendencias de consumo. "
-            "El buscador filtra el listado en tiempo real; el dropdown muestra primero los medicamentos de mayor consumo."
+            "El buscador filtra el listado en tiempo real; el listado muestra primero los medicamentos de mayor consumo."
         ), unsafe_allow_html=True)
         # Ordenar por consumo descendente (medicamentos más relevantes primero)
         if "media_diaria" in resumen.columns:
@@ -3153,8 +3162,10 @@ with tab3:
         st.markdown(_ayuda(
             "<b>Pronóstico de demanda</b> — Visualiza el consumo real de las últimas 12 semanas "
             "y la demanda proyectada para las próximas 4 semanas por medicamento. "
-            "La tabla inferior identifica los productos cuyo stock proyectado será insuficiente. "
-            "Si el stock cae bajo el punto de reorden dentro de 2 semanas, se dispara una alerta preventiva al webhook configurado."
+            "La tabla inferior identifica los productos cuyo stock proyectado será "
+            "<span style='color:#DD6B20;font-weight:700'>insuficiente</span>. "
+            "Si el stock cae bajo el punto de reorden dentro de 2 semanas, se marca como "
+            "<span style='color:#E53E3E;font-weight:700'>crítico</span> y se puede enviar una alerta preventiva."
         ), unsafe_allow_html=True)
 
         if not tiene_movimientos:
@@ -3368,11 +3379,12 @@ with tab3:
     with _t3_ab:
         st.markdown(_ayuda(
             "<b>Módulo de Abastecimiento</b> — Calcula automáticamente las políticas de pedido recomendadas para cada medicamento, basándose en el historial de consumo y los parámetros configurados en el panel lateral. "
-            "<b>Punto de reorden (s)</b>: nivel de existencias al que se debe emitir un nuevo pedido para no quedarse sin existencias durante el tiempo de entrega. "
-            "<b>Cantidad a pedir (EOQ)</b>: cantidad económicamente recomendada que minimiza la suma de costos de ordenar y de mantener inventario. "
-            "<b>Reserva de seguridad (SS)</b>: existencias extra para absorber variaciónes inesperadas en la demanda o en el tiempo de entrega. "
-            "<b>Nivel maximo (S)</b>: techo de inventario para evitar exceso de existencias. "
-            "La tabla está ordenada por urgencia: primero los productos que requieren accion inmediata."
+            "<span style='color:#3182CE;font-weight:700'>Punto de reorden (s)</span>: nivel de existencias al que se debe emitir un nuevo pedido para no quedarse sin existencias durante el tiempo de entrega. "
+            "<span style='color:#3182CE;font-weight:700'>Cantidad a pedir (EOQ)</span>: cantidad económicamente recomendada que minimiza la suma de costos de ordenar y de mantener inventario. "
+            "<span style='color:#3182CE;font-weight:700'>Reserva de seguridad (SS)</span>: existencias extra para absorber variaciones inesperadas en la demanda o en el tiempo de entrega. "
+            "<span style='color:#3182CE;font-weight:700'>Nivel máximo (S)</span>: techo de inventario para evitar exceso de existencias. "
+            "La tabla está ordenada por urgencia: primero los productos que requieren "
+            "<span style='color:#E53E3E;font-weight:700'>acción inmediata</span>."
         ), unsafe_allow_html=True)
         if not tiene_movimientos:
             st.warning("Se requiere el archivo de movimientos para calcular las políticas.")
