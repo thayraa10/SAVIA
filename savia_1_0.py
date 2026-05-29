@@ -2988,25 +2988,49 @@ with tab2:
                 )
                 st.plotly_chart(_fig_g, use_container_width=True)
                 if _d_smax > 0 and _d_smin > 0:
-                    _estado_gauge = ("nivel crítico — se requiere pedido urgente" if _d_stk <= _d_scrit
-                                     else "bajo el mínimo recomendado — se recomienda pedir" if _d_stk <= _d_smin
-                                     else "nivel adecuado")
-                    st.caption(
-                        f"Stock actual: {int(_d_stk):,} u → {_estado_gauge}. "
-                        f"Rojo (0–{int(_d_scrit):,} u): crítico. "
-                        f"Naranja ({int(_d_scrit):,}–{int(_d_smin):,} u): bajo el mínimo. "
-                        f"Verde (más de {int(_d_smin):,} u): adecuado. "
-                        f"La línea vertical marca el mínimo recomendado."
-                    )
+                    _stk_fmt = f"{int(_d_stk):,}"
+                    _min_fmt = f"{int(_d_smin):,}"
+                    if _d_scrit > 0 and _d_stk <= _d_scrit:
+                        _gauge_txt = (
+                            f"Existencias actuales: {_stk_fmt} u — nivel crítico. "
+                            f"El stock ha caído por debajo del umbral de emergencia ({int(_d_scrit):,} u). "
+                            f"Se requiere pedido urgente para evitar quiebre total."
+                        )
+                    elif _d_stk <= _d_smin:
+                        _falta = int(_d_smin - _d_stk)
+                        _gauge_txt = (
+                            f"Existencias actuales: {_stk_fmt} u — por debajo del mínimo recomendado. "
+                            f"Se necesitan al menos {_min_fmt} u para estar cubiertos; faltan {_falta:,} u. "
+                            f"Se recomienda realizar un pedido pronto."
+                        )
+                    else:
+                        _sobre = int(_d_stk - _d_smin)
+                        _gauge_txt = (
+                            f"Existencias actuales: {_stk_fmt} u — nivel adecuado. "
+                            f"Se superan las {_min_fmt} u mínimas recomendadas en {_sobre:,} u. "
+                            f"No se requiere pedido en este momento."
+                        )
+                    st.caption(_gauge_txt)
                 else:
-                    _estado_cob_txt = ("crítica (≤ 1 mes)" if _d_alc <= 1
-                                       else "baja (1–3 meses)" if _d_alc <= 3
-                                       else "adecuada (>3 meses)")
-                    st.caption(
-                        f"Cobertura actual: {round(_d_alc, 1)} meses → {_estado_cob_txt}. "
-                        f"Rojo: menos de 1 mes. Naranja: entre 1 y 3 meses. Verde: más de 3 meses. "
-                        f"La línea vertical marca el umbral de 3 meses."
-                    )
+                    if _d_alc <= 1:
+                        _cob_txt = (
+                            f"Cobertura estimada: {round(_d_alc, 1)} meses — nivel crítico. "
+                            f"Las existencias actuales alcanzan para menos de 1 mes. "
+                            f"Se recomienda solicitar reabastecimiento de forma urgente."
+                        )
+                    elif _d_alc <= 3:
+                        _cob_txt = (
+                            f"Cobertura estimada: {round(_d_alc, 1)} meses — nivel bajo. "
+                            f"Las existencias cubren entre 1 y 3 meses de consumo. "
+                            f"Conviene planificar un pedido pronto."
+                        )
+                    else:
+                        _cob_txt = (
+                            f"Cobertura estimada: {round(_d_alc, 1)} meses — nivel adecuado. "
+                            f"Las existencias cubren más de 3 meses de consumo. "
+                            f"No se requiere pedido en este momento."
+                        )
+                    st.caption(_cob_txt)
 
             with _tcol:
                 if formato_hospital:
