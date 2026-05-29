@@ -1667,8 +1667,17 @@ with tab1:
 
     _fi5.metric("Total productos",  f"{len(resumen):,}",
                 help="Cantidad de medicamentos distintos actualmente en el inventario.")
-    _fi6.metric("Pérdida estimada", f"{_pct_perdida:.1f}%",
-                help="Porcentaje del valor total en existencias que corresponde a medicamentos vencidos. Un valor alto indica pérdida económica por caducidad.")
+    _vv_fmt = (f"${_valor_vencido/1_000_000:.1f}M" if _valor_vencido >= 1_000_000
+               else f"${_valor_vencido/1_000:.0f}K"  if _valor_vencido >= 100_000
+               else f"${_valor_vencido:,.0f}")
+    _fi6.metric(
+        "Valor vencido",
+        f"{_vv_fmt} CLP" if _valor_vencido > 0 else "$0 CLP",
+        delta=f"{_pct_perdida:.1f}% del inventario" if _valor_vencido > 0 else "Sin vencidos registrados",
+        delta_color="off",
+        help="Valor económico (en pesos chilenos) de los medicamentos cuya fecha de vencimiento ya superó la fecha actual. "
+             "Representa pérdida directa de recursos del establecimiento.",
+    )
 
     st.markdown("<div style='margin:12px 0'></div>", unsafe_allow_html=True)
 
@@ -3251,6 +3260,15 @@ with tab3:
                 _c2a.metric("Atención (≤ 4 semanas)", _n_warn)
 
                 st.dataframe(_safe_df(_df_alert), use_container_width=True, hide_index=True, height=350)
+                _buf_alerta_dl = io.BytesIO()
+                _safe_df(_df_alert).to_excel(_buf_alerta_dl, index=False, engine="openpyxl")
+                st.download_button(
+                    label=f"Descargar alertas de stock ({len(_df_alert)} productos)",
+                    data=_buf_alerta_dl.getvalue(),
+                    file_name=f"alertas_stock_SAVIA_{date.today().strftime('%Y%m%d')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="dl_alertas_pronostico",
+                )
 
                 # ── Webhook preventivo (una vez por sesión) ───────────────
                 if _alertas_webhook:
