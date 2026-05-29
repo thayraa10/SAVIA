@@ -2805,15 +2805,20 @@ with tab2:
         if _sel_med:
             _row_d   = resumen[resumen[COL_NOMBRE] == _sel_med].iloc[0]
             _cod_d   = _row_d[COL_CODIGO]
-            _d_stk   = float(_row_d.get("stock_total",    0) or 0)
-            _d_alc   = float(pd.to_numeric(_row_d.get("ALCANCE",    None), errors="coerce") or 0)
-            _d_smin  = float(pd.to_numeric(_row_d.get("STC_MIN",    None), errors="coerce") or 0)
-            _d_smax  = float(pd.to_numeric(_row_d.get("STC_MAX",    None), errors="coerce") or 0)
-            _d_scrit = float(pd.to_numeric(_row_d.get("STC_CRITICO",None), errors="coerce") or 0)
-            _d_med   = float(_row_d.get("media_diaria",   0) or 0)
-            _d_sug   = float(pd.to_numeric(_row_d.get("SUGERIDO",   0), errors="coerce") or 0)
-            _d_costo = float(pd.to_numeric(_row_d.get("costo_unitario", 0), errors="coerce") or 0)
-            _d_dcob  = float(_row_d.get("dias_cobertura", 0) or 0)
+            # Helper: convierte a float de forma segura — NaN y None → 0.0
+            # float(NaN or 0) NO funciona porque NaN es truthy en Python
+            def _n0(v):
+                _x = pd.to_numeric(v, errors="coerce")
+                return 0.0 if pd.isna(_x) else float(_x)
+            _d_stk   = _n0(_row_d.get("stock_total",       0))
+            _d_alc   = _n0(_row_d.get("ALCANCE",        None))
+            _d_smin  = _n0(_row_d.get("STC_MIN",        None))
+            _d_smax  = _n0(_row_d.get("STC_MAX",        None))
+            _d_scrit = _n0(_row_d.get("STC_CRITICO",    None))
+            _d_med   = _n0(_row_d.get("media_diaria",      0))
+            _d_sug   = _n0(_row_d.get("SUGERIDO",          0))
+            _d_costo = _n0(_row_d.get("costo_unitario",    0))
+            _d_dcob  = _n0(_row_d.get("dias_cobertura",    0))
             _d_est   = str(_row_d.get("_estado_cob", _row_d.get("estado", "—")))
 
             # ── KPI strip ─────────────────────────────────────────────────────
