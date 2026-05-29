@@ -241,9 +241,9 @@ def encontrar_columna(df, palabras_clave, ya_usadas):
 # ──────────────────────────────────────────────────────────────────────────────
 def calcular_estado(dias):
     if pd.isna(dias): return "Sin fecha"
-    if dias < 0:      return "VENCIDO"
-    if dias <= 30:    return "CRITICO"
-    if dias <= 90:    return "ADVERTENCIA"
+    if días < 0:      return "VENCIDO"
+    if días <= 30:    return "CRITICO"
+    if días <= 90:    return "ADVERTENCIA"
     return "NORMAL"
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -252,11 +252,11 @@ def calcular_estado(dias):
 # ──────────────────────────────────────────────────────────────────────────────
 def calcular_politicas(Media, V, OC, HC, LT, R, Z=1.645):
     # s cubre la demanda durante el lead time completo + un período de revisión
-    U  = math.ceil((Media / (2 * V)) + ((V * R) / 2))
-    s  = math.ceil((Media * (LT + R)) + Z * (V ** 0.5) * ((LT + R) ** 0.5))
+    U  = math.ceil((Medía / (2 * V)) + ((V * R) / 2))
+    s  = math.ceil((Medía * (LT + R)) + Z * (V ** 0.5) * ((LT + R) ** 0.5))
     Q  = math.ceil(((2 * OC * Media) / HC) ** 0.5)
     S  = s + Q + U
-    SS = max(0, math.ceil((Media * R) + (Z * (V ** 0.5) * ((LT + R) ** 0.5) - U)))
+    SS = max(0, math.ceil((Medía * R) + (Z * (V ** 0.5) * ((LT + R) ** 0.5) - U)))
 
     return {"s": s, "Q": Q, "S": S, "SS": SS, "U": U}
 
@@ -289,7 +289,7 @@ def recomendar_periodo(media_diaria, varianza_diaria, costo_orden, costo_mantene
 # ──────────────────────────────────────────────────────────────────────────────
 # SIMULACIONES POR EVENTOS (tiempo continuo) — réplica del notebook de referencia.
 #
-# La demanda sigue un proceso de Poisson con tasa Media (u/día):
+# La demanda sigue un proceso de Poisson con tasa Medía (u/día):
 #   tiempo entre llegadas ~ Exp(Media)  →  t = (-1/Media) * ln(U), U ~ Unif(0,1)
 #
 # Eventos posibles en cada paso:
@@ -318,13 +318,13 @@ def _simular(Media, V, OC, HC, LT, R, s, Q, S_inicio, politica, NR=5, TiempoTota
     Inventario_final     = []
     Tiempo_final         = []
 
-    total_dias = int(TiempoTotal + LT + R) + 10
+    total_días = int(TiempoTotal + LT + R) + 10
 
     for replica in range(NR):
         np.random.seed(replica)
 
         # Demanda diaria: N_d ~ Poisson(Media)
-        # Variance = Media por día  →  consistente con calcular_politicas (V = Media)
+        # Variance = Medía por día  →  consistente con calcular_politicas (V = Media)
         daily_counts = np.random.poisson(lam=Media, size=total_dias)
         # Cada unidad se coloca en un instante uniforme dentro de su día
         day_nums = np.repeat(np.arange(total_dias, dtype=float), daily_counts)
@@ -545,7 +545,7 @@ def transformar_formato_ancho(df):
     col_stc_crit = None
     for c in df.columns:
         nombre_c = str(c).lower().replace(" ", "").replace("í", "i").replace("ó", "o")
-        if "stccritico" in nombre_c:
+        if "stccrítico" in nombre_c:
             col_stc_crit = c
             break
 
@@ -873,7 +873,7 @@ def _gh_guardar_en_gist():
             )
         if _r.status_code in (200, 201):
             _store["gh_gist_id"] = _r.json()["id"]
-            return True, "Guardado en GitHub Gist ✓"
+            return True, "Guardado en GitHub Gist"
         return False, f"Error HTTP {_r.status_code}: {_r.text[:160]}"
     except Exception as _e:
         return False, str(_e)
@@ -1110,7 +1110,7 @@ with st.sidebar:
 
     # ── Cargar datos ──────────────────────────────────────────────────────────
     st.header("Cargar datos")
-    st.caption("Para seleccionar varios archivos a la vez: Cmd+clic (Mac) o Ctrl+clic (Windows).")
+    st.caption("Para selecciónar varios archivos a la vez: Cmd+clic (Mac) o Ctrl+clic (Windows).")
     archivos = st.file_uploader("Archivos Excel o CSV", type=["xlsx", "csv"],
                                 accept_multiple_files=True, label_visibility="collapsed")
 
@@ -1332,7 +1332,7 @@ IL_VENC = None; IL_STK  = None; IL_PREC = None; IL_UBIC = None
 if datos_inv_lotes is not None and len(datos_inv_lotes) > 0:
     _il_usadas = set()
     IL_COD  = encontrar_columna(datos_inv_lotes, ["codigo", "sku", "clave"],                        _il_usadas)
-    IL_NOM  = encontrar_columna(datos_inv_lotes, ["material", "nombre", "medicamento", "descripcion"], _il_usadas)
+    IL_NOM  = encontrar_columna(datos_inv_lotes, ["material", "nombre", "medicamento", "descripción"], _il_usadas)
     IL_LOTE = encontrar_columna(datos_inv_lotes, ["lote", "lotes", "batch", "partida"],              _il_usadas)
     IL_VENC = encontrar_columna(datos_inv_lotes, ["vencimiento", "venc", "caducidad", "expiry", "fvenv"], _il_usadas)
     IL_STK  = encontrar_columna(datos_inv_lotes, ["existencia", "stock", "cantidad", "cantporlote"], _il_usadas)
@@ -1346,7 +1346,7 @@ if datos_inv_lotes is not None and len(datos_inv_lotes) > 0:
 # ──────────────────────────────────────────────────────────────────────────────
 usadas_inv = set()  # rastrea qué columnas ya fueron asignadas
 COL_CODIGO      = encontrar_columna(datos_inventario, ["codigo", "sku", "clave", "articulo", "referencia"],             usadas_inv)
-COL_NOMBRE      = encontrar_columna(datos_inventario, ["nombre", "medicamento", "farmaco", "descripcion"],              usadas_inv)
+COL_NOMBRE      = encontrar_columna(datos_inventario, ["nombre", "medicamento", "fármaco", "descripción"],              usadas_inv)
 COL_LOTE        = encontrar_columna(datos_inventario, ["lote", "batch", "partida"],                                     usadas_inv)
 COL_VENCIMIENTO = encontrar_columna(datos_inventario, ["vencimiento", "vence", "caducidad", "expiry", "fec venc", "vto"], usadas_inv)
 COL_STOCK       = encontrar_columna(datos_inventario, ["stock", "existencia", "disponible", "inventario", "saldo"],     usadas_inv)
@@ -1444,7 +1444,7 @@ for _col_cob in ["ALCANCE", "dias_cobertura", "min_dias_vencer"]:
 #   1. Filtrar períodos con demanda > 0  ("pedidos")
 #   2. lambda_i = demanda_i / días_desde_pedido_anterior
 #   3. lambda_estable = mean(lambda_i)
-#   4. Media = ceil(lambda_estable)   [tasa diaria de la dist. Poisson]
+#   4. Medía = ceil(lambda_estable)   [tasa diaria de la dist. Poisson]
 #   5. V = min(Media, var(tamaños_de_lote))  [varianza de los lotes, no /30]
 # ──────────────────────────────────────────────────────────────────────────────
 if tiene_movimientos:
@@ -1452,7 +1452,7 @@ if tiene_movimientos:
     mov[COL_MOV_CANTIDAD] = pd.to_numeric(mov[COL_MOV_CANTIDAD], errors="coerce").fillna(0)
     mov[COL_MOV_FECHA]    = pd.to_datetime(mov[COL_MOV_FECHA], dayfirst=True, errors="coerce")
 
-    def _parametros_llegada(df_prod):
+    def _parámetros_llegada(df_prod):
         df_s    = df_prod.sort_values(COL_MOV_FECHA)
         pedidos = df_s[df_s[COL_MOV_CANTIDAD] > 0].copy()
         n       = len(pedidos)
@@ -1465,7 +1465,7 @@ if tiene_movimientos:
         # Con un solo período no se puede calcular días entre llegadas → asumir 30 días
         if n == 1:
             lam   = batch_vals[0] / 30.0
-            media = max(math.ceil(lam), 1)
+            medía = max(math.ceil(lam), 1)
             return pd.Series({"media_diaria": float(media), "var_diaria": float(media)})
 
         # Días reales entre llegadas consecutivas (se requieren fechas válidas)
@@ -1487,7 +1487,7 @@ if tiene_movimientos:
         if lambda_estable <= 0 or np.isnan(lambda_estable):
             return pd.Series({"media_diaria": 0.0, "var_diaria": 0.0})
 
-        media     = math.ceil(lambda_estable)
+        medía     = math.ceil(lambda_estable)
         var_batch = float(pd.Series(batch_vals).var())
         if np.isnan(var_batch) or var_batch <= 0:
             var_batch = float(media)
@@ -1498,15 +1498,15 @@ if tiene_movimientos:
     # Calcular parámetros para cada producto sin deprecaciones de pandas 2.x
     filas_params = []
     for codigo_p, df_grupo in mov.groupby(COL_MOV_CODIGO):
-        params = _parametros_llegada(df_grupo)
+        params = _parámetros_llegada(df_grupo)
         filas_params.append({
             COL_CODIGO:      codigo_p,
             "media_diaria":  params["media_diaria"],
             "var_diaria":    params["var_diaria"],
         })
-    tabla_parametros = pd.DataFrame(filas_params)
+    tabla_parámetros = pd.DataFrame(filas_params)
 
-    resumen = resumen.merge(tabla_parametros, on=COL_CODIGO, how="left")
+    resumen = resumen.merge(tabla_parámetros, on=COL_CODIGO, how="left")
     resumen["media_diaria"]   = resumen["media_diaria"].fillna(0)
     resumen["var_diaria"]     = resumen["var_diaria"].fillna(0)
     resumen["dias_cobertura"] = (resumen["stock_total"] / resumen["media_diaria"].replace(0, np.nan)).round(1)
@@ -1567,7 +1567,7 @@ with tab1:
         resumen["_requiere_pedido"] = _sug_all > 0
 
     # ── Datos auxiliares ──────────────────────────────────────────────────────
-    PALETA = {"sin_stock": "#E53E3E", "critico": "#DD6B20", "bajo": "#D69E2E",
+    PALETA = {"sin_stock": "#E53E3E", "crítico": "#DD6B20", "bajo": "#D69E2E",
               "adecuado": "#38A169", "normal": "#3182CE", "gris": "#94a3b8"}
 
     _tiene_alc = formato_hospital and "ALCANCE" in resumen.columns
@@ -1732,7 +1732,7 @@ with tab1:
                 int(((_alc_n > 1) & (_alc_n <= 3)).sum()),
                 int((_alc_n > 3).sum()),
             ]
-            _col_d = [PALETA["sin_stock"], PALETA["critico"], PALETA["bajo"], PALETA["adecuado"]]
+            _col_d = [PALETA["sin_stock"], PALETA["crítico"], PALETA["bajo"], PALETA["adecuado"]]
             _cat_map = {
                 "Sin existencias":     "Sin existencias",
                 "Crítica (<1 mes)":    "Crítico (≤1 mes)",
@@ -1744,7 +1744,7 @@ with tab1:
             _vc      = resumen["estado"].value_counts()
             _cats_d  = [e for e in _orden_e if e in _vc.index]
             _cont_d  = [int(_vc[e]) for e in _cats_d]
-            _col_map_e = {"VENCIDO": PALETA["sin_stock"], "CRITICO": PALETA["critico"],
+            _col_map_e = {"VENCIDO": PALETA["sin_stock"], "CRITICO": PALETA["crítico"],
                           "ADVERTENCIA": PALETA["bajo"], "NORMAL": PALETA["adecuado"],
                           "Sin fecha": PALETA["gris"]}
             _col_d   = [_col_map_e.get(e, PALETA["gris"]) for e in _cats_d]
@@ -1768,9 +1768,9 @@ with tab1:
             paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
         )
         st.plotly_chart(_fig_pie, use_container_width=True)
-        st.caption("Haz clic en una categoría del grafico para filtrar la tabla de productos por ese estado.")
+        st.caption("Haz clic en una categoría del gráfico para filtrar la tabla de productos por ese estado.")
 
-        # Tabla filtrada por estado seleccionado
+        # Tabla filtrada por estado selecciónado
         if _sel != "Todos":
             if formato_hospital and _cat_map and "_estado_cob" in resumen.columns:
                 _cob_val  = _cat_map.get(_sel, _sel)
@@ -1991,7 +1991,7 @@ with tab1:
             _val_ped = float((_sug_all2[_df_sel.index] * _df_sel["costo_unitario"]).sum()) if "costo_unitario" in _df_sel.columns else 0
 
             _rk1, _rk2, _rk3, _rk4 = st.columns(4)
-            _rk1.metric("Productos en estado seleccionado", f"{_n_prod:,}")
+            _rk1.metric("Productos en estado selecciónado", f"{_n_prod:,}")
             _rk2.metric("Requieren pedido",                 f"{_n_pedir:,}")
             _rk3.metric("Valor en existencias (selección)", f"${_val_sel:,.0f} CLP")
             _rk4.metric("Valor estimado a pedir",           f"${_val_ped:,.0f} CLP")
@@ -2109,7 +2109,7 @@ with tab2:
                 "<span style='color:#D69E2E'><b>amarillo</b></span> = medio, "
                 "<span style='color:#DD6B20'><b>naranja</b></span> = bajo, "
                 "<span style='color:#E53E3E'><b>rojo</b></span> = sin existencias. "
-                "Usa el filtro para ver la distribucion de un medicamento especifico."
+                "Usa el filtro para ver la distribución de un medicamento especifico."
             ), unsafe_allow_html=True)
             # ── Filtro por medicamento ────────────────────────────────────────
             _bd_all_names = ["— Todos los medicamentos —"] + sorted(
@@ -2298,10 +2298,10 @@ with tab2:
     # ══════════════════════════════════════════════════════════════════════════
     with _t2_inv:
         st.markdown(_ayuda(
-            "<b>Tabla de inventario</b> — Lista completa de medicamentos con sus existencias actuales, cobertura estimada y prioridad de reposicion. "
-            "La tabla esta ordenada por <b>urgencia</b>: primero aparecen los productos sin existencias, luego los criticos, y al final los que estan bien abastecidos. "
-            "<b>Cobertura (meses)</b>: tiempo estimado que duran las existencias actuales al ritmo de consumo historico. "
-            "<b>Cant. sugerida</b>: unidades recomendadas a pedir segun el modelo de inventario configurado. "
+            "<b>Tabla de inventario</b> — Lista completa de medicamentos con sus existencias actuales, cobertura estimada y prioridad de reposición. "
+            "La tabla está ordenada por <b>urgencia</b>: primero aparecen los productos sin existencias, luego los críticos, y al final los que están bien abastecidos. "
+            "<b>Cobertura (meses)</b>: tiempo estimado que duran las existencias actuales al ritmo de consumo histórico. "
+            "<b>Cant. sugerida</b>: unidades recomendadas a pedir según el modelo de inventario configurado. "
             "Usa el buscador y el filtro de estado para enfocarte en productos especificos."
         ), unsafe_allow_html=True)
 
@@ -2446,11 +2446,11 @@ with tab2:
         if "Cobertura (meses)" in tabla.columns:
             _ccfg["Cobertura (meses)"] = st.column_config.NumberColumn(
                 "Cobertura (meses)", format="%.1f m",
-                help="Meses estimados que duran las existencias actuales al ritmo de consumo promedio. Menos de 1 mes = critico; 1-3 meses = bajo; más de 3 meses = adecuado.",
+                help="Meses estimados que duran las existencias actuales al ritmo de consumo promedio. Menos de 1 mes = crítico; 1-3 meses = bajo; más de 3 meses = adecuado.",
             )
         if "Cant. sugerida" in tabla.columns:
             _ccfg["Cant. sugerida"] = st.column_config.NumberColumn("Cant. sugerida", format="%d u",
-                           help="Cantidad recomendada a pedir en la proxima orden, calculada por el modelo de inventario.")
+                           help="Cantidad recomendada a pedir en la próxima orden, calculada por el modelo de inventario.")
         if "Costo unit." in tabla.columns:
             _ccfg["Costo unit."] = st.column_config.TextColumn("Costo unit.",
                            help="Precio unitario del medicamento en CLP, según el Programa de compras.")
@@ -2473,7 +2473,7 @@ with tab2:
             "<b>Control de vencimientos por lote</b> — Muestra cada lote de medicamento con su fecha de caducidad real. "
             "Un mismo medicamento puede aparecer varias veces si tiene multiples lotes con fechas distintas. "
             "La logica recomendada es <b>FEFO</b> (First Expired, First Out): el lote que vence primero debe dispensarse primero para evitar perdidas. "
-            "<b>Dias restantes</b>: dias entre hoy y la fecha de vencimiento del lote. Un valor negativo significa que el lote ya esta vencido. "
+            "<b>Dias restántes</b>: días entre hoy y la fecha de vencimiento del lote. Un valor negativo significa que el lote ya esta vencido. "
             "La tabla inferior lista solo los lotes que vencen en menos de 30 dias, con una accion sugerida para cada uno."
         ), unsafe_allow_html=True)
         # ── Origen de datos ───────────────────────────────────────────────────
@@ -2536,7 +2536,7 @@ with tab2:
                 (_vkc2, "Vencen en <30 días",   f"{_nv_crit:,}", "#DD6B20",
                  "Lotes con menos de 30 días antes de caducar. Requieren acción inmediata."),
                 (_vkc3, "Vencen en 30–90 días", f"{_nv_adv:,}",  "#D69E2E",
-                 "Lotes con entre 1 y 3 meses de vida útil restante. Monitorear y planificar."),
+                 "Lotes con entre 1 y 3 meses de vida útil restánte. Monitorear y planificar."),
                 (_vkc4, "Vencen en >90 días",   f"{_nv_ok:,}",   "#38A169",
                  "Lotes con más de 3 meses hasta su vencimiento. Estado adecuado."),
             ]:
@@ -2612,7 +2612,7 @@ with tab2:
                                font=dict(size=13, color="#0f172a")),
                     height=max(300, len(_venc_prod) * 28 + 80),
                     margin=dict(t=36, b=8, l=8, r=80),
-                    xaxis=dict(title="Días restantes (negativo = ya vencido)",
+                    xaxis=dict(title="Días restántes (negativo = ya vencido)",
                                zeroline=True, zerolinecolor="#E53E3E", zerolinewidth=2),
                     yaxis=dict(autorange="reversed"),
                     paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
@@ -2650,7 +2650,7 @@ with tab2:
 
                 _crit_show["Situación"]  = _crit_show["dias_vencer"].apply(_dias_legible)
                 _crit_show["_estado"]    = _crit_show["dias_vencer"].apply(
-                    lambda d: "vencido" if d < 0 else "critico" if d < 15
+                    lambda d: "vencido" if d < 0 else "crítico" if d < 15
                     else "proximo" if d < 30 else "monitorear"
                 )
 
@@ -2682,9 +2682,9 @@ with tab2:
                      "#C53030", "#FFF5F5",
                      "Estos lotes ya superaron su fecha de vencimiento. "
                      "Deben retirarse del inventario y darse de baja de inmediato para evitar riesgos."),
-                    ("critico",   "Críticos — vencen en menos de 15 días",
+                    ("crítico",   "Críticos — vencen en menos de 15 días",
                      "#C05621", "#FFFAF0",
-                     "Menos de 15 días de vida útil restante. "
+                     "Menos de 15 días de vida útil restánte. "
                      "Dispensar estos lotes <b>antes que cualquier otro</b> (principio FEFO: primero en vencer, primero en salir)."),
                     ("proximo",   "Próximos — entre 15 y 30 días",
                      "#975A16", "#FEFCBF",
@@ -2715,7 +2715,7 @@ with tab2:
                     if "Medicamento"      in _df_sec.columns:
                         _ccfg_v["Medicamento"]      = st.column_config.TextColumn("Medicamento", help="Nombre del medicamento o insumo.")
                     if "Situación"        in _df_sec.columns:
-                        _ccfg_v["Situación"]        = st.column_config.TextColumn("Situación", help="Tiempo transcurrido o restante hasta la fecha de vencimiento.")
+                        _ccfg_v["Situación"]        = st.column_config.TextColumn("Situación", help="Tiempo transcurrido o restánte hasta la fecha de vencimiento.")
                     if "Nro. de lote"     in _df_sec.columns:
                         _ccfg_v["Nro. de lote"]     = st.column_config.TextColumn("Nro. de lote", help="Identificador único del lote físico registrado en el inventario.")
                     if "Unidades"         in _df_sec.columns:
@@ -2734,8 +2734,8 @@ with tab2:
     with _t2_det:
         st.markdown(_ayuda(
             "<b>Ficha completa de medicamento</b> — Selecciona cualquier producto para ver todos sus indicadores en detalle. "
-            "El <b>termometro (gauge)</b> muestra visualmente si las existencias están en zona critica (rojo), de alerta (naranja) o adecuada (verde) respecto a las existencias minimas y maximas definidas. "
-            "La <b>tabla de informacion</b> resume parametros operativos como existencias minimas, maximas y criticas. "
+            "El <b>termometro (gauge)</b> muestra visualmente si las existencias están en zona crítica (rojo), de alerta (naranja) o adecuada (verde) respecto a las existencias mínimas y maximas definidas. "
+            "La <b>tabla de información</b> resume parámetros operativos como existencias mínimas, máximas y críticas. "
             "El <b>historial mensual</b> permite identificar estacionalidad o tendencias de consumo. "
             "El buscador filtra el listado en tiempo real; el dropdown muestra primero los medicamentos de mayor consumo."
         ), unsafe_allow_html=True)
@@ -2779,7 +2779,7 @@ with tab2:
                         help="Promedio de unidades dispensadas por mes, calculado a partir del historial de movimientos.")
             if _d_alc > 0:
                 _dk3.metric("Cobertura", f"{round(_d_alc, 1)} meses",
-                            help="Meses que duran las existencias actuales al ritmo de consumo promedio. Menos de 1 mes = critico.")
+                            help="Meses que duran las existencias actuales al ritmo de consumo promedio. Menos de 1 mes = crítico.")
             elif _d_dcob > 0:
                 _dk3.metric("Días de cobertura", f"{_d_dcob:.0f} días",
                             help="Dias que duran las existencias actuales al ritmo de consumo promedio.")
@@ -2787,7 +2787,7 @@ with tab2:
                 _dk3.metric("Cobertura", "—",
                             help="No hay datos suficientes para estimar la cobertura (sin historial de consumo).")
             _dk4.metric("Sugerido pedir", f"{math.ceil(_d_sug):,} u" if _d_sug > 0 else "No requerido",
-                        help="Cantidad recomendada para la proxima orden de compra, segun el modelo de inventario y los parametros configurados.")
+                        help="Cantidad recomendada para la próxima orden de compra, según el modelo de inventario y los parámetros configurados.")
 
             st.divider()
 
@@ -2840,7 +2840,7 @@ with tab2:
                 )
                 st.plotly_chart(_fig_g, use_container_width=True)
                 if _d_smax > 0 and _d_smin > 0:
-                    st.caption(f"Zona roja: existencias ≤ {int(_d_scrit)} u (critico). Zona naranja: entre {int(_d_scrit)} y {int(_d_smin)} u (por debajo del minimo). Zona verde: sobre {int(_d_smin)} u (adecuado). La marca naranja indica las existencias minimas requeridas.")
+                    st.caption(f"Zona roja: existencias ≤ {int(_d_scrit)} u (crítico). Zona naranja: entre {int(_d_scrit)} y {int(_d_smin)} u (por debajo del mínimo). Zona verde: sobre {int(_d_smin)} u (adecuado). La marca naranja indica las existencias mínimas requeridas.")
                 else:
                     st.caption("Zona roja: cobertura ≤ 1 mes. Zona naranja: 1-3 meses. Zona verde: >3 meses. La marca naranja indica el umbral de 3 meses recomendado.")
 
@@ -2924,7 +2924,7 @@ with tab2:
                             paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="#f8fafc", showlegend=False,
                         )
                         st.plotly_chart(_fig_h, use_container_width=True)
-                        st.caption("Barras azules = unidades dispensadas cada mes. Linea roja punteada = promedio mensual historico. Meses por encima del promedio pueden indicar estacionalidad o picos de demanda que deben considerarse al planificar el siguiente pedido.")
+                        st.caption("Barras azules = unidades dispensadas cada mes. Linea roja punteada = promedio mensual histórico. Meses por encima del promedio pueden indicar estacionalidad o picos de demanda que deben considerarse al planificar el siguiente pedido.")
                     else:
                         st.info("Sin fechas válidas para construir el historial.")
                 else:
@@ -3071,8 +3071,8 @@ with tab3:
             )
             st.plotly_chart(_fig_pron, use_container_width=True)
             st.caption(
-                "🔵 Consumo real semanal  |  🟠 Stock proyectado (descontando consumo promedio)  |  "
-                "🟩 Consumo proyectado por semana  |  🔴 Punto de reorden"
+                "Consumo real semanal  |  Stock proyectado (descontando consumo promedio)  |  "
+                "Consumo proyectado por semana  |  Punto de reorden"
             )
 
             st.divider()
@@ -3102,7 +3102,7 @@ with tab3:
                 if not (_bajo_2s or _bajo_4s):
                     continue
 
-                _estado_a = "⚠️ Crítico — pedir esta semana" if _bajo_2s else "🔔 Atención — pedir pronto"
+                _estado_a = "Crítico — pedir esta semana" if _bajo_2s else "Atención — pedir pronto"
                 _filas_alerta.append({
                     "Medicamento":               _nom_a,
                     "Stock actual (u)":          int(_stk),
@@ -3114,27 +3114,27 @@ with tab3:
                 })
                 if _bajo_2s:
                     _alertas_webhook.append({
-                        "tipo_alerta":        "pronostico_stock_bajo",
+                        "tipo_alerta":        "pronóstico_stock_bajo",
                         "medicamento":        _nom_a,
                         "codigo":             _cod_a,
                         "stock_actual":       int(_stk),
                         "stock_en_2_semanas": int(_stk_2s),
                         "punto_reorden":      int(_s_a),
                         "consumo_semanal":    round(_md * 7, 1),
-                        "fecha_calculo":      date.today().strftime("%d/%m/%Y"),
+                        "fecha_cálculo":      date.today().strftime("%d/%m/%Y"),
                     })
 
             if _filas_alerta:
                 _df_alert = pd.DataFrame(_filas_alerta)
-                _ord_alert = {"⚠️ Crítico — pedir esta semana": 0, "🔔 Atención — pedir pronto": 1}
+                _ord_alert = {"Crítico — pedir esta semana": 0, "Atención — pedir pronto": 1}
                 _df_alert["_ord"] = _df_alert["Estado"].map(_ord_alert)
                 _df_alert = _df_alert.sort_values("_ord").drop(columns="_ord").reset_index(drop=True)
 
-                _n_crit = len(_df_alert[_df_alert["Estado"].str.startswith("⚠️")])
-                _n_warn = len(_df_alert[_df_alert["Estado"].str.startswith("🔔")])
+                _n_crit = len(_df_alert[_df_alert["Estado"].str.startswith("Crítico")])
+                _n_warn = len(_df_alert[_df_alert["Estado"].str.startswith("Atención")])
                 _c1a, _c2a = st.columns(2)
                 _c1a.metric("Críticos (≤ 2 semanas)", _n_crit, delta="Pedir esta semana" if _n_crit else None, delta_color="inverse")
-                _c2a.metric("Atencion (≤ 4 semanas)", _n_warn)
+                _c2a.metric("Atención (≤ 4 semanas)", _n_warn)
 
                 st.dataframe(_safe_df(_df_alert), use_container_width=True, hide_index=True, height=350)
 
@@ -3143,8 +3143,8 @@ with tab3:
                     _wh_key = f"_pron_wh_{date.today().isoformat()}"
                     if not st.session_state.get(_wh_key):
                         _ok_wh, _msg_wh = _disparar_webhook_plan({
-                            "tipo_alerta":   "pronostico_preventivo",
-                            "fecha_calculo": date.today().strftime("%d/%m/%Y"),
+                            "tipo_alerta":   "pronóstico_preventivo",
+                            "fecha_cálculo": date.today().strftime("%d/%m/%Y"),
                             "n_criticos":    len(_alertas_webhook),
                             "productos":     _alertas_webhook,
                         })
@@ -3161,12 +3161,12 @@ with tab3:
     # ══════════════════════════════════════════════════════════════════════
     with _t3_ab:
         st.markdown(_ayuda(
-            "<b>Modulo de Abastecimiento</b> — Calcula automaticamente las politicas optimas de reposicion para cada medicamento, basandose en el historial de consumo y los parametros configurados en el panel lateral. "
+            "<b>Módulo de Abastecimiento</b> — Calcula automáticamente las políticas recomendadas de reposición para cada medicamento, basándose en el historial de consumo y los parámetros configurados en el panel lateral. "
             "<b>Punto de reorden (s)</b>: nivel de existencias al que se debe emitir un nuevo pedido para no quedarse sin existencias durante el tiempo de entrega. "
-            "<b>Cantidad a pedir (EOQ)</b>: cantidad economicamente optima que minimiza la suma de costos de ordenar y de mantener inventario. "
-            "<b>Reserva de seguridad (SS)</b>: existencias extra para absorber variaciones inesperadas en la demanda o en el tiempo de entrega. "
+            "<b>Cantidad a pedir (EOQ)</b>: cantidad económicamente recomendada que minimiza la suma de costos de ordenar y de mantener inventario. "
+            "<b>Reserva de seguridad (SS)</b>: existencias extra para absorber variaciónes inesperadas en la demanda o en el tiempo de entrega. "
             "<b>Nivel maximo (S)</b>: techo de inventario para evitar exceso de existencias. "
-            "La tabla esta ordenada por urgencia: primero los productos que requieren accion inmediata."
+            "La tabla está ordenada por urgencia: primero los productos que requieren accion inmediata."
         ), unsafe_allow_html=True)
         if not tiene_movimientos:
             st.warning("Se requiere el archivo de movimientos para calcular las políticas.")
@@ -3244,14 +3244,14 @@ with tab3:
                     # Ordenar los medicamentos de mayor a menor consumo para que el default sea relevante
                     meds_sim_ord = df_politicas.sort_values("_media", ascending=False)["Medicamento"].tolist()
                     med_sim = st.selectbox("Medicamento a simular:", meds_sim_ord, key="sim_med")
-                    # Obtener los datos del medicamento seleccionado
-                    fila_simulacion = resumen[resumen[COL_NOMBRE] == med_sim].iloc[0]
-                    media_sim = max(fila_simulacion["media_diaria"], 0.001)
+                    # Obtener los datos del medicamento selecciónado
+                    fila_simulación = resumen[resumen[COL_NOMBRE] == med_sim].iloc[0]
+                    media_sim = max(fila_simulación["media_diaria"], 0.001)
                     # var_diaria ya contiene min(Media, var_batch) del proceso de estimación
-                    var_diaria_raw = fila_simulacion["var_diaria"]
+                    var_diaria_raw = fila_simulación["var_diaria"]
                     var_sim = max(float(var_diaria_raw) if not pd.isna(var_diaria_raw) else media_sim, 0.001)
                     params_sim = calcular_politicas(media_sim, var_sim, costo_orden, costo_mantener, lead_time, periodo_revision, Z)
-                    R_opt_sim, _ = recomendar_periodo(media_sim, var_sim, costo_orden, costo_mantener, lead_time)
+                    R_rec_sim, _ = recomendar_periodo(media_sim, var_sim, costo_orden, costo_mantener, lead_time)
 
                     # Nivel máximo (S_inicio) según la política — igual que el notebook de referencia:
                     #   (R,s,Q) → inventario inicial = s+Q+U; pide Q fija cuando IP ≤ s
@@ -3318,9 +3318,9 @@ with tab3:
                             x, oh, ip = x[::step], oh[::step], ip[::step]
                         return x, oh, ip
 
-                    _n_dias = max(periodo_revision * 4,
+                    _n_días = max(periodo_revision * 4,
                                   min(max(float(periodo_revision), params_sim["Q"] / max(media_sim, 0.001)) * 15, 360.0))
-                    with st.spinner("Ejecutando simulaciones..."):
+                    with st.spinner("Ejecutando simulaciónes..."):
                         r_rsq = simular_rsq(media_sim, var_sim, costo_orden, costo_mantener, lead_time, periodo_revision, s_sim, Q_sim, S_rsq)
                         r_rs  = simular_rs( media_sim, var_sim, costo_orden, costo_mantener, lead_time, periodo_revision, s_sim, Q_sim, S_rs)
                         r_rss = simular_rss(media_sim, var_sim, costo_orden, costo_mantener, lead_time, periodo_revision, s_sim, Q_sim, S_rss)
@@ -3343,7 +3343,7 @@ with tab3:
                     candidatas   = [p for p, q in quiebres_pol.items() if q == min_quiebres]
                     mejor        = min(candidatas, key=lambda p: costos_anuales[p])
 
-                    filas_comparacion = []
+                    filas_comparación = []
                     for pol in ["(R,s,Q)", "(R,S)", "(R,s,S)"]:
                         q = quiebres_pol[pol]
                         disponibilidad = "Sin quiebres" if q == 0 else f"{q} u. sin atender"
@@ -3354,7 +3354,7 @@ with tab3:
                         else:
                             dif = round((costos_anuales[pol] - costos_anuales[mejor]) / max(costos_anuales[mejor], 1) * 100, 1)
                             etiqueta = f"Más cara (+{dif} %)"
-                        filas_comparacion.append({
+                        filas_comparación.append({
                             "Estrategia":        NOMBRES[pol],
                             "Cómo funciona":     DESCRIPCION[pol],
                             "Quiebres de stock": disponibilidad,
@@ -3362,7 +3362,7 @@ with tab3:
                             "Costo anual ($)":   f"{costos_anuales[pol]:,}",
                             "Evaluación":        etiqueta,
                         })
-                    st.dataframe(_safe_df(pd.DataFrame(filas_comparacion)), use_container_width=True, hide_index=True)
+                    st.dataframe(_safe_df(pd.DataFrame(filas_comparación)), use_container_width=True, hide_index=True)
 
                     razon_mejor = []
                     if min_quiebres == 0:
