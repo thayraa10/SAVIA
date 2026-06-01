@@ -2583,7 +2583,7 @@ with tab2:
             'Esta pestaña trata de fechas de caducidad — no de cantidades en bodega</div>',
             unsafe_allow_html=True,
         )
-        _vc1, _vc2, _vc3 = st.columns(3)
+        _vc1, _vc2 = st.columns(2)
         with _vc1:
             st.markdown(
                 '<div style="background:#FFF5F5;border-radius:8px;padding:12px 14px;'
@@ -2611,20 +2611,6 @@ with tab2:
             if st.button("Ver sin existencias", key="btn_vpanel_stk", use_container_width=True):
                 st.session_state["_venc_panel"] = (
                     None if st.session_state.get("_venc_panel") == "sin_stock" else "sin_stock"
-                )
-        with _vc3:
-            st.markdown(
-                '<div style="background:#F0FFF4;border-radius:8px;padding:12px 14px;'
-                'border-top:3px solid #38A169;margin-bottom:6px">'
-                '<div style="font-size:0.82rem;font-weight:700;color:#276749;margin-bottom:5px">Pueden combinarse</div>'
-                '<div style="font-size:0.79rem;color:#22543D;line-height:1.55">'
-                'Un producto puede estar <b>vencido con stock</b> (pérdida) '
-                'o <b>vigente sin stock</b> (quiebre). Son problemas distintos.</div></div>',
-                unsafe_allow_html=True,
-            )
-            if st.button("Ver vencidos con stock", key="btn_vpanel_combo", use_container_width=True):
-                st.session_state["_venc_panel"] = (
-                    None if st.session_state.get("_venc_panel") == "combo" else "combo"
                 )
         st.markdown(_ayuda(
             "<b>Control de fechas de caducidad</b> — Esta pestaña muestra cuándo vencen los lotes de medicamentos, "
@@ -2745,43 +2731,6 @@ with tab2:
                                 f"lotes_vencidos_SAVIA_{date.today().strftime('%Y%m%d')}.xlsx",
                                 "dl_panel_vencidos")
 
-            elif _venc_panel == "combo":
-                # ── Vencidos con stock positivo ───────────────────────────────
-                _pc_mask = _venc_df["dias_vencer"] < 0
-                if _venc_stk and _venc_stk in _venc_df.columns:
-                    _pc_mask = _pc_mask & (
-                        pd.to_numeric(_venc_df[_venc_stk], errors="coerce").fillna(0) > 0
-                    )
-                _pc_df   = _venc_df[_pc_mask].copy().sort_values("dias_vencer")
-                _pc_cols = [c for c in [_venc_nom, _venc_lote, IL_VENC, _venc_stk, "dias_vencer"]
-                            if c and c in _pc_df.columns]
-                _pc_ren  = {
-                    _venc_nom: "Medicamento", _venc_lote: "Lote",
-                    IL_VENC:   "Fecha vencimiento", _venc_stk: "Unidades en bodega",
-                    "dias_vencer": "Días vencido",
-                }
-                _pc_show = _pc_df[_pc_cols].rename(
-                    columns={k: v for k, v in _pc_ren.items() if k}
-                ).reset_index(drop=True)
-                if "Fecha vencimiento" in _pc_show.columns:
-                    _pc_show["Fecha vencimiento"] = (
-                        pd.to_datetime(_pc_show["Fecha vencimiento"], errors="coerce")
-                        .dt.strftime("%d/%m/%Y").fillna("—")
-                    )
-                st.markdown(
-                    f'<div style="background:#F0FFF4;border-left:4px solid #38A169;border-radius:8px;'
-                    f'padding:10px 16px;margin:4px 0 6px 0">'
-                    f'<span style="font-size:0.84rem;font-weight:700;color:#276749">'
-                    f'Vencidos con existencias — {_m(len(_pc_show))} lotes caducados que aún tienen unidades en bodega</span></div>',
-                    unsafe_allow_html=True,
-                )
-                if len(_pc_show) == 0:
-                    st.info("No hay lotes vencidos que tengan existencias positivas en bodega.")
-                else:
-                    st.dataframe(_safe_df(_pc_show), use_container_width=True, hide_index=True, height=320)
-                    _venc_dl_button(_pc_show, f"{_m(len(_pc_show))} vencidos con stock",
-                                    f"vencidos_con_stock_SAVIA_{date.today().strftime('%Y%m%d')}.xlsx",
-                                    "dl_panel_combo")
             st.divider()
 
         if len(_venc_df) == 0:
