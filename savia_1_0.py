@@ -2823,28 +2823,7 @@ with tab2:
                     f'</div>', unsafe_allow_html=True,
                 )
 
-            # ── Filtro de urgencia ─────────────────────────────────────────────
-            _vf_col1, _vf_col2 = st.columns([2, 3])
-            _vf_vista = _vf_col1.radio(
-                "Mostrar en el gráfico:",
-                ["Todos con fecha", "Solo vencidos y críticos (<30 d)", "Solo próximos (30–90 d)"],
-                horizontal=False, key="venc_vista",
-            )
-            _vf_busq = _vf_col2.text_input(
-                "Buscar medicamento:", placeholder="Filtra por nombre...", key="venc_busq"
-            )
-
-            # Aplicar filtro de vista
-            if _vf_vista == "Solo vencidos y críticos (<30 d)":
-                _venc_vis = _venc_df[_venc_df["dias_vencer"] < 30].copy()
-            elif _vf_vista == "Solo próximos (30–90 d)":
-                _venc_vis = _venc_df[(_venc_df["dias_vencer"] >= 30) & (_venc_df["dias_vencer"] < 90)].copy()
-            else:
-                _venc_vis = _venc_df.copy()
-
-            if _vf_busq.strip():
-                _mask_b = _venc_vis[_venc_nom].astype(str).str.contains(_vf_busq.strip(), case=False, na=False)
-                _venc_vis = _venc_vis[_mask_b]
+            _venc_vis = _venc_df.copy()
 
             # ── Timeline ──────────────────────────────────────────────────────
             _venc_prod = (
