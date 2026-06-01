@@ -2748,34 +2748,36 @@ with tab2:
         else:
             _venc_vis = _venc_df.copy()
 
-            # ── 4 KPI cards con botón de filtro cada uno ──────────────────────
-            _nv_venc = int((_venc_df["dias_vencer"] < 0).sum())
-            _nv_crit = int(((_venc_df["dias_vencer"] >= 0) & (_venc_df["dias_vencer"] < 30)).sum())
-            _nv_adv  = int(((_venc_df["dias_vencer"] >= 30) & (_venc_df["dias_vencer"] < 90)).sum())
-            _nv_ok   = int((_venc_df["dias_vencer"] >= 90).sum())
-
-            _kv1, _kv2, _kv3, _kv4 = st.columns(4)
-            for _kvcol, _kv_lbl, _kv_val, _kv_color, _kv_key, _kv_panel in [
-                (_kv1, "Lotes vencidos",      _nv_venc, "#E53E3E", "btn_kv_venc", "kpi_vencidos"),
-                (_kv2, "Vencen en <30 días",  _nv_crit, "#DD6B20", "btn_kv_crit", "kpi_criticos"),
-                (_kv3, "Vencen en 30–90 días",_nv_adv,  "#D69E2E", "btn_kv_adv",  "kpi_proximos"),
-                (_kv4, "Vencen en >90 días",  _nv_ok,   "#38A169", "btn_kv_ok",   "kpi_ok"),
-            ]:
-                with _kvcol:
-                    st.markdown(
-                        f'<div style="background:white;border-radius:10px;padding:12px 16px;'
-                        f'margin:4px 0 6px 0;box-shadow:0 1px 3px rgba(0,0,0,0.07);'
-                        f'border-top:3px solid {_kv_color}">'
-                        f'<div style="font-size:0.60rem;color:#64748b;font-weight:600;'
-                        f'text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">{_kv_lbl}</div>'
-                        f'<div style="font-size:1.25rem;font-weight:800;color:#0f172a">{_m(_kv_val)}</div>'
-                        f'</div>',
-                        unsafe_allow_html=True,
+            # ── 2 tarjetas adicionales: próximo a vencer + no tan próximo ─────
+            _vc3, _vc4 = st.columns(2)
+            with _vc3:
+                st.markdown(
+                    '<div style="background:#FFFAF0;border-radius:8px;padding:12px 14px;'
+                    'border-top:3px solid #DD6B20;margin-bottom:6px">'
+                    '<div style="font-size:0.82rem;font-weight:700;color:#C05621;margin-bottom:5px">Próximo a vencer</div>'
+                    '<div style="font-size:0.79rem;color:#7B341E;line-height:1.55">'
+                    'Vence en menos de 30 días. Debe despacharse <b>antes que cualquier otro lote</b> '
+                    '(principio FEFO: primero en vencer, primero en salir).</div></div>',
+                    unsafe_allow_html=True,
+                )
+                if st.button("Ver próximos a vencer (<30 d)", key="btn_vpanel_crit", use_container_width=True):
+                    st.session_state["_venc_panel"] = (
+                        None if st.session_state.get("_venc_panel") == "kpi_criticos" else "kpi_criticos"
                     )
-                    if st.button(f"Ver detalle", key=_kv_key, use_container_width=True):
-                        st.session_state["_venc_panel"] = (
-                            None if st.session_state.get("_venc_panel") == _kv_panel else _kv_panel
-                        )
+            with _vc4:
+                st.markdown(
+                    '<div style="background:#FEFCBF;border-radius:8px;padding:12px 14px;'
+                    'border-top:3px solid #D69E2E;margin-bottom:6px">'
+                    '<div style="font-size:0.82rem;font-weight:700;color:#975A16;margin-bottom:5px">Vencimiento no tan próximo</div>'
+                    '<div style="font-size:0.79rem;color:#744210;line-height:1.55">'
+                    'Vence entre 30 y 90 días. No es urgente hoy, pero <b>hay que planificar</b> '
+                    'su uso o devolución antes de que llegue a estado crítico.</div></div>',
+                    unsafe_allow_html=True,
+                )
+                if st.button("Ver vencimientos próximos (30–90 d)", key="btn_vpanel_adv", use_container_width=True):
+                    st.session_state["_venc_panel"] = (
+                        None if st.session_state.get("_venc_panel") == "kpi_proximos" else "kpi_proximos"
+                    )
 
             # ── Panel para los 4 KPI ──────────────────────────────────────────
             _vp = st.session_state.get("_venc_panel")
