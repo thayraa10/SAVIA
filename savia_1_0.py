@@ -2934,41 +2934,6 @@ with tab2:
                         height=min(420, max(80, len(_df_sec) * 35 + 40)),
                     )
 
-            # ── Descargar tabla de vencimientos ──────────────────────────────
-            if len(_venc_vis) > 0:
-                _venc_dl_cols = [_venc_nom]
-                if _venc_lote and _venc_lote in _venc_vis.columns:
-                    _venc_dl_cols.append(_venc_lote)
-                if _venc_stk and _venc_stk in _venc_vis.columns:
-                    _venc_dl_cols.append(_venc_stk)
-                if IL_VENC and IL_VENC in _venc_vis.columns and IL_VENC not in _venc_dl_cols:
-                    _venc_dl_cols.append(IL_VENC)
-                _venc_dl_cols.append("dias_vencer")
-                _venc_export = _venc_vis[
-                    [c for c in _venc_dl_cols if c in _venc_vis.columns]
-                ].copy()
-                if IL_VENC and IL_VENC in _venc_export.columns:
-                    _venc_export[IL_VENC] = (
-                        pd.to_datetime(_venc_export[IL_VENC], errors="coerce")
-                        .dt.strftime("%d/%m/%Y").fillna("—")
-                    )
-                _venc_ren = {"dias_vencer": "Días hasta vencer"}
-                if _venc_nom: _venc_ren[_venc_nom] = "Medicamento"
-                if _venc_lote and _venc_lote != _venc_nom: _venc_ren[_venc_lote] = "Lote"
-                if _venc_stk  and _venc_stk  not in (_venc_nom, _venc_lote): _venc_ren[_venc_stk]  = "Unidades"
-                if IL_VENC    and IL_VENC    not in _venc_ren:                _venc_ren[IL_VENC]    = "Fecha vencimiento"
-                _venc_export = _venc_export.rename(
-                    columns={k: v for k, v in _venc_ren.items() if k}
-                )
-                _buf_venc_dl = io.BytesIO()
-                _safe_df(_venc_export).to_excel(_buf_venc_dl, index=False, engine="openpyxl")
-                st.download_button(
-                    label=f"Descargar tabla de vencimientos ({_m(len(_venc_vis))} lotes)",
-                    data=_buf_venc_dl.getvalue(),
-                    file_name=f"vencimientos_SAVIA_{date.today().strftime('%Y%m%d')}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    key="dl_vencimientos",
-                )
 
     # ══════════════════════════════════════════════════════════════════════════
     # SUB-TAB 3 — DETALLE POR MEDICAMENTO
@@ -3586,7 +3551,7 @@ with tab3:
                 R_etiqueta = f"Cada {int(periodo_revision)} días"
                 dias_cob = fila["dias_cobertura"]
                 if fila["estado"] == "VENCIDO":
-                    accion = "DAR DE BAJA — reponer"
+                    accion = "Dar de baja"
                 elif fila["stock_total"] < p["s"]:
                     accion = "Pedir ahora"
                 elif dias_cob is not None and not pd.isna(dias_cob) and dias_cob < (lead_time + periodo_revision) * 1.5:
@@ -3612,7 +3577,7 @@ with tab3:
                 st.warning("No hay medicamentos con datos de demanda suficientes.")
             else:
                 df_politicas = pd.DataFrame(filas_politicas)
-                orden_accion = {"DAR DE BAJA — reponer": 0, "Pedir ahora": 1, "Pedir pronto": 2, "Existencias suficientes": 3}
+                orden_accion = {"Dar de baja": 0, "Pedir ahora": 1, "Pedir pronto": 2, "Existencias suficientes": 3}
                 df_politicas["_orden"] = df_politicas["Acción recomendada"].map(orden_accion).fillna(4)
                 df_politicas = df_politicas.sort_values("_orden").drop(columns="_orden")
 
@@ -3629,7 +3594,7 @@ with tab3:
                     busq_t3 = t3a.text_input("Buscar:", placeholder="Nombre del producto...", key="busq_t3")
                     # Filtrar solo las acciones que aparecen en los datos actuales
                     acciones_disp = []
-                    for accion in ["DAR DE BAJA — reponer", "Pedir ahora", "Pedir pronto", "Existencias suficientes"]:
+                    for accion in ["Dar de baja", "Pedir ahora", "Pedir pronto", "Existencias suficientes"]:
                         if accion in df_politicas["Acción recomendada"].values:
                             acciones_disp.append(accion)
                     filtro_accion = t3b.multiselect("Filtrar por acción:", acciones_disp, default=acciones_disp, key="filtro_accion_t3")
