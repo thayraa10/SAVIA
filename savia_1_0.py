@@ -2746,32 +2746,6 @@ with tab2:
                 unsafe_allow_html=True,
             )
         else:
-            # ── KPI strip ─────────────────────────────────────────────────────
-            _nv_venc = int((_venc_df["dias_vencer"] < 0).sum())
-            _nv_crit = int(((_venc_df["dias_vencer"] >= 0) & (_venc_df["dias_vencer"] < 30)).sum())
-            _nv_adv  = int(((_venc_df["dias_vencer"] >= 30) & (_venc_df["dias_vencer"] < 90)).sum())
-            _nv_ok   = int((_venc_df["dias_vencer"] >= 90).sum())
-            _vkc1, _vkc2, _vkc3, _vkc4 = st.columns(4)
-            for _vc, _vl_lbl, _vv, _vcolor, _vhelp in [
-                (_vkc1, "Lotes vencidos",       f"{_m(_nv_venc)}", "#E53E3E",
-                 "Lotes cuya fecha de vencimiento ya pasó. Deben darse de baja del inventario."),
-                (_vkc2, "Vencen en <30 días",   f"{_m(_nv_crit)}", "#DD6B20",
-                 "Lotes con menos de 30 días antes de caducar. Requieren acción inmediata."),
-                (_vkc3, "Vencen en 30–90 días", f"{_m(_nv_adv)}",  "#D69E2E",
-                 "Lotes con entre 1 y 3 meses de vida útil restánte. Monitorear y planificar."),
-                (_vkc4, "Vencen en >90 días",   f"{_m(_nv_ok)}",   "#38A169",
-                 "Lotes con más de 3 meses hasta su vencimiento. Estado adecuado."),
-            ]:
-                _vc.markdown(
-                    f'<div style="background:white;border-radius:10px;padding:12px 16px;margin:4px 0 10px 0;'
-                    f'box-shadow:0 1px 3px rgba(0,0,0,0.07);border-top:3px solid {_vcolor};" '
-                    f'title="{_vhelp}">'
-                    f'<div style="font-size:0.60rem;color:#64748b;font-weight:600;text-transform:uppercase;'
-                    f'letter-spacing:0.05em;margin-bottom:4px">{_vl_lbl}</div>'
-                    f'<div style="font-size:1.25rem;font-weight:800;color:#0f172a">{_vv}</div>'
-                    f'</div>', unsafe_allow_html=True,
-                )
-
             _venc_vis = _venc_df.copy()
 
 
