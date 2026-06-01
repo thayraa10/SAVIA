@@ -2576,35 +2576,56 @@ with tab2:
     # SUB-TAB 2 — VENCIMIENTOS
     # ══════════════════════════════════════════════════════════════════════════
     with _t2_venc:
-        # Nota aclaratoria: vencimiento ≠ quiebre de stock
+        # ── Tarjetas conceptuales con botones de filtro ─────────────────────
         st.markdown(
-            '<div style="background:white;border:1px solid #E2E8F0;border-radius:10px;'
-            'padding:14px 18px 12px 18px;margin:0 0 12px 0">'
             '<div style="font-size:0.72rem;font-weight:700;color:#94A3B8;text-transform:uppercase;'
-            'letter-spacing:0.07em;margin-bottom:10px">'
-            'Esta pestaña trata de fechas de caducidad — no de cantidades en bodega</div>'
-            '<div style="display:flex;gap:10px">'
-            # ── Tarjeta 1: Vencido ──
-            '<div style="flex:1;background:#FFF5F5;border-radius:8px;padding:10px 14px;border-top:3px solid #E53E3E">'
-            '<div style="font-size:0.82rem;font-weight:700;color:#C53030;margin-bottom:5px">Vencido</div>'
-            '<div style="font-size:0.79rem;color:#742A2A;line-height:1.55">'
-            'La fecha de caducidad ya pasó. <b>No se puede usar</b>, aunque haya unidades en bodega. '
-            'Esas unidades deben darse de baja.</div></div>'
-            # ── Tarjeta 2: Sin stock ──
-            '<div style="flex:1;background:#EBF8FF;border-radius:8px;padding:10px 14px;border-top:3px solid #3182CE">'
-            '<div style="font-size:0.82rem;font-weight:700;color:#2B6CB0;margin-bottom:5px">Sin stock</div>'
-            '<div style="font-size:0.79rem;color:#2C5282;line-height:1.55">'
-            'No hay unidades disponibles en bodega. El medicamento puede estar <b>vigente pero agotado</b>. '
-            'Es un quiebre de abastecimiento, no un vencimiento.</div></div>'
-            # ── Tarjeta 3: Pueden combinarse ──
-            '<div style="flex:1;background:#F0FFF4;border-radius:8px;padding:10px 14px;border-top:3px solid #38A169">'
-            '<div style="font-size:0.82rem;font-weight:700;color:#276749;margin-bottom:5px">Pueden combinarse</div>'
-            '<div style="font-size:0.79rem;color:#22543D;line-height:1.55">'
-            'Un producto puede estar <b>vencido con stock</b> (pérdida económica) '
-            'o <b>vigente sin stock</b> (quiebre). Son problemas distintos que requieren acciones distintas.</div></div>'
-            '</div></div>',
+            'letter-spacing:0.07em;margin:0 0 8px 0">'
+            'Esta pestaña trata de fechas de caducidad — no de cantidades en bodega</div>',
             unsafe_allow_html=True,
         )
+        _vc1, _vc2, _vc3 = st.columns(3)
+        with _vc1:
+            st.markdown(
+                '<div style="background:#FFF5F5;border-radius:8px;padding:12px 14px;'
+                'border-top:3px solid #E53E3E;margin-bottom:6px">'
+                '<div style="font-size:0.82rem;font-weight:700;color:#C53030;margin-bottom:5px">Vencido</div>'
+                '<div style="font-size:0.79rem;color:#742A2A;line-height:1.55">'
+                'La fecha de caducidad ya pasó. <b>No se puede usar</b>, aunque haya unidades en bodega. '
+                'Esas unidades deben darse de baja.</div></div>',
+                unsafe_allow_html=True,
+            )
+            if st.button("Ver lotes vencidos", key="btn_vpanel_venc", use_container_width=True):
+                st.session_state["_venc_panel"] = (
+                    None if st.session_state.get("_venc_panel") == "vencidos" else "vencidos"
+                )
+        with _vc2:
+            st.markdown(
+                '<div style="background:#EBF8FF;border-radius:8px;padding:12px 14px;'
+                'border-top:3px solid #3182CE;margin-bottom:6px">'
+                '<div style="font-size:0.82rem;font-weight:700;color:#2B6CB0;margin-bottom:5px">Sin stock</div>'
+                '<div style="font-size:0.79rem;color:#2C5282;line-height:1.55">'
+                'No hay unidades disponibles en bodega. El medicamento puede estar <b>vigente pero agotado</b>. '
+                'Es un quiebre de abastecimiento, no un vencimiento.</div></div>',
+                unsafe_allow_html=True,
+            )
+            if st.button("Ver sin existencias", key="btn_vpanel_stk", use_container_width=True):
+                st.session_state["_venc_panel"] = (
+                    None if st.session_state.get("_venc_panel") == "sin_stock" else "sin_stock"
+                )
+        with _vc3:
+            st.markdown(
+                '<div style="background:#F0FFF4;border-radius:8px;padding:12px 14px;'
+                'border-top:3px solid #38A169;margin-bottom:6px">'
+                '<div style="font-size:0.82rem;font-weight:700;color:#276749;margin-bottom:5px">Pueden combinarse</div>'
+                '<div style="font-size:0.79rem;color:#22543D;line-height:1.55">'
+                'Un producto puede estar <b>vencido con stock</b> (pérdida) '
+                'o <b>vigente sin stock</b> (quiebre). Son problemas distintos.</div></div>',
+                unsafe_allow_html=True,
+            )
+            if st.button("Ver vencidos con stock", key="btn_vpanel_combo", use_container_width=True):
+                st.session_state["_venc_panel"] = (
+                    None if st.session_state.get("_venc_panel") == "combo" else "combo"
+                )
         st.markdown(_ayuda(
             "<b>Control de fechas de caducidad</b> — Esta pestaña muestra cuándo vencen los lotes de medicamentos, "
             "independientemente de si hay o no existencias. "
@@ -2649,6 +2670,119 @@ with tab2:
             _venc_nom  = COL_NOMBRE
             _venc_lote = COL_LOTE if COL_LOTE else None
             _venc_stk  = "stock_total" if "stock_total" in inv.columns else COL_STOCK
+
+        # ── Panel de detalle según botón activo ─────────────────────────────
+        _venc_panel = st.session_state.get("_venc_panel")
+        if _venc_panel is not None:
+            st.markdown("<div style='margin-top:8px'></div>", unsafe_allow_html=True)
+
+            def _venc_dl_button(df_export, label, fname, key):
+                _buf = io.BytesIO()
+                _safe_df(df_export).to_excel(_buf, index=False, engine="openpyxl")
+                st.download_button(
+                    label=f"Descargar Excel — {label}",
+                    data=_buf.getvalue(),
+                    file_name=fname,
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key=key, use_container_width=True,
+                )
+
+            if _venc_panel == "sin_stock":
+                # ── Sin stock: usa resumen (independiente de _venc_df) ─────────
+                _ps_df = resumen[resumen["stock_total"] == 0].copy()
+                _ps_cols = [COL_CODIGO, COL_NOMBRE, "stock_total"]
+                for _xc in ["ALCANCE", "SUGERIDO", "costo_unitario", "valor_inventario", "estado"]:
+                    if _xc in _ps_df.columns: _ps_cols.append(_xc)
+                _ps_df = _ps_df[[c for c in _ps_cols if c in _ps_df.columns]]
+                _ps_ren = {
+                    COL_CODIGO: "Código", COL_NOMBRE: "Medicamento", "stock_total": "Existencias",
+                    "ALCANCE": "Cobertura (meses)", "SUGERIDO": "Cant. sugerida",
+                    "costo_unitario": "Costo unit.", "valor_inventario": "Valor en exist.", "estado": "Estado",
+                }
+                _ps_show = _ps_df.rename(columns=_ps_ren).reset_index(drop=True)
+                st.markdown(
+                    f'<div style="background:#EBF8FF;border-left:4px solid #3182CE;border-radius:8px;'
+                    f'padding:10px 16px;margin:4px 0 6px 0">'
+                    f'<span style="font-size:0.84rem;font-weight:700;color:#2B6CB0">'
+                    f'Sin existencias — {_m(len(_ps_show))} medicamentos con stock igual a cero</span></div>',
+                    unsafe_allow_html=True,
+                )
+                st.dataframe(_safe_df(_ps_show), use_container_width=True, hide_index=True, height=320)
+                _venc_dl_button(_ps_show, f"{_m(len(_ps_show))} sin existencias",
+                                f"sin_existencias_SAVIA_{date.today().strftime('%Y%m%d')}.xlsx",
+                                "dl_panel_sinstock")
+
+            elif len(_venc_df) == 0:
+                st.info("Carga el archivo de inventario con fechas de vencimiento para ver esta información.")
+
+            elif _venc_panel == "vencidos":
+                # ── Lotes vencidos ────────────────────────────────────────────
+                _pv_df = _venc_df[_venc_df["dias_vencer"] < 0].copy().sort_values("dias_vencer")
+                _pv_cols = [c for c in [_venc_nom, _venc_lote, IL_VENC, _venc_stk, "dias_vencer"]
+                            if c and c in _pv_df.columns]
+                _pv_ren  = {
+                    _venc_nom: "Medicamento", _venc_lote: "Lote",
+                    IL_VENC:   "Fecha vencimiento", _venc_stk: "Unidades",
+                    "dias_vencer": "Días vencido",
+                }
+                _pv_show = _pv_df[_pv_cols].rename(
+                    columns={k: v for k, v in _pv_ren.items() if k}
+                ).reset_index(drop=True)
+                if "Fecha vencimiento" in _pv_show.columns:
+                    _pv_show["Fecha vencimiento"] = (
+                        pd.to_datetime(_pv_show["Fecha vencimiento"], errors="coerce")
+                        .dt.strftime("%d/%m/%Y").fillna("—")
+                    )
+                st.markdown(
+                    f'<div style="background:#FFF5F5;border-left:4px solid #E53E3E;border-radius:8px;'
+                    f'padding:10px 16px;margin:4px 0 6px 0">'
+                    f'<span style="font-size:0.84rem;font-weight:700;color:#C53030">'
+                    f'Lotes vencidos — {_m(len(_pv_show))} lotes cuya fecha de caducidad ya pasó</span></div>',
+                    unsafe_allow_html=True,
+                )
+                st.dataframe(_safe_df(_pv_show), use_container_width=True, hide_index=True, height=320)
+                _venc_dl_button(_pv_show, f"{_m(len(_pv_show))} lotes vencidos",
+                                f"lotes_vencidos_SAVIA_{date.today().strftime('%Y%m%d')}.xlsx",
+                                "dl_panel_vencidos")
+
+            elif _venc_panel == "combo":
+                # ── Vencidos con stock positivo ───────────────────────────────
+                _pc_mask = _venc_df["dias_vencer"] < 0
+                if _venc_stk and _venc_stk in _venc_df.columns:
+                    _pc_mask = _pc_mask & (
+                        pd.to_numeric(_venc_df[_venc_stk], errors="coerce").fillna(0) > 0
+                    )
+                _pc_df   = _venc_df[_pc_mask].copy().sort_values("dias_vencer")
+                _pc_cols = [c for c in [_venc_nom, _venc_lote, IL_VENC, _venc_stk, "dias_vencer"]
+                            if c and c in _pc_df.columns]
+                _pc_ren  = {
+                    _venc_nom: "Medicamento", _venc_lote: "Lote",
+                    IL_VENC:   "Fecha vencimiento", _venc_stk: "Unidades en bodega",
+                    "dias_vencer": "Días vencido",
+                }
+                _pc_show = _pc_df[_pc_cols].rename(
+                    columns={k: v for k, v in _pc_ren.items() if k}
+                ).reset_index(drop=True)
+                if "Fecha vencimiento" in _pc_show.columns:
+                    _pc_show["Fecha vencimiento"] = (
+                        pd.to_datetime(_pc_show["Fecha vencimiento"], errors="coerce")
+                        .dt.strftime("%d/%m/%Y").fillna("—")
+                    )
+                st.markdown(
+                    f'<div style="background:#F0FFF4;border-left:4px solid #38A169;border-radius:8px;'
+                    f'padding:10px 16px;margin:4px 0 6px 0">'
+                    f'<span style="font-size:0.84rem;font-weight:700;color:#276749">'
+                    f'Vencidos con existencias — {_m(len(_pc_show))} lotes caducados que aún tienen unidades en bodega</span></div>',
+                    unsafe_allow_html=True,
+                )
+                if len(_pc_show) == 0:
+                    st.info("No hay lotes vencidos que tengan existencias positivas en bodega.")
+                else:
+                    st.dataframe(_safe_df(_pc_show), use_container_width=True, hide_index=True, height=320)
+                    _venc_dl_button(_pc_show, f"{_m(len(_pc_show))} vencidos con stock",
+                                    f"vencidos_con_stock_SAVIA_{date.today().strftime('%Y%m%d')}.xlsx",
+                                    "dl_panel_combo")
+            st.divider()
 
         if len(_venc_df) == 0:
             st.markdown(
