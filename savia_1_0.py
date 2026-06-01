@@ -1369,13 +1369,7 @@ if _g["inv"] is None:
 
 # Aviso cuando se cargó un archivo de consumos del hospital (sin stock ni vencimiento)
 if _g.get("formato_hospital", False):
-    if _g.get("inv_lotes") is not None:
-        st.success(
-            "**Consumos e Inventario cargados correctamente.**  \n"
-            "Se está usando el archivo de inventario para mostrar el **stock actual** y las **fechas de vencimiento**. "
-            "El historial de consumo proviene del archivo de programa de compras."
-        )
-    else:
+    if _g.get("inv_lotes") is None:
         st.info(
             "**Archivo de consumos cargado correctamente.**  \n"
             "Este tipo de archivo registra el **historial de consumo** de los medicamentos mes a mes, "
