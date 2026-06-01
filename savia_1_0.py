@@ -2576,15 +2576,32 @@ with tab2:
     # SUB-TAB 2 — VENCIMIENTOS
     # ══════════════════════════════════════════════════════════════════════════
     with _t2_venc:
-        # Nota aclaratoria sobre la diferencia entre vencimiento y quiebre de stock
+        # Nota aclaratoria: vencimiento ≠ quiebre de stock
         st.markdown(
-            '<div style="background:#FFF5F5;border-left:4px solid #E53E3E;border-radius:8px;'
-            'padding:12px 16px;margin:0 0 10px 0">'
-            '<div style="font-size:0.82rem;font-weight:700;color:#C53030;margin-bottom:4px">¿En qué se diferencia del stock?</div>'
-            '<div style="font-size:0.81rem;color:#742A2A;line-height:1.55">'
-            '🗓 <b>Vencido</b> = la fecha de caducidad ya pasó. El medicamento <b>no puede usarse</b> aunque haya unidades en bodega — debe darse de baja.<br>'
-            '📦 <b>Sin stock</b> = hay cero unidades disponibles. El medicamento puede estar vigente pero agotado.<br>'
-            'Un producto puede estar <b>vencido y con stock</b> (pérdida económica) o <b>vigente y sin stock</b> (quiebre de abastecimiento). Son situaciones distintas.'
+            '<div style="background:white;border:1px solid #E2E8F0;border-radius:10px;'
+            'padding:14px 18px 12px 18px;margin:0 0 12px 0">'
+            '<div style="font-size:0.72rem;font-weight:700;color:#94A3B8;text-transform:uppercase;'
+            'letter-spacing:0.07em;margin-bottom:10px">'
+            'Esta pestaña trata de fechas de caducidad — no de cantidades en bodega</div>'
+            '<div style="display:flex;gap:10px">'
+            # ── Tarjeta 1: Vencido ──
+            '<div style="flex:1;background:#FFF5F5;border-radius:8px;padding:10px 14px;border-top:3px solid #E53E3E">'
+            '<div style="font-size:0.82rem;font-weight:700;color:#C53030;margin-bottom:5px">Vencido</div>'
+            '<div style="font-size:0.79rem;color:#742A2A;line-height:1.55">'
+            'La fecha de caducidad ya pasó. <b>No se puede usar</b>, aunque haya unidades en bodega. '
+            'Esas unidades deben darse de baja.</div></div>'
+            # ── Tarjeta 2: Sin stock ──
+            '<div style="flex:1;background:#EBF8FF;border-radius:8px;padding:10px 14px;border-top:3px solid #3182CE">'
+            '<div style="font-size:0.82rem;font-weight:700;color:#2B6CB0;margin-bottom:5px">Sin stock</div>'
+            '<div style="font-size:0.79rem;color:#2C5282;line-height:1.55">'
+            'No hay unidades disponibles en bodega. El medicamento puede estar <b>vigente pero agotado</b>. '
+            'Es un quiebre de abastecimiento, no un vencimiento.</div></div>'
+            # ── Tarjeta 3: Pueden combinarse ──
+            '<div style="flex:1;background:#F0FFF4;border-radius:8px;padding:10px 14px;border-top:3px solid #38A169">'
+            '<div style="font-size:0.82rem;font-weight:700;color:#276749;margin-bottom:5px">Pueden combinarse</div>'
+            '<div style="font-size:0.79rem;color:#22543D;line-height:1.55">'
+            'Un producto puede estar <b>vencido con stock</b> (pérdida económica) '
+            'o <b>vigente sin stock</b> (quiebre). Son problemas distintos que requieren acciones distintas.</div></div>'
             '</div></div>',
             unsafe_allow_html=True,
         )
