@@ -2825,52 +2825,6 @@ with tab2:
 
             _venc_vis = _venc_df.copy()
 
-            # ── Timeline ──────────────────────────────────────────────────────
-            _venc_prod = (
-                _venc_vis.groupby(_venc_nom)
-                .agg(dias_min=("dias_vencer", "min"))
-                .reset_index()
-                .sort_values("dias_min")
-                .head(20)
-            )
-            if len(_venc_prod) == 0:
-                st.info("No hay medicamentos que coincidan con los filtros aplicados.")
-            else:
-                _venc_prod["color"] = _venc_prod["dias_min"].apply(
-                    lambda d: "#E53E3E" if d < 0 else "#DD6B20" if d < 30
-                    else "#D69E2E" if d < 90 else "#38A169"
-                )
-                _noms_v = [
-                    n[:45] + "…" if len(str(n)) > 45 else str(n)
-                    for n in _venc_prod[_venc_nom]
-                ]
-                _fig_tl = go.Figure(go.Bar(
-                    x=_venc_prod["dias_min"].clip(lower=-365),
-                    y=_noms_v,
-                    orientation="h",
-                    marker_color=_venc_prod["color"].tolist(),
-                    text=[f"{int(d)} d" for d in _venc_prod["dias_min"]],
-                    textposition="outside", cliponaxis=False,
-                    hovertemplate="<b>%{y}</b><br>%{x} días hasta vencer<extra></extra>",
-                ))
-                _fig_tl.add_vline(x=0,  line_color="#E53E3E", line_width=2, line_dash="dash",
-                                  annotation_text="Hoy", annotation_position="top left")
-                _fig_tl.add_vline(x=30, line_color="#DD6B20", line_width=1, line_dash="dot",
-                                  annotation_text="30 d", annotation_position="top right")
-                _fig_tl.add_vline(x=90, line_color="#D69E2E", line_width=1, line_dash="dot",
-                                  annotation_text="90 d", annotation_position="top right")
-                _fig_tl.update_layout(
-                    title=dict(text=f"Días hasta vencimiento — top {len(_venc_prod)} más urgentes",
-                               font=dict(size=13, color="#0f172a")),
-                    height=max(300, len(_venc_prod) * 28 + 80),
-                    margin=dict(t=36, b=8, l=8, r=80),
-                    xaxis=dict(title="Días restántes (negativo = ya vencido)",
-                               zeroline=True, zerolinecolor="#E53E3E", zerolinewidth=2),
-                    yaxis=dict(autorange="reversed"),
-                    paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                )
-                st.plotly_chart(_fig_tl, use_container_width=True)
-                st.caption("Cada barra = un medicamento, posicionado según el lote que vence primero. Izquierda de la línea 'Hoy' = ya vencido. Entre 'Hoy' y '30 d' = acción urgente.")
 
             # ── Tabla detalle: lotes con acción requerida (<90 días) ──────────
             _crit_v = _venc_vis[_venc_vis["dias_vencer"] < 90].copy().sort_values("dias_vencer")
