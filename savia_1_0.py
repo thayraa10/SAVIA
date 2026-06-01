@@ -1082,15 +1082,60 @@ def _recompute():
         else:
             productos["STOCK"] = 0;  productos["COSTO"] = 0
         productos["VENCIMIENTO"] = pd.NaT
-        productos.columns = [str(c) for c in productos.columns]
-        store["inv"] = productos;  store["mov"] = mov_comb;  store["formato_hospital"] = True
-        # Guardar archivos de inventario estándar (lotes + vencimientos) aunque haya formato hospital
+        # --- Enriquecer con datos del Inventario estándar si fue cargado junto ---
         if inv_dirs:
-            _il = pd.concat(inv_dirs, ignore_index=True)
-            _il.columns = [str(c) for c in _il.columns]
-            store["inv_lotes"] = _il
+            _il_raw = pd.concat(inv_dirs, ignore_index=True)
+            _il_raw.columns = [str(c) for c in _il_raw.columns]
+            store["inv_lotes"] = _il_raw
+            _il_cl = {str(c).lower(): c for c in _il_raw.columns}
+            def _find_il(kws):
+                for kw in kws:
+                    for cl, co in _il_cl.items():
+                        if kw in cl:
+                            return co
+                return None
+            _c_il_cod  = _find_il(["codigo", "sku", "clave"])
+            _c_il_stk  = _find_il(["existencia", "stock"])
+            _c_il_venc = _find_il(["fvenv", "vencimiento", "venc", "caducidad"])
+            _c_il_prec = _find_il(["precio", "costo"])
+            if _c_il_cod:
+                _il_raw[_c_il_cod] = _il_raw[_c_il_cod].astype(str).str.strip()
+                if _c_il_stk:
+                    _il_raw[_c_il_stk] = pd.to_numeric(_il_raw[_c_il_stk], errors="coerce").fillna(0)
+                if _c_il_venc:
+                    _il_raw[_c_il_venc] = pd.to_datetime(_il_raw[_c_il_venc], dayfirst=True, errors="coerce")
+                if _c_il_prec:
+                    _il_raw[_c_il_prec] = pd.to_numeric(_il_raw[_c_il_prec], errors="coerce")
+                _il_agg = {}
+                if _c_il_stk:  _il_agg["STOCK"]      = (_c_il_stk,  "sum")
+                if _c_il_venc: _il_agg["VENCIMIENTO"] = (_c_il_venc, "min")
+                if _c_il_prec: _il_agg["COSTO"]       = (_c_il_prec, "first")
+                if _il_agg:
+                    _il_grp = (_il_raw.groupby(_c_il_cod)
+                                      .agg(**_il_agg)
+                                      .reset_index()
+                                      .rename(columns={_c_il_cod: "CODIGO"}))
+                    _il_grp["CODIGO"] = _il_grp["CODIGO"].astype(str).str.strip()
+                    productos["CODIGO"] = productos["CODIGO"].astype(str).str.strip()
+                    # Merge con sufijos para no pisar columnas que ya existen
+                    productos = productos.merge(_il_grp, on="CODIGO", how="left", suffixes=("", "_IL"))
+                    # Aplicar valores del inventario con preferencia sobre los del archivo de consumos
+                    for _col in list(_il_agg.keys()):
+                        _col_il = _col + "_IL"
+                        if _col_il in productos.columns:
+                            if _col == "VENCIMIENTO":
+                                # Siempre usar la fecha del inventario (antes era todo NaT)
+                                productos[_col] = productos[_col_il]
+                            else:
+                                # Preferir valor del inventario; caer en el de consumos si falta
+                                productos[_col] = productos[_col_il].fillna(productos[_col].fillna(0))
+                            productos.drop(columns=[_col_il], inplace=True)
+                        elif _col in productos.columns and _col != "VENCIMIENTO":
+                            productos[_col] = productos[_col].fillna(0)
         else:
             store["inv_lotes"] = None
+        productos.columns = [str(c) for c in productos.columns]
+        store["inv"] = productos;  store["mov"] = mov_comb;  store["formato_hospital"] = True
     elif inv_dirs:
         inv_comb = pd.concat(inv_dirs, ignore_index=True)
         inv_comb.columns = [str(c) for c in inv_comb.columns]
@@ -1324,14 +1369,21 @@ if _g["inv"] is None:
 
 # Aviso cuando se cargó un archivo de consumos del hospital (sin stock ni vencimiento)
 if _g.get("formato_hospital", False):
-    st.info(
-        "**Archivo de consumos cargado correctamente.**  \n"
-        "Este tipo de archivo registra el **historial de consumo** de los medicamentos mes a mes, "
-        "pero no incluye el inventario físico del establecimiento. "
-        "Por eso las columnas de stock actual y fecha de vencimiento no están disponibles: "
-        "esa información se lleva por separado en el registro de bodega.  \n"
-        "Si tienes un archivo con las existencias actuales, puedes cargarlo adicionalmente desde el panel lateral."
-    )
+    if _g.get("inv_lotes") is not None:
+        st.success(
+            "**Consumos e Inventario cargados correctamente.**  \n"
+            "Se está usando el archivo de inventario para mostrar el **stock actual** y las **fechas de vencimiento**. "
+            "El historial de consumo proviene del archivo de programa de compras."
+        )
+    else:
+        st.info(
+            "**Archivo de consumos cargado correctamente.**  \n"
+            "Este tipo de archivo registra el **historial de consumo** de los medicamentos mes a mes, "
+            "pero no incluye el inventario físico del establecimiento. "
+            "Por eso las columnas de stock actual y fecha de vencimiento no están disponibles: "
+            "esa información se lleva por separado en el registro de bodega.  \n"
+            "Si tienes un archivo con las existencias actuales, puedes cargarlo adicionalmente desde el panel lateral."
+        )
 
 # Leer DataFrames directamente desde el store compartido (nunca desde session_state)
 datos_inventario  = _g["inv"]
@@ -1679,8 +1731,8 @@ with tab1:
 
     _fi5.metric("Total productos",  f"{_m(len(resumen))}",
                 help="Cantidad de medicamentos distintos actualmente en el inventario.")
-    if formato_hospital:
-        # Archivo de consumos: sin datos de vencimiento → mostrar quiebres de stock
+    if formato_hospital and datos_inv_lotes is None:
+        # Solo consumos: sin datos de vencimiento → mostrar quiebres de stock
         _fi6.metric(
             "Sin existencias",
             f"{_m(_n_quiebre)}",
@@ -1811,10 +1863,10 @@ with tab1:
                 _tbl_filt = resumen[resumen["estado"] == _sel].copy()
 
             _c_show = [COL_CODIGO, COL_NOMBRE, "stock_total"]
-            if not formato_hospital:
+            if not formato_hospital or datos_inv_lotes is not None:
                 for _c in ["min_dias_vencer", "estado"]:
                     if _c in _tbl_filt.columns: _c_show.append(_c)
-            else:
+            if formato_hospital:
                 for _c in ["ALCANCE", "SUGERIDO"]:
                     if _c in _tbl_filt.columns: _c_show.append(_c)
             _c_show   = [c for c in _c_show if c in _tbl_filt.columns]
@@ -1835,7 +1887,7 @@ with tab1:
                 _urg = pd.DataFrame()
             if len(_urg) > 0:
                 _uc = [COL_CODIGO, COL_NOMBRE, "stock_total"]
-                if "min_dias_vencer" in _urg.columns and not formato_hospital: _uc.append("min_dias_vencer")
+                if "min_dias_vencer" in _urg.columns and (not formato_hospital or datos_inv_lotes is not None): _uc.append("min_dias_vencer")
                 if "ALCANCE" in _urg.columns: _uc.append("ALCANCE")
                 _uc = [c for c in _uc if c in _urg.columns]
                 _urg_show = _urg[_uc].rename(columns={
@@ -2446,6 +2498,10 @@ with tab2:
             _cols_t2 = [COL_CODIGO, COL_NOMBRE, "stock_total", "_estado_cob"]
             for _xc in ["ALCANCE", "SUGERIDO", "costo_unitario", "valor_inventario"]:
                 if _xc in tabla_base.columns: _cols_t2.append(_xc)
+            # Si también se cargó el archivo de inventario, mostrar vencimiento y estado
+            if datos_inv_lotes is not None:
+                for _xc in ["min_dias_vencer", "estado"]:
+                    if _xc in tabla_base.columns: _cols_t2.append(_xc)
         else:
             _cols_t2 = [COL_CODIGO, COL_NOMBRE, "stock_total"]
             for _xc in ["n_lotes", "min_dias_vencer", "estado", "costo_unitario", "valor_inventario"]:
@@ -2520,14 +2576,27 @@ with tab2:
     # SUB-TAB 2 — VENCIMIENTOS
     # ══════════════════════════════════════════════════════════════════════════
     with _t2_venc:
+        # Nota aclaratoria sobre la diferencia entre vencimiento y quiebre de stock
+        st.markdown(
+            '<div style="background:#FFF5F5;border-left:4px solid #E53E3E;border-radius:8px;'
+            'padding:12px 16px;margin:0 0 10px 0">'
+            '<div style="font-size:0.82rem;font-weight:700;color:#C53030;margin-bottom:4px">¿En qué se diferencia del stock?</div>'
+            '<div style="font-size:0.81rem;color:#742A2A;line-height:1.55">'
+            '🗓 <b>Vencido</b> = la fecha de caducidad ya pasó. El medicamento <b>no puede usarse</b> aunque haya unidades en bodega — debe darse de baja.<br>'
+            '📦 <b>Sin stock</b> = hay cero unidades disponibles. El medicamento puede estar vigente pero agotado.<br>'
+            'Un producto puede estar <b>vencido y con stock</b> (pérdida económica) o <b>vigente y sin stock</b> (quiebre de abastecimiento). Son situaciones distintas.'
+            '</div></div>',
+            unsafe_allow_html=True,
+        )
         st.markdown(_ayuda(
-            "<b>Control de vencimientos por lote</b> — Muestra cada lote de medicamento con su fecha de caducidad real. "
-            "Un mismo medicamento puede aparecer varias veces si tiene múltiples lotes con fechas distintas. "
+            "<b>Control de fechas de caducidad</b> — Esta pestaña muestra cuándo vencen los lotes de medicamentos, "
+            "independientemente de si hay o no existencias. "
             "La lógica recomendada es <span style='color:#3182CE;font-weight:700'>FEFO</span> (First Expired, First Out): "
-            "el lote que vence primero debe usarse primero para evitar pérdidas. "
-            "<b>Días restantes</b>: días entre hoy y la fecha de vencimiento del lote. "
-            "Un valor <span style='color:#E53E3E;font-weight:700'>negativo</span> significa que el lote ya está <span style='color:#E53E3E;font-weight:700'>vencido</span>. "
-            "La tabla inferior lista solo los lotes que vencen en menos de 30 días, con una acción sugerida para cada uno."
+            "el lote que vence primero debe despacharse primero para evitar pérdidas. "
+            "Un mismo medicamento puede aparecer varias veces si tiene múltiples lotes con fechas distintas. "
+            "<b>Días restantes</b>: días entre hoy y la fecha de caducidad. "
+            "Un valor <span style='color:#E53E3E;font-weight:700'>negativo</span> significa que ese lote <span style='color:#E53E3E;font-weight:700'>ya caducó</span> "
+            "y debe retirarse de bodega."
         ), unsafe_allow_html=True)
         # ── Origen de datos ───────────────────────────────────────────────────
         _venc_df   = pd.DataFrame()
@@ -2960,7 +3029,12 @@ with tab2:
 
             st.divider()
 
-            # ── Gauge (izq) + Tabla info / Lotes (der) ────────────────────────
+            # ── Gauge (izq) + Tabla info / Lotes (der) — tarjeta blanca ───────
+            st.markdown(
+                '<div style="background:white;border-radius:14px;padding:20px 24px 16px 24px;'
+                'box-shadow:0 2px 10px rgba(0,0,0,0.07);margin:4px 0 16px 0">',
+                unsafe_allow_html=True,
+            )
             _gcol, _tcol = st.columns([1, 1])
 
             with _gcol:
@@ -3005,7 +3079,7 @@ with tab2:
                 ))
                 _fig_g.update_layout(
                     height=270, margin=dict(t=40, b=10, l=20, r=20),
-                    paper_bgcolor="rgba(0,0,0,0)",
+                    paper_bgcolor="white",
                 )
                 st.plotly_chart(_fig_g, use_container_width=True)
                 if _d_smax > 0 and _d_smin > 0:
@@ -3055,10 +3129,9 @@ with tab2:
 
             with _tcol:
                 if formato_hospital:
-                    st.markdown("**Información del producto**")
                     _info_rows = [
-                        {"Campo": "Código",       "Valor": str(_cod_d)},
-                        {"Campo": "Existencias actuales", "Valor": f"{_m(math.floor(_d_stk))} u"},
+                        ("Código",              str(_cod_d)),
+                        ("Existencias actuales", f"{_m(math.floor(_d_stk))} u"),
                     ]
                     _badge_colors_d = {
                         "Sin existencias":   ("#FED7D7","#C53030"),
@@ -3069,7 +3142,7 @@ with tab2:
                         "ADVERTENCIA": ("#FEFCBF","#B7791F"), "NORMAL": ("#C6F6D5","#276749"),
                     }
                     _bg_d, _fg_d = _badge_colors_d.get(_d_est, ("#EDF2F7","#718096"))
-                    _info_rows.append({"Campo": "Estado", "Valor": _d_est})
+                    _info_rows.append(("Estado", _d_est))
                     for _campo, _col_r in [
                         ("Cobertura (meses)",   "ALCANCE"),
                         ("Existencias mínimas", "STC_MIN"),
@@ -3078,13 +3151,37 @@ with tab2:
                         ("Consumo promedio",    "CONS_PROM"),
                     ]:
                         if _col_r in _row_d.index and not pd.isna(_row_d.get(_col_r)):
-                            _info_rows.append({"Campo": _campo, "Valor": f"{float(_row_d[_col_r]):,.1f}"})
+                            _info_rows.append((_campo, f"{float(_row_d[_col_r]):,.1f}"))
                     if _d_costo > 0:
-                        _info_rows.append({"Campo": "Precio unitario",    "Valor": f"${_d_costo:,.0f} CLP"})
-                        _info_rows.append({"Campo": "Valor en existencias","Valor": f"${_d_stk * _d_costo:,.0f} CLP"})
-                    st.dataframe(
-                        _safe_df(pd.DataFrame(_info_rows)),
-                        use_container_width=True, hide_index=True,
+                        _info_rows.append(("Precio unitario",     f"${_m(int(_d_costo))} CLP"))
+                        _info_rows.append(("Valor en existencias", f"${_m(int(_d_stk * _d_costo))} CLP"))
+                    # Render as a styled HTML table (no gray DataFrame headers)
+                    _rows_html = ""
+                    for _campo_h, _valor_h in _info_rows:
+                        if _campo_h == "Estado":
+                            _val_cell = (
+                                f'<span style="background:{_bg_d};color:{_fg_d};'
+                                f'padding:2px 8px;border-radius:12px;font-size:0.78rem;font-weight:700">'
+                                f'{_valor_h}</span>'
+                            )
+                        else:
+                            _val_cell = f'<span style="font-weight:600;color:#0f172a">{_valor_h}</span>'
+                        _rows_html += (
+                            f'<tr>'
+                            f'<td style="padding:7px 12px;color:#64748b;font-size:0.82rem;'
+                            f'border-bottom:1px solid #F1F5F9;white-space:nowrap">{_campo_h}</td>'
+                            f'<td style="padding:7px 12px;font-size:0.82rem;'
+                            f'border-bottom:1px solid #F1F5F9">{_val_cell}</td>'
+                            f'</tr>'
+                        )
+                    st.markdown(
+                        f'<div style="font-size:0.78rem;font-weight:700;color:#64748b;'
+                        f'text-transform:uppercase;letter-spacing:0.05em;margin-bottom:10px">'
+                        f'Información del producto</div>'
+                        f'<table style="width:100%;border-collapse:collapse">'
+                        f'{_rows_html}'
+                        f'</table>',
+                        unsafe_allow_html=True,
                     )
                 else:
                     st.markdown("**Lotes (FEFO: primero en vencer, primero en salir)**")
@@ -3094,6 +3191,8 @@ with tab2:
                     if COL_VENCIMIENTO in _lotes_med.columns:
                         _lotes_med[COL_VENCIMIENTO] = _lotes_med[COL_VENCIMIENTO].dt.strftime("%d/%m/%Y")
                     st.dataframe(_safe_df(_lotes_med), use_container_width=True, hide_index=True)
+
+            st.markdown('</div>', unsafe_allow_html=True)
 
             # ── Historial de consumo mensual ──────────────────────────────────
             st.markdown(
@@ -3524,9 +3623,9 @@ with tab3:
 | Horizonte simulado | **360 días** |
 | Réplicas | **5** |
 """)
-                with pc2:
-                    st.markdown("**Operación y costos**")
-                    st.markdown(f"""
+                    with pc2:
+                        st.markdown("**Operación y costos**")
+                        st.markdown(f"""
 | Parámetro | Valor |
 |---|---|
 | Tiempo de entrega (LT) | **{int(lead_time)} días** |
@@ -3535,9 +3634,9 @@ with tab3:
 | Costo por orden (OC) | **${_m(costo_orden)} CLP** |
 | Costo mantener (HC) | **${_m(costo_mantener)} CLP/u/día** |
 """)
-                with pc3:
-                    st.markdown("**Parámetros de política**")
-                    st.markdown(f"""
+                    with pc3:
+                        st.markdown("**Parámetros de política**")
+                        st.markdown(f"""
 | Parámetro | Valor |
 |---|---|
 | Punto de reorden (s) | **{s_sim} u** |
@@ -3548,128 +3647,128 @@ with tab3:
 | S — máximo (R,S) | **{S_rs} u** |
 | S — máximo (R,s,S) | **{S_rss} u** |
 """)
-                st.divider()
-
-                # Limpiar resultados si el usuario cambia de medicamento
-                if st.session_state.get("_sim_med") != med_sim:
-                    st.session_state.pop("_sim_cache", None)
-
-                if st.button("Ejecutar simulación", key="btn_sim", use_container_width=True):
-                    def _recortar_sim(resultado, n_dias):
-                        t_fin   = resultado[2][-1] if resultado[2] else 360
-                        t_ini   = max(0.0, t_fin - n_dias)
-                        idx_ini = next((i for i, t in enumerate(resultado[2]) if t >= t_ini), 0)
-                        x  = resultado[2][idx_ini:]
-                        oh = resultado[3][idx_ini:]
-                        ip = resultado[5][idx_ini:]
-                        if len(x) > 5000:           # limitar a 5000 puntos para no saturar WebSocket
-                            step = len(x) // 5000
-                            x, oh, ip = x[::step], oh[::step], ip[::step]
-                        return x, oh, ip
-
-                    _n_días = max(periodo_revision * 4,
-                                  min(max(float(periodo_revision), params_sim["Q"] / max(media_sim, 0.001)) * 15, 360.0))
-                    with st.spinner("Ejecutando simulaciónes..."):
-                        r_rsq = simular_rsq(media_sim, var_sim, costo_orden, costo_mantener, lead_time, periodo_revision, s_sim, Q_sim, S_rsq)
-                        r_rs  = simular_rs( media_sim, var_sim, costo_orden, costo_mantener, lead_time, periodo_revision, s_sim, Q_sim, S_rs)
-                        r_rss = simular_rss(media_sim, var_sim, costo_orden, costo_mantener, lead_time, periodo_revision, s_sim, Q_sim, S_rss)
-                    st.session_state["_sim_med"]   = med_sim
-                    st.session_state["_sim_cache"] = {
-                        "rsq": (_recortar_sim(r_rsq, _n_dias), r_rsq[0], r_rsq[1], r_rsq[4]),
-                        "rs":  (_recortar_sim(r_rs,  _n_dias), r_rs[0],  r_rs[1],  r_rs[4]),
-                        "rss": (_recortar_sim(r_rss, _n_dias), r_rss[0], r_rss[1], r_rss[4]),
-                    }
-
-                if "_sim_cache" not in st.session_state:
-                    st.info("Selecciona un medicamento y haz clic en **Ejecutar simulación**.")
-                else:
-                    _sc = st.session_state["_sim_cache"]
-                    costos_anuales  = {"(R,s,Q)": _sc["rsq"][2], "(R,S)": _sc["rs"][2], "(R,s,S)": _sc["rss"][2]}
-                    quiebres_pol    = {"(R,s,Q)": _sc["rsq"][3], "(R,S)": _sc["rs"][3], "(R,s,S)": _sc["rss"][3]}
-                    costos_diarios  = {"(R,s,Q)": _sc["rsq"][1], "(R,S)": _sc["rs"][1], "(R,s,S)": _sc["rss"][1]}
-
-                    min_quiebres = min(quiebres_pol.values())
-                    candidatas   = [p for p, q in quiebres_pol.items() if q == min_quiebres]
-                    mejor        = min(candidatas, key=lambda p: costos_anuales[p])
-
-                    filas_comparación = []
-                    for pol in ["(R,s,Q)", "(R,S)", "(R,s,S)"]:
-                        q = quiebres_pol[pol]
-                        disponibilidad = "Sin quiebres" if q == 0 else f"{q} u. sin atender"
-                        if pol == mejor:
-                            etiqueta = "RECOMENDADA"
-                        elif q > min_quiebres:
-                            etiqueta = "Quiebres de stock"
-                        else:
-                            dif = round((costos_anuales[pol] - costos_anuales[mejor]) / max(costos_anuales[mejor], 1) * 100, 1)
-                            etiqueta = f"Más cara (+{dif} %)"
-                        filas_comparación.append({
-                            "Estrategia":        NOMBRES[pol],
-                            "Cómo funciona":     DESCRIPCION[pol],
-                            "Quiebres de stock": disponibilidad,
-                            "Costo diario ($)":  f"{_m(costos_diarios[pol])}",
-                            "Costo anual ($)":   f"{_m(costos_anuales[pol])}",
-                            "Evaluación":        etiqueta,
-                        })
-                    st.dataframe(_safe_df(pd.DataFrame(filas_comparación)), use_container_width=True, hide_index=True)
-
-                    razon_mejor = []
-                    if min_quiebres == 0:
-                        razon_mejor.append("sin quiebres de stock")
-                    else:
-                        razon_mejor.append(f"menor cantidad de quiebres ({min_quiebres} u.)")
-                    razon_mejor.append("menor costo entre las de igual disponibilidad")
-                    st.success(
-                        f"Estrategia recomendada: **{NOMBRES[mejor]}** ({mejor}) — {DESCRIPCION[mejor]}  \n"
-                        f"Criterio: {' y '.join(razon_mejor)}.  \n"
-                        f"Costo anual estimado: **${costos_anuales[mejor]:,.0f} CLP** · "
-                        f"Quiebres promedio: **{quiebres_pol[mejor]} u.**"
-                    )
-
                     st.divider()
-                    st.markdown("**Evolución de existencias en bodega — últimos 90 días de simulación:**")
 
-                    refs_por_politica = {
-                        "(R,s,Q)": [(s_sim, "#dc2626", "s = punto reorden"), (params_sim["SS"], "#d97706", "SS = seg.")],
-                        "(R,S)":   [(S_rs,  "#16a34a", "S = s (nivel máx.)"), (params_sim["SS"], "#d97706", "SS = seg.")],
-                        "(R,s,S)": [(s_sim, "#dc2626", "s = punto reorden"), (S_rss, "#16a34a", "S = s+Q (nivel máx.)"), (params_sim["SS"], "#d97706", "SS = seg.")],
-                    }
-                    titulos_estrategias = [
-                        f"Política (R,s,Q) — {NOMBRES['(R,s,Q)']}",
-                        f"Política (R,S) — {NOMBRES['(R,S)']}",
-                        f"Política (R,s,S) — {NOMBRES['(R,s,S)']}",
-                    ]
-                    fig_sim = make_subplots(rows=3, cols=1, shared_xaxes=True,
-                                            subplot_titles=titulos_estrategias, vertical_spacing=0.12)
+                    # Limpiar resultados si el usuario cambia de medicamento
+                    if st.session_state.get("_sim_med") != med_sim:
+                        st.session_state.pop("_sim_cache", None)
 
-                    for num_fila, (pol, color_linea) in enumerate([("(R,s,Q)", "#1a3a5c"), ("(R,S)", "#2563eb"), ("(R,s,S)", "#16a34a")], start=1):
-                        x_datos, y_oh, y_ip = _sc[pol.lower().replace(",", "").replace("(", "").replace(")", "")][0]
-                        fig_sim.add_trace(go.Scatter(x=x_datos, y=y_oh, mode="lines",
-                            name=f"OH {NOMBRES[pol]}", legendgroup=pol,
-                            line=dict(color=color_linea, width=1.8), showlegend=True), row=num_fila, col=1)
-                        fig_sim.add_trace(go.Scatter(x=x_datos, y=y_ip, mode="lines",
-                            name=f"IP {NOMBRES[pol]}", legendgroup=pol,
-                            line=dict(color=color_linea, width=1, dash="dot"),
-                            opacity=0.55, showlegend=True), row=num_fila, col=1)
-                        for nivel, color_ref, etiqueta in refs_por_politica[pol]:
-                            fig_sim.add_hline(y=nivel, line_dash="dash", line_color=color_ref, line_width=1,
-                                annotation_text=etiqueta, annotation_position="right",
-                                annotation_font_size=10, row=num_fila, col=1)
+                    if st.button("Ejecutar simulación", key="btn_sim", use_container_width=True):
+                        def _recortar_sim(resultado, n_dias):
+                            t_fin   = resultado[2][-1] if resultado[2] else 360
+                            t_ini   = max(0.0, t_fin - n_dias)
+                            idx_ini = next((i for i, t in enumerate(resultado[2]) if t >= t_ini), 0)
+                            x  = resultado[2][idx_ini:]
+                            oh = resultado[3][idx_ini:]
+                            ip = resultado[5][idx_ini:]
+                            if len(x) > 5000:           # limitar a 5000 puntos para no saturar WebSocket
+                                step = len(x) // 5000
+                                x, oh, ip = x[::step], oh[::step], ip[::step]
+                            return x, oh, ip
 
-                    fig_sim.update_layout(height=780, margin=dict(t=50, b=30, l=80, r=130),
-                                          paper_bgcolor="white", plot_bgcolor="#f8fafc")
-                    fig_sim.update_xaxes(title_text="Día de simulación", row=3, col=1)
-                    for num_fila in [1, 2, 3]:
-                        fig_sim.update_yaxes(title_text="Unidades en bodega", tickformat=",",
-                                             title_font_size=11, row=num_fila, col=1)
-                    st.plotly_chart(fig_sim, use_container_width=True)
-                    st.caption(
-                        "**Línea sólida (OH)** = inventario físico en bodega  |  "
-                        "**Línea punteada (IP)** = posición de inventario (OH + pedidos en tránsito) — "
-                        "la orden se activa cuando **IP** cruza el umbral **s**, no cuando lo hace OH  \n"
-                        "**Rojo** = punto de reorden (s)  |  "
-                        "**Verde** = nivel máximo (S)  |  "
-                        "**Naranja** = reserva de seguridad (SS)"
-                    )
+                        _n_días = max(periodo_revision * 4,
+                                      min(max(float(periodo_revision), params_sim["Q"] / max(media_sim, 0.001)) * 15, 360.0))
+                        with st.spinner("Ejecutando simulaciónes..."):
+                            r_rsq = simular_rsq(media_sim, var_sim, costo_orden, costo_mantener, lead_time, periodo_revision, s_sim, Q_sim, S_rsq)
+                            r_rs  = simular_rs( media_sim, var_sim, costo_orden, costo_mantener, lead_time, periodo_revision, s_sim, Q_sim, S_rs)
+                            r_rss = simular_rss(media_sim, var_sim, costo_orden, costo_mantener, lead_time, periodo_revision, s_sim, Q_sim, S_rss)
+                        st.session_state["_sim_med"]   = med_sim
+                        st.session_state["_sim_cache"] = {
+                            "rsq": (_recortar_sim(r_rsq, _n_dias), r_rsq[0], r_rsq[1], r_rsq[4]),
+                            "rs":  (_recortar_sim(r_rs,  _n_dias), r_rs[0],  r_rs[1],  r_rs[4]),
+                            "rss": (_recortar_sim(r_rss, _n_dias), r_rss[0], r_rss[1], r_rss[4]),
+                        }
+
+                    if "_sim_cache" not in st.session_state:
+                        st.info("Selecciona un medicamento y haz clic en **Ejecutar simulación**.")
+                    else:
+                        _sc = st.session_state["_sim_cache"]
+                        costos_anuales  = {"(R,s,Q)": _sc["rsq"][2], "(R,S)": _sc["rs"][2], "(R,s,S)": _sc["rss"][2]}
+                        quiebres_pol    = {"(R,s,Q)": _sc["rsq"][3], "(R,S)": _sc["rs"][3], "(R,s,S)": _sc["rss"][3]}
+                        costos_diarios  = {"(R,s,Q)": _sc["rsq"][1], "(R,S)": _sc["rs"][1], "(R,s,S)": _sc["rss"][1]}
+
+                        min_quiebres = min(quiebres_pol.values())
+                        candidatas   = [p for p, q in quiebres_pol.items() if q == min_quiebres]
+                        mejor        = min(candidatas, key=lambda p: costos_anuales[p])
+
+                        filas_comparación = []
+                        for pol in ["(R,s,Q)", "(R,S)", "(R,s,S)"]:
+                            q = quiebres_pol[pol]
+                            disponibilidad = "Sin quiebres" if q == 0 else f"{q} u. sin atender"
+                            if pol == mejor:
+                                etiqueta = "RECOMENDADA"
+                            elif q > min_quiebres:
+                                etiqueta = "Quiebres de stock"
+                            else:
+                                dif = round((costos_anuales[pol] - costos_anuales[mejor]) / max(costos_anuales[mejor], 1) * 100, 1)
+                                etiqueta = f"Más cara (+{dif} %)"
+                            filas_comparación.append({
+                                "Estrategia":        NOMBRES[pol],
+                                "Cómo funciona":     DESCRIPCION[pol],
+                                "Quiebres de stock": disponibilidad,
+                                "Costo diario ($)":  f"{_m(costos_diarios[pol])}",
+                                "Costo anual ($)":   f"{_m(costos_anuales[pol])}",
+                                "Evaluación":        etiqueta,
+                            })
+                        st.dataframe(_safe_df(pd.DataFrame(filas_comparación)), use_container_width=True, hide_index=True)
+
+                        razon_mejor = []
+                        if min_quiebres == 0:
+                            razon_mejor.append("sin quiebres de stock")
+                        else:
+                            razon_mejor.append(f"menor cantidad de quiebres ({min_quiebres} u.)")
+                        razon_mejor.append("menor costo entre las de igual disponibilidad")
+                        st.success(
+                            f"Estrategia recomendada: **{NOMBRES[mejor]}** ({mejor}) — {DESCRIPCION[mejor]}  \n"
+                            f"Criterio: {' y '.join(razon_mejor)}.  \n"
+                            f"Costo anual estimado: **${costos_anuales[mejor]:,.0f} CLP** · "
+                            f"Quiebres promedio: **{quiebres_pol[mejor]} u.**"
+                        )
+
+                        st.divider()
+                        st.markdown("**Evolución de existencias en bodega — últimos 90 días de simulación:**")
+
+                        refs_por_politica = {
+                            "(R,s,Q)": [(s_sim, "#dc2626", "s = punto reorden"), (params_sim["SS"], "#d97706", "SS = seg.")],
+                            "(R,S)":   [(S_rs,  "#16a34a", "S = s (nivel máx.)"), (params_sim["SS"], "#d97706", "SS = seg.")],
+                            "(R,s,S)": [(s_sim, "#dc2626", "s = punto reorden"), (S_rss, "#16a34a", "S = s+Q (nivel máx.)"), (params_sim["SS"], "#d97706", "SS = seg.")],
+                        }
+                        titulos_estrategias = [
+                            f"Política (R,s,Q) — {NOMBRES['(R,s,Q)']}",
+                            f"Política (R,S) — {NOMBRES['(R,S)']}",
+                            f"Política (R,s,S) — {NOMBRES['(R,s,S)']}",
+                        ]
+                        fig_sim = make_subplots(rows=3, cols=1, shared_xaxes=True,
+                                                subplot_titles=titulos_estrategias, vertical_spacing=0.12)
+
+                        for num_fila, (pol, color_linea) in enumerate([("(R,s,Q)", "#1a3a5c"), ("(R,S)", "#2563eb"), ("(R,s,S)", "#16a34a")], start=1):
+                            x_datos, y_oh, y_ip = _sc[pol.lower().replace(",", "").replace("(", "").replace(")", "")][0]
+                            fig_sim.add_trace(go.Scatter(x=x_datos, y=y_oh, mode="lines",
+                                name=f"OH {NOMBRES[pol]}", legendgroup=pol,
+                                line=dict(color=color_linea, width=1.8), showlegend=True), row=num_fila, col=1)
+                            fig_sim.add_trace(go.Scatter(x=x_datos, y=y_ip, mode="lines",
+                                name=f"IP {NOMBRES[pol]}", legendgroup=pol,
+                                line=dict(color=color_linea, width=1, dash="dot"),
+                                opacity=0.55, showlegend=True), row=num_fila, col=1)
+                            for nivel, color_ref, etiqueta in refs_por_politica[pol]:
+                                fig_sim.add_hline(y=nivel, line_dash="dash", line_color=color_ref, line_width=1,
+                                    annotation_text=etiqueta, annotation_position="right",
+                                    annotation_font_size=10, row=num_fila, col=1)
+
+                        fig_sim.update_layout(height=780, margin=dict(t=50, b=30, l=80, r=130),
+                                              paper_bgcolor="white", plot_bgcolor="#f8fafc")
+                        fig_sim.update_xaxes(title_text="Día de simulación", row=3, col=1)
+                        for num_fila in [1, 2, 3]:
+                            fig_sim.update_yaxes(title_text="Unidades en bodega", tickformat=",",
+                                                 title_font_size=11, row=num_fila, col=1)
+                        st.plotly_chart(fig_sim, use_container_width=True)
+                        st.caption(
+                            "**Línea sólida (OH)** = inventario físico en bodega  |  "
+                            "**Línea punteada (IP)** = posición de inventario (OH + pedidos en tránsito) — "
+                            "la orden se activa cuando **IP** cruza el umbral **s**, no cuando lo hace OH  \n"
+                            "**Rojo** = punto de reorden (s)  |  "
+                            "**Verde** = nivel máximo (S)  |  "
+                            "**Naranja** = reserva de seguridad (SS)"
+                        )
 
 
