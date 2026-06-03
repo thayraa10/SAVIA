@@ -7,3 +7,4 @@ streamlit-autorefresh==1.0.1
 pytz==2024.1
 requests==2.32.3
 scipy==1.13.1
+pulp==2.9.0

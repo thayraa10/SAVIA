@@ -14,11 +14,8 @@ import streamlit.components.v1 as _components
 from streamlit_autorefresh import st_autorefresh
 import requests as _requests
 from scipy.stats import norm as _norm_inv, gamma as gamma_dist
-try:
-    from gurobipy import Model, GRB, quicksum
-    _GUROBI_OK = True
-except ImportError:
-    _GUROBI_OK = False
+import pulp as _pulp
+_GUROBI_OK = True   # solver siempre disponible vía PuLP/CBC
 st.set_page_config(page_title="SAVIA — Abastecimiento de Medi"
                               "camentos", layout="wide")
 
@@ -701,78 +698,80 @@ def _forecast_demand_rh(history: list):
 # HORIZONTE RODANTE MIP (Gurobi) — Paracetamol_RH.py
 # Solo disponible si gurobipy está instalado y licenciado.
 # ──────────────────────────────────────────────────────────────────────────────
-if _GUROBI_OK:
-    def _solve_horizon_rh(inv0, d_hat, period, pending, cooldown,
-                          L, tl, R_rh, Qmax, h_cost, k_cost, w_cost):
-        HORIZON = tl + 5
-        A  = list(range(L))
-        A1 = list(range(1, L))
-        TH = list(range(HORIZON))
+def _solve_horizon_rh(inv0, d_hat, period, pending, cooldown,
+                      L, tl, R_rh, Qmax, h_cost, k_cost, w_cost):
+    """Horizonte rodante MIP resuelto con PuLP/CBC (sin licencia requerida)."""
+    HORIZON = tl + 5
+    A  = list(range(L))
+    A1 = list(range(1, L))
+    TH = list(range(HORIZON))
 
-        arriving = {tau: 0 for tau in TH}
-        for (arr_period, qty) in pending:
-            tau = arr_period - period
-            if 0 <= tau < HORIZON:
-                arriving[tau] += qty
+    arriving = {tau: 0 for tau in TH}
+    for (arr_period, qty) in pending:
+        tau = arr_period - period
+        if 0 <= tau < HORIZON:
+            arriving[tau] += qty
 
-        mdl = Model("SAVIA_RH")
-        mdl.setParam("OutputFlag", 0)
+    mdl = _pulp.LpProblem("SAVIA_RH", _pulp.LpMinimize)
 
-        I = mdl.addVars(A, TH, vtype=GRB.INTEGER, lb=0, name="I")
-        D = mdl.addVars(A1, TH, vtype=GRB.INTEGER, lb=0, name="D")
-        Q = mdl.addVars(TH, vtype=GRB.INTEGER, lb=0, name="Q")
-        Y = mdl.addVars(TH, vtype=GRB.BINARY, name="Y")
-        W = mdl.addVars(TH, vtype=GRB.INTEGER, lb=0, name="W")
-        S = mdl.addVars(TH, vtype=GRB.INTEGER, lb=0, name="S")
+    I = {(a, t): _pulp.LpVariable(f"I_{a}_{t}", lowBound=0, cat="Integer") for a in A  for t in TH}
+    D = {(a, t): _pulp.LpVariable(f"D_{a}_{t}", lowBound=0, cat="Integer") for a in A1 for t in TH}
+    Q = {t:      _pulp.LpVariable(f"Q_{t}",     lowBound=0, cat="Integer") for t in TH}
+    Y = {t:      _pulp.LpVariable(f"Y_{t}",     cat="Binary")              for t in TH}
+    W = {t:      _pulp.LpVariable(f"W_{t}",     lowBound=0, cat="Integer") for t in TH}
+    S = {t:      _pulp.LpVariable(f"S_{t}",     lowBound=0, cat="Integer") for t in TH}
 
-        mdl.setObjective(
-            quicksum(h_cost * I[a, tau] for a in A for tau in TH) +
-            quicksum(k_cost * Y[tau]    for tau in TH) +
-            quicksum(w_cost * W[tau]    for tau in TH) +
-            quicksum(w_cost * S[tau]    for tau in TH),
-            GRB.MINIMIZE,
-        )
+    mdl += (
+        _pulp.lpSum(h_cost * I[a, tau] for a in A  for tau in TH) +
+        _pulp.lpSum(k_cost * Y[tau]    for tau in TH) +
+        _pulp.lpSum(w_cost * W[tau]    for tau in TH) +
+        _pulp.lpSum(w_cost * S[tau]    for tau in TH)
+    )
 
-        for tau in TH:
-            for a in range(L - 1):
-                prev = inv0[a] if tau == 0 else I[a, tau - 1]
-                mdl.addConstr(I[a + 1, tau] == prev - D[a + 1, tau])
+    for tau in TH:
+        for a in range(L - 1):
+            prev = inv0[a] if tau == 0 else I[a, tau - 1]
+            mdl += I[a + 1, tau] == prev - D[a + 1, tau]
 
-        for tau in TH:
-            mdl.addConstr(I[0, tau] == arriving[tau] + (Q[tau - tl] if tau >= tl else 0))
+    for tau in TH:
+        mdl += I[0, tau] == arriving[tau] + (Q[tau - tl] if tau >= tl else 0)
 
-        for tau in TH:
-            mdl.addConstr(quicksum(D[a, tau] for a in A1) + S[tau] == d_hat)
+    for tau in TH:
+        mdl += _pulp.lpSum(D[a, tau] for a in A1) + S[tau] == d_hat
 
-        for tau in TH:
-            for a in A1:
-                prev = inv0[a - 1] if tau == 0 else I[a - 1, tau - 1]
-                mdl.addConstr(D[a, tau] <= prev)
+    for tau in TH:
+        for a in A1:
+            prev = inv0[a - 1] if tau == 0 else I[a - 1, tau - 1]
+            mdl += D[a, tau] <= prev
 
-        for tau in TH:
-            mdl.addConstr(W[tau] == I[L - 1, tau])
+    for tau in TH:
+        mdl += W[tau] == I[L - 1, tau]
 
-        for tau in TH:
-            mdl.addConstr(Q[tau] <= Qmax * Y[tau])
+    for tau in TH:
+        mdl += Q[tau] <= Qmax * Y[tau]
 
-        for tau in TH:
-            if tau < cooldown:
-                mdl.addConstr(Y[tau] == 0)
+    for tau in TH:
+        if tau < cooldown:
+            mdl += Y[tau] == 0
 
-        for tau in TH:
-            if tau >= cooldown:
-                neighbors = [t for t in range(max(0, tau - R_rh + 1), tau) if t >= cooldown]
-                if neighbors:
-                    mdl.addConstr(quicksum(Y[t] for t in neighbors) + Y[tau] <= 1)
+    for tau in TH:
+        if tau >= cooldown:
+            neighbors = [t for t in range(max(0, tau - R_rh + 1), tau) if t >= cooldown]
+            if neighbors:
+                mdl += _pulp.lpSum(Y[t] for t in neighbors) + Y[tau] <= 1
 
-        mdl.optimize()
-        if mdl.Status != GRB.OPTIMAL:
-            return None
+    mdl.solve(_pulp.PULP_CBC_CMD(msg=0))
 
-        return (
-            round(Q[0].X), round(Y[0].X), round(W[0].X), round(S[0].X),
-            {a: round(I[a, 0].X) for a in A},
-        )
+    if _pulp.LpStatus[mdl.status] != "Optimal":
+        return None
+
+    return (
+        round(_pulp.value(Q[0])),
+        round(_pulp.value(Y[0])),
+        round(_pulp.value(W[0])),
+        round(_pulp.value(S[0])),
+        {a: round(_pulp.value(I[a, 0])) for a in A},
+    )
 
 
 # ──────────────────────────────────────────────────────────────────────────────
