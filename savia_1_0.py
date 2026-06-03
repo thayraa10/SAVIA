@@ -358,7 +358,6 @@ def simular_rsq(Media, V, OC, HC, LT, R, s, Q_star, S_rsQ,
     WC     = float(WC)
     CostoTotalReplicas       = 0.0
     CostoDiarioReplicas      = 0.0
-    QuiebresTotalReplicas    = 0
     VencimientoTotalReplicas = 0
     Inventario_final = []; Tiempo_final = []; IP_final = []
 
@@ -370,7 +369,6 @@ def simular_rsq(Media, V, OC, HC, LT, R, s, Q_star, S_rsQ,
         CostoTotal = 0.0
         Tiempo_Ant = 0.0
         UnidadesVencidas = 0
-        Quiebres   = 0
 
         Evento_Demanda = (-1 / Media) * math.log(np.random.random())
         Evento_Revisar = float(R)
@@ -394,11 +392,9 @@ def simular_rsq(Media, V, OC, HC, LT, R, s, Q_star, S_rsQ,
                 Tiempo_Ant  = TNow
                 if OH > 0:
                     batches = consumir_demanda(batches, 1)
-                else:
-                    Quiebres += 1
                 Evento_Demanda = TNow + (-1 / Media) * math.log(np.random.random())
 
-            elif Evento_Revisar <= T_Llegada:
+            elif Evento_Revisar < T_Llegada:
                 TNow = Evento_Revisar
                 batches, vencidas = purgar_vencidos(batches, TNow)
                 UnidadesVencidas += vencidas
@@ -434,7 +430,6 @@ def simular_rsq(Media, V, OC, HC, LT, R, s, Q_star, S_rsQ,
 
         CostoTotalReplicas       += CostoTotal
         CostoDiarioReplicas      += CostoTotal / TiempoTotal
-        QuiebresTotalReplicas    += Quiebres
         VencimientoTotalReplicas += UnidadesVencidas
         Inventario_final = InventarioOH
         Tiempo_final     = Tiempo
@@ -444,7 +439,7 @@ def simular_rsq(Media, V, OC, HC, LT, R, s, Q_star, S_rsQ,
         round(CostoDiarioReplicas  / NR),
         round(CostoTotalReplicas   / NR),
         Tiempo_final, Inventario_final,
-        round(QuiebresTotalReplicas    / NR),
+        0,
         IP_final,
         round(VencimientoTotalReplicas / NR),
     )
@@ -459,7 +454,6 @@ def simular_rs(Media, V, OC, HC, LT, R, s, Q_max, S_rs,
     WC     = float(WC)
     CostoTotalReplicas       = 0.0
     CostoDiarioReplicas      = 0.0
-    QuiebresTotalReplicas    = 0
     VencimientoTotalReplicas = 0
     Inventario_final = []; Tiempo_final = []; IP_final = []
 
@@ -471,7 +465,6 @@ def simular_rs(Media, V, OC, HC, LT, R, s, Q_max, S_rs,
         CostoTotal = 0.0
         Tiempo_Ant = 0.0
         UnidadesVencidas = 0
-        Quiebres   = 0
 
         Evento_Demanda = (-1 / Media) * math.log(np.random.random())
         Evento_Revisar = float(R)
@@ -495,11 +488,9 @@ def simular_rs(Media, V, OC, HC, LT, R, s, Q_max, S_rs,
                 Tiempo_Ant  = TNow
                 if OH > 0:
                     batches = consumir_demanda(batches, 1)
-                else:
-                    Quiebres += 1
                 Evento_Demanda = TNow + (-1 / Media) * math.log(np.random.random())
 
-            elif Evento_Revisar <= T_Llegada:
+            elif Evento_Revisar < T_Llegada:
                 TNow = Evento_Revisar
                 batches, vencidas = purgar_vencidos(batches, TNow)
                 UnidadesVencidas += vencidas
@@ -537,7 +528,6 @@ def simular_rs(Media, V, OC, HC, LT, R, s, Q_max, S_rs,
 
         CostoTotalReplicas       += CostoTotal
         CostoDiarioReplicas      += CostoTotal / TiempoTotal
-        QuiebresTotalReplicas    += Quiebres
         VencimientoTotalReplicas += UnidadesVencidas
         Inventario_final = InventarioOH
         Tiempo_final     = Tiempo
@@ -547,7 +537,7 @@ def simular_rs(Media, V, OC, HC, LT, R, s, Q_max, S_rs,
         round(CostoDiarioReplicas  / NR),
         round(CostoTotalReplicas   / NR),
         Tiempo_final, Inventario_final,
-        round(QuiebresTotalReplicas    / NR),
+        0,
         IP_final,
         round(VencimientoTotalReplicas / NR),
     )
@@ -562,7 +552,6 @@ def simular_rss(Media, V, OC, HC, LT, R, s, Q_max, S_rss,
     WC     = float(WC)
     CostoTotalReplicas       = 0.0
     CostoDiarioReplicas      = 0.0
-    QuiebresTotalReplicas    = 0
     VencimientoTotalReplicas = 0
     Inventario_final = []; Tiempo_final = []; IP_final = []
 
@@ -574,7 +563,6 @@ def simular_rss(Media, V, OC, HC, LT, R, s, Q_max, S_rss,
         CostoTotal = 0.0
         Tiempo_Ant = 0.0
         UnidadesVencidas = 0
-        Quiebres   = 0
 
         Evento_Demanda = (-1 / Media) * math.log(np.random.random())
         Evento_Revisar = float(R)
@@ -598,11 +586,9 @@ def simular_rss(Media, V, OC, HC, LT, R, s, Q_max, S_rss,
                 Tiempo_Ant  = TNow
                 if OH > 0:
                     batches = consumir_demanda(batches, 1)
-                else:
-                    Quiebres += 1
                 Evento_Demanda = TNow + (-1 / Media) * math.log(np.random.random())
 
-            elif Evento_Revisar <= T_Llegada:
+            elif Evento_Revisar < T_Llegada:
                 TNow = Evento_Revisar
                 batches, vencidas = purgar_vencidos(batches, TNow)
                 UnidadesVencidas += vencidas
@@ -641,7 +627,6 @@ def simular_rss(Media, V, OC, HC, LT, R, s, Q_max, S_rss,
 
         CostoTotalReplicas       += CostoTotal
         CostoDiarioReplicas      += CostoTotal / TiempoTotal
-        QuiebresTotalReplicas    += Quiebres
         VencimientoTotalReplicas += UnidadesVencidas
         Inventario_final = InventarioOH
         Tiempo_final     = Tiempo
@@ -651,7 +636,7 @@ def simular_rss(Media, V, OC, HC, LT, R, s, Q_max, S_rss,
         round(CostoDiarioReplicas  / NR),
         round(CostoTotalReplicas   / NR),
         Tiempo_final, Inventario_final,
-        round(QuiebresTotalReplicas    / NR),
+        0,
         IP_final,
         round(VencimientoTotalReplicas / NR),
     )
@@ -665,23 +650,43 @@ _PRIOR_ALPHA = 1.0
 _PRIOR_BETA  = 0.01
 
 def bayesian_forecast(consumo_mensual: list, dias_por_mes: list):
-    """Estima λ diario con prior Gamma conjugado sobre consumo mensual histórico."""
-    a_post  = _PRIOR_ALPHA + sum(consumo_mensual)
-    b_post  = _PRIOR_BETA  + sum(dias_por_mes)
-    lam_hat = a_post / b_post
-    lam_lo, lam_hi = gamma_dist.ppf([0.05, 0.95], a=a_post, scale=1 / b_post)
-    media   = float(np.mean(consumo_mensual))
-    desvio  = float(np.std(consumo_mensual))
-    cv      = desvio / media if media > 0 else 0.0
+    """Pronóstico Bayesiano Gamma-Poisson, igual que en Paracetamol_RH.py.
+
+    Prior: λ_mensual ~ Gamma(PRIOR_ALPHA, 1/PRIOR_BETA)
+    Posterior: λ_mensual | datos ~ Gamma(a_post, 1/b_post)
+      a_post = PRIOR_ALPHA + Σ consumo_mensual
+      b_post = PRIOR_BETA  + n_meses          ← exactamente como el código original
+    λ_diario = λ_mensual / días_mes_siguiente
+    """
+    n_meses    = len(consumo_mensual)
+    a_post     = _PRIOR_ALPHA + sum(consumo_mensual)
+    b_post     = _PRIOR_BETA  + n_meses
+    # Tasa mensual posterior
+    lam_mensual_hat           = a_post / b_post
+    lam_mensual_lo, lam_mensual_hi = gamma_dist.ppf(
+        [0.05, 0.95], a=a_post, scale=1 / b_post
+    )
+    # Convertir a tasa diaria usando el promedio de días por mes del historial
+    avg_dias   = float(np.mean(dias_por_mes)) if dias_por_mes else 30.0
+    lam_hat    = lam_mensual_hat / avg_dias
+    lam_lo     = lam_mensual_lo  / avg_dias
+    lam_hi     = lam_mensual_hi  / avg_dias
+
+    media  = float(np.mean(consumo_mensual))
+    desvio = float(np.std(consumo_mensual))
+    cv     = desvio / media if media > 0 else 0.0
     return {
-        "lambda_diario_hat": lam_hat,
-        "lambda_lo_diario":  lam_lo,
-        "lambda_hi_diario":  lam_hi,
-        "media_mensual":     media,
-        "desvio_mensual":    desvio,
-        "cv":                cv,
-        "a_post":            a_post,
-        "b_post":            b_post,
+        "lambda_diario_hat":  lam_hat,
+        "lambda_lo_diario":   lam_lo,
+        "lambda_hi_diario":   lam_hi,
+        "lambda_mensual_hat": lam_mensual_hat,
+        "lambda_mensual_lo":  lam_mensual_lo,
+        "lambda_mensual_hi":  lam_mensual_hi,
+        "media_mensual":      media,
+        "desvio_mensual":     desvio,
+        "cv":                 cv,
+        "a_post":             a_post,
+        "b_post":             b_post,
     }
 
 def _forecast_demand_rh(history: list):
