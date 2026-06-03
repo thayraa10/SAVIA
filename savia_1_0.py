@@ -4099,21 +4099,15 @@ with tab3:
     # ══════════════════════════════════════════════════════════════════════
     with _t3_rh:
         st.markdown(_ayuda(
-            "<b>Horizonte Rodante</b> — Modelo de optimización MIP (Gurobi) que decide cuándo y cuánto pedir "
-            "día a día durante un mes simulado, usando un <b>pronóstico Bayesiano Gamma-Poisson</b> que se "
-            "actualiza con cada nueva observación de demanda. "
-            "El inventario se modela con <b>envejecimiento por slots</b>: cada unidad avanza un día de edad "
-            "por período y las que alcanzan la vida útil máxima se cuentan como vencidas. "
-            "Requiere <b>Gurobi</b> instalado y licenciado."
+            "<b>Pronóstico Bayesiano Gamma-Poisson</b> — Estima la tasa de demanda diaria (λ) usando un prior "
+            "Gamma conjugado sobre el historial de consumo mensual. El intervalo de credibilidad del 90 % "
+            "muestra la incertidumbre del pronóstico. "
+            "La sección <b>Horizonte Rodante (MIP)</b> optimiza las decisiones de pedido día a día y "
+            "requiere <b>Gurobi</b> instalado y licenciado (disponible en entorno local)."
         ), unsafe_allow_html=True)
 
-        if not _GUROBI_OK:
-            st.warning(
-                "**Gurobi no está disponible** en este entorno. "
-                "Instala `gurobipy` y configura una licencia válida para usar esta funcionalidad."
-            )
-        elif not tiene_movimientos:
-            st.warning("Se requiere el archivo de movimientos para ejecutar el Horizonte Rodante.")
+        if not tiene_movimientos:
+            st.warning("Se requiere el archivo de movimientos para calcular el pronóstico.")
         else:
             # ── Selector de medicamento ───────────────────────────────────
             _rh_meds = resumen[resumen["media_diaria"] > 0].sort_values(
@@ -4200,186 +4194,185 @@ with tab3:
 
                     st.divider()
 
-                    # ── Parámetros del Horizonte Rodante ─────────────────
-                    st.markdown("#### Parámetros del Horizonte Rodante")
-                    _rh_c1, _rh_c2, _rh_c3 = st.columns(3)
-                    with _rh_c1:
-                        _rh_L    = st.number_input("Vida útil L (días, slots)",
-                                                    value=max(int(vida_util_dias), 7),
-                                                    min_value=2, max_value=365, step=1,
-                                                    key="rh_L",
-                                                    help="Número de slots de edad. Unidades en el slot L-1 se contabilizan como vencidas.")
-                        _rh_tl   = st.number_input("Lead time tl (días)",
-                                                    value=int(lead_time), min_value=1,
-                                                    step=1, key="rh_tl")
-                    with _rh_c2:
-                        _rh_R    = st.number_input("Intervalo mínimo entre pedidos R (días)",
-                                                    value=3, min_value=1, step=1, key="rh_R",
-                                                    help="No se puede pedir dos veces dentro de este intervalo.")
-                        _rh_Qmax = st.number_input("Cantidad máxima por pedido (Qmax)",
-                                                    value=max(int(_lambda_d * 30 * 5), 1000),
-                                                    min_value=1, step=100, key="rh_Qmax")
-                    with _rh_c3:
-                        _rh_h    = st.number_input("Costo holding (h, $/u/día)",
-                                                    value=int(costo_mantener), min_value=0,
-                                                    step=1, key="rh_h")
-                        _rh_k    = st.number_input("Costo orden (k, $)",
-                                                    value=int(costo_orden), min_value=0,
-                                                    step=1000, key="rh_k")
-                        _rh_w    = st.number_input("Costo desperdicio (w, $/u)",
-                                                    value=int(costo_desperdicio), min_value=0,
-                                                    step=1000, key="rh_w")
-
-                    # ── Ejecutar Horizonte Rodante ────────────────────────
-                    if st.session_state.get("_rh_med") != _rh_med:
-                        st.session_state.pop("_rh_cache", None)
-
-                    if st.button("Ejecutar Horizonte Rodante", key="btn_rh",
-                                 use_container_width=True, type="primary"):
-                        import calendar as _cal
-                        from datetime import date as _date2
-                        _hoy2          = _date2.today()
-                        _dias_mes_sig  = _cal.monthrange(_hoy2.year, _hoy2.month)[1]
-                        _WINDOW        = 5
-                        _N_ITER        = _dias_mes_sig
-                        _inv_ini       = round((_rh_tl + _rh_R) * _lambda_d)
-
-                        # Ventana inicial de historial simulado
-                        np.random.seed(42)
-                        _demand_hist = [int(np.random.poisson(_lambda_d)) for _ in range(_WINDOW)]
-
-                        # Estado de inventario por slot de edad
-                        _inv_st = {a: 0 for a in range(_rh_L)}
-                        _inv_st[0] = _inv_ini
-
-                        _results_rh    = []
-                        _pending_rh    = []
-                        _last_order    = -_rh_R
-                        _failed        = False
-
-                        _bar = st.progress(0, text="Optimizando días...")
-                        for _it in range(_N_ITER):
-                            _day = _WINDOW + _it
-                            _dh, _dlo, _dhi = _forecast_demand_rh(_demand_hist)
-
-                            # Recepciones del día
-                            _arr_hoy = sum(q for (a, q) in _pending_rh if a == _day)
-                            _inv_st[0] += _arr_hoy
-                            _pending_rh = [(a, q) for (a, q) in _pending_rh if a != _day]
-
-                            _cd = max(0, _rh_R - (_day - _last_order))
-                            _sol = _solve_horizon_rh(
-                                _inv_st, _dh, _day, _pending_rh, _cd,
-                                _rh_L, _rh_tl, _rh_R, _rh_Qmax,
-                                _rh_h, _rh_k, _rh_w,
-                            )
-                            if _sol is None:
-                                st.error(f"Sin solución óptima en el día {_day}.")
-                                _failed = True
-                                break
-
-                            _Qv, _Yv, _Wv, _Sv, _new_inv = _sol
-                            if _Qv > 0:
-                                _pending_rh.append((_day + _rh_tl, _Qv))
-                                _last_order = _day
-
-                            _inv_st = _new_inv
-                            _stk_tot = sum(_inv_st.values())
-                            _demand_hist.append(_dh)
-
-                            _results_rh.append({
-                                "Día": _day, "d̂": _dh,
-                                "IC lo": _dlo, "IC hi": _dhi,
-                                "Pedido (Q)": _Qv, "¿Pide?": "Sí" if _Yv else "No",
-                                "Vencidas (W)": _Wv, "Faltante (S)": _Sv,
-                                "Stock total": _stk_tot,
-                            })
-                            _bar.progress((_it + 1) / _N_ITER,
-                                          text=f"Día {_day}/{_WINDOW + _N_ITER - 1}")
-
-                        _bar.empty()
-                        if not _failed and _results_rh:
-                            st.session_state["_rh_med"]   = _rh_med
-                            st.session_state["_rh_cache"] = {
-                                "results": _results_rh,
-                                "lambda_d": _lambda_d,
-                                "inv_fin": _inv_st,
-                            }
-
-                    # ── Mostrar resultados ────────────────────────────────
-                    if "_rh_cache" in st.session_state and st.session_state.get("_rh_med") == _rh_med:
-                        _rh_c   = st.session_state["_rh_cache"]
-                        _df_rh  = pd.DataFrame(_rh_c["results"])
-                        _lam_d2 = _rh_c["lambda_d"]
-                        _inv_f  = _rh_c["inv_fin"]
-
-                        st.markdown("#### Resumen del mes simulado")
-                        _sr1, _sr2, _sr3, _sr4, _sr5 = st.columns(5)
-                        _sr1.metric("Días simulados",         len(_df_rh))
-                        _sr2.metric("Demanda total estimada", f"{_m(int(_df_rh['d̂'].sum()))} u")
-                        _sr3.metric("Total pedido",
-                                    f"{_m(int(_df_rh['Pedido (Q)'].sum()))} u  "
-                                    f"({int(_df_rh['¿Pide?'].eq('Sí').sum())} órdenes)")
-                        _sr4.metric("Unidades vencidas", f"{_m(int(_df_rh['Vencidas (W)'].sum()))}")
-                        _sr5.metric("Demanda insatisfecha", f"{_m(int(_df_rh['Faltante (S)'].sum()))}")
-
-                        # Gráfico de resultados
-                        _fig_rh = go.Figure()
-                        _fig_rh.add_trace(go.Scatter(
-                            x=_df_rh["Día"], y=_df_rh["Stock total"],
-                            mode="lines", name="Stock total",
-                            line=dict(color="#2563eb", width=2),
-                        ))
-                        _fig_rh.add_trace(go.Bar(
-                            x=_df_rh["Día"], y=_df_rh["Pedido (Q)"],
-                            name="Pedido (Q)", marker_color="#9AE6B4", opacity=0.7,
-                            yaxis="y2",
-                        ))
-                        _dias_pedido_rh = _df_rh[_df_rh["¿Pide?"] == "Sí"]["Día"].tolist()
-                        for _dp in _dias_pedido_rh:
-                            _fig_rh.add_vline(x=_dp, line_dash="dot", line_color="#16a34a",
-                                              line_width=1.2, opacity=0.7)
-                        if _df_rh["Vencidas (W)"].sum() > 0:
-                            _fig_rh.add_trace(go.Bar(
-                                x=_df_rh["Día"], y=_df_rh["Vencidas (W)"],
-                                name="Vencidas", marker_color="#fca5a5", opacity=0.7,
-                                yaxis="y2",
-                            ))
-                        _fig_rh.update_layout(
-                            height=380, margin=dict(t=20, b=40, l=60, r=80),
-                            xaxis_title="Día del mes simulado",
-                            yaxis=dict(title="Stock total (u)", tickformat=","),
-                            yaxis2=dict(title="Pedido / Vencidas (u)", overlaying="y",
-                                        side="right", showgrid=False),
-                            legend=dict(orientation="h", y=-0.18, x=0),
-                            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="#f8fafc",
-                        )
-                        st.plotly_chart(_fig_rh, use_container_width=True)
-                        st.caption(
-                            "Línea azul = stock total en bodega (suma de todos los slots de edad). "
-                            "Barras verdes = cantidad pedida cada día. "
-                            "Líneas punteadas verdes = días en que se generó una orden. "
-                            "Barras rojas = unidades vencidas ese día."
-                        )
-
-                        st.markdown("#### Detalle diario")
-                        _df_rh_show = _df_rh.rename(columns={
-                            "d̂": "Demanda estimada",
-                            "IC lo": "IC 90% inf.",
-                            "IC hi": "IC 90% sup.",
-                        })
-                        st.dataframe(_safe_df(_df_rh_show), use_container_width=True,
-                                     hide_index=True, height=380)
-
-                        _buf_rh = io.BytesIO()
-                        _safe_df(_df_rh_show).to_excel(_buf_rh, index=False, engine="openpyxl")
-                        st.download_button(
-                            label="Descargar resultados del Horizonte Rodante",
-                            data=_buf_rh.getvalue(),
-                            file_name=f"horizonte_rodante_SAVIA_{date.today().strftime('%Y%m%d')}.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            key="dl_rh",
+                    # ── Horizonte Rodante MIP (requiere Gurobi) ──────────
+                    if not _GUROBI_OK:
+                        st.info(
+                            "**Horizonte Rodante (MIP)** no disponible en este entorno: "
+                            "requiere Gurobi instalado y licenciado. "
+                            "El pronóstico Bayesiano de arriba está disponible en todos los entornos."
                         )
                     else:
-                        st.info("Configura los parámetros y haz clic en **Ejecutar Horizonte Rodante**.")
+                        # ── Parámetros del Horizonte Rodante ─────────────
+                        st.markdown("#### Parámetros del Horizonte Rodante")
+                        _rh_c1, _rh_c2, _rh_c3 = st.columns(3)
+                        with _rh_c1:
+                            _rh_L    = st.number_input("Vida útil L (días, slots)",
+                                                        value=max(int(vida_util_dias), 7),
+                                                        min_value=2, max_value=365, step=1,
+                                                        key="rh_L",
+                                                        help="Número de slots de edad. Unidades en el slot L-1 se contabilizan como vencidas.")
+                            _rh_tl   = st.number_input("Lead time tl (días)",
+                                                        value=int(lead_time), min_value=1,
+                                                        step=1, key="rh_tl")
+                        with _rh_c2:
+                            _rh_R    = st.number_input("Intervalo mínimo entre pedidos R (días)",
+                                                        value=3, min_value=1, step=1, key="rh_R",
+                                                        help="No se puede pedir dos veces dentro de este intervalo.")
+                            _rh_Qmax = st.number_input("Cantidad máxima por pedido (Qmax)",
+                                                        value=max(int(_lambda_d * 30 * 5), 1000),
+                                                        min_value=1, step=100, key="rh_Qmax")
+                        with _rh_c3:
+                            _rh_h    = st.number_input("Costo holding (h, $/u/día)",
+                                                        value=int(costo_mantener), min_value=0,
+                                                        step=1, key="rh_h")
+                            _rh_k    = st.number_input("Costo orden (k, $)",
+                                                        value=int(costo_orden), min_value=0,
+                                                        step=1000, key="rh_k")
+                            _rh_w    = st.number_input("Costo desperdicio (w, $/u)",
+                                                        value=int(costo_desperdicio), min_value=0,
+                                                        step=1000, key="rh_w")
+
+                        # ── Ejecutar Horizonte Rodante ────────────────────
+                        if st.session_state.get("_rh_med") != _rh_med:
+                            st.session_state.pop("_rh_cache", None)
+
+                        if st.button("Ejecutar Horizonte Rodante", key="btn_rh",
+                                     use_container_width=True, type="primary"):
+                            import calendar as _cal
+                            from datetime import date as _date2
+                            _hoy2          = _date2.today()
+                            _dias_mes_sig  = _cal.monthrange(_hoy2.year, _hoy2.month)[1]
+                            _WINDOW        = 5
+                            _N_ITER        = _dias_mes_sig
+                            _inv_ini       = round((_rh_tl + _rh_R) * _lambda_d)
+
+                            np.random.seed(42)
+                            _demand_hist = [int(np.random.poisson(_lambda_d)) for _ in range(_WINDOW)]
+
+                            _inv_st = {a: 0 for a in range(_rh_L)}
+                            _inv_st[0] = _inv_ini
+
+                            _results_rh = []
+                            _pending_rh = []
+                            _last_order = -_rh_R
+                            _failed     = False
+
+                            _bar = st.progress(0, text="Optimizando días...")
+                            for _it in range(_N_ITER):
+                                _day = _WINDOW + _it
+                                _dh, _dlo, _dhi = _forecast_demand_rh(_demand_hist)
+
+                                _arr_hoy = sum(q for (a, q) in _pending_rh if a == _day)
+                                _inv_st[0] += _arr_hoy
+                                _pending_rh = [(a, q) for (a, q) in _pending_rh if a != _day]
+
+                                _cd  = max(0, _rh_R - (_day - _last_order))
+                                _sol = _solve_horizon_rh(
+                                    _inv_st, _dh, _day, _pending_rh, _cd,
+                                    _rh_L, _rh_tl, _rh_R, _rh_Qmax,
+                                    _rh_h, _rh_k, _rh_w,
+                                )
+                                if _sol is None:
+                                    st.error(f"Sin solución óptima en el día {_day}.")
+                                    _failed = True
+                                    break
+
+                                _Qv, _Yv, _Wv, _Sv, _new_inv = _sol
+                                if _Qv > 0:
+                                    _pending_rh.append((_day + _rh_tl, _Qv))
+                                    _last_order = _day
+
+                                _inv_st  = _new_inv
+                                _stk_tot = sum(_inv_st.values())
+                                _demand_hist.append(_dh)
+
+                                _results_rh.append({
+                                    "Día": _day, "d̂": _dh,
+                                    "IC lo": _dlo, "IC hi": _dhi,
+                                    "Pedido (Q)": _Qv, "¿Pide?": "Sí" if _Yv else "No",
+                                    "Vencidas (W)": _Wv, "Faltante (S)": _Sv,
+                                    "Stock total": _stk_tot,
+                                })
+                                _bar.progress((_it + 1) / _N_ITER,
+                                              text=f"Día {_day}/{_WINDOW + _N_ITER - 1}")
+
+                            _bar.empty()
+                            if not _failed and _results_rh:
+                                st.session_state["_rh_med"]   = _rh_med
+                                st.session_state["_rh_cache"] = {
+                                    "results": _results_rh,
+                                    "lambda_d": _lambda_d,
+                                    "inv_fin":  _inv_st,
+                                }
+
+                        # ── Mostrar resultados ────────────────────────────
+                        if "_rh_cache" in st.session_state and st.session_state.get("_rh_med") == _rh_med:
+                            _rh_c  = st.session_state["_rh_cache"]
+                            _df_rh = pd.DataFrame(_rh_c["results"])
+
+                            st.markdown("#### Resumen del mes simulado")
+                            _sr1, _sr2, _sr3, _sr4, _sr5 = st.columns(5)
+                            _sr1.metric("Días simulados",         len(_df_rh))
+                            _sr2.metric("Demanda total estimada", f"{_m(int(_df_rh['d̂'].sum()))} u")
+                            _sr3.metric("Total pedido",
+                                        f"{_m(int(_df_rh['Pedido (Q)'].sum()))} u  "
+                                        f"({int(_df_rh['¿Pide?'].eq('Sí').sum())} órdenes)")
+                            _sr4.metric("Unidades vencidas",      f"{_m(int(_df_rh['Vencidas (W)'].sum()))}")
+                            _sr5.metric("Demanda insatisfecha",   f"{_m(int(_df_rh['Faltante (S)'].sum()))}")
+
+                            _fig_rh = go.Figure()
+                            _fig_rh.add_trace(go.Scatter(
+                                x=_df_rh["Día"], y=_df_rh["Stock total"],
+                                mode="lines", name="Stock total",
+                                line=dict(color="#2563eb", width=2),
+                            ))
+                            _fig_rh.add_trace(go.Bar(
+                                x=_df_rh["Día"], y=_df_rh["Pedido (Q)"],
+                                name="Pedido (Q)", marker_color="#9AE6B4", opacity=0.7,
+                                yaxis="y2",
+                            ))
+                            for _dp in _df_rh[_df_rh["¿Pide?"] == "Sí"]["Día"].tolist():
+                                _fig_rh.add_vline(x=_dp, line_dash="dot", line_color="#16a34a",
+                                                  line_width=1.2, opacity=0.7)
+                            if _df_rh["Vencidas (W)"].sum() > 0:
+                                _fig_rh.add_trace(go.Bar(
+                                    x=_df_rh["Día"], y=_df_rh["Vencidas (W)"],
+                                    name="Vencidas", marker_color="#fca5a5", opacity=0.7,
+                                    yaxis="y2",
+                                ))
+                            _fig_rh.update_layout(
+                                height=380, margin=dict(t=20, b=40, l=60, r=80),
+                                xaxis_title="Día del mes simulado",
+                                yaxis=dict(title="Stock total (u)", tickformat=","),
+                                yaxis2=dict(title="Pedido / Vencidas (u)", overlaying="y",
+                                            side="right", showgrid=False),
+                                legend=dict(orientation="h", y=-0.18, x=0),
+                                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="#f8fafc",
+                            )
+                            st.plotly_chart(_fig_rh, use_container_width=True)
+                            st.caption(
+                                "Línea azul = stock total. "
+                                "Barras verdes = cantidad pedida. "
+                                "Líneas punteadas = días en que se ordenó. "
+                                "Barras rojas = unidades vencidas."
+                            )
+                            st.markdown("#### Detalle diario")
+                            _df_rh_show = _df_rh.rename(columns={
+                                "d̂": "Demanda estimada",
+                                "IC lo": "IC 90% inf.",
+                                "IC hi": "IC 90% sup.",
+                            })
+                            st.dataframe(_safe_df(_df_rh_show), use_container_width=True,
+                                         hide_index=True, height=380)
+                            _buf_rh = io.BytesIO()
+                            _safe_df(_df_rh_show).to_excel(_buf_rh, index=False, engine="openpyxl")
+                            st.download_button(
+                                label="Descargar resultados del Horizonte Rodante",
+                                data=_buf_rh.getvalue(),
+                                file_name=f"horizonte_rodante_SAVIA_{date.today().strftime('%Y%m%d')}.xlsx",
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                key="dl_rh",
+                            )
+                        else:
+                            st.info("Configura los parámetros y haz clic en **Ejecutar Horizonte Rodante**.")
 
