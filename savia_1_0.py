@@ -13,6 +13,12 @@ import gc
 import streamlit.components.v1 as _components
 from streamlit_autorefresh import st_autorefresh
 import requests as _requests
+from scipy.stats import norm as _norm_inv, gamma as gamma_dist
+try:
+    from gurobipy import Model, GRB, quicksum
+    _GUROBI_OK = True
+except ImportError:
+    _GUROBI_OK = False
 st.set_page_config(page_title="SAVIA — Abastecimiento de Medi"
                               "camentos", layout="wide")
 
@@ -256,187 +262,517 @@ def calcular_estado(dias):
     return "NORMAL"
 
 # ──────────────────────────────────────────────────────────────────────────────
-# FUNCIÓN: CALCULAR PARÁMETROS DE INVENTARIO
-# Calcula s, Q, S, SS y U igual que en el notebook de políticas.
+# FEFO HELPERS (First Expired, First Out)
+# Gestión de lotes perecibles: purga, consumo y alta de lotes ordenados por
+# fecha de vencimiento. Tomados directamente del notebook de referencia.
+# ──────────────────────────────────────────────────────────────────────────────
+def oh_total(batches):
+    """Inventario en mano como suma de todos los lotes vigentes."""
+    return sum(b[0] for b in batches)
+
+def purgar_vencidos(batches, t_now):
+    """Elimina lotes vencidos. Devuelve (batches_vigentes, unidades_vencidas)."""
+    vencidas = sum(b[0] for b in batches if b[1] <= t_now)
+    vigentes  = [b for b in batches if b[1] > t_now]
+    return vigentes, vencidas
+
+def consumir_demanda(batches, cantidad):
+    """Descuenta `cantidad` unidades usando política FEFO."""
+    restante = cantidad
+    while restante > 0 and batches:
+        if batches[0][0] <= restante:
+            restante -= batches[0][0]
+            batches.pop(0)
+        else:
+            batches[0][0] -= restante
+            restante = 0
+    return batches
+
+def agregar_lote(batches, cantidad, t_arribo, sl_dias):
+    """Agrega un lote recibido, insertado ordenado por tiempo de vencimiento (FEFO)."""
+    vencimiento = t_arribo + sl_dias
+    batches.append([cantidad, vencimiento])
+    batches.sort(key=lambda x: x[1])
+    return batches
+
+# ──────────────────────────────────────────────────────────────────────────────
+# PARÁMETROS DE INVENTARIO — fórmulas exactas del notebook de referencia.
 # ──────────────────────────────────────────────────────────────────────────────
 def calcular_politicas(Media, V, OC, HC, LT, R, Z=1.645):
-    # s cubre la demanda durante el lead time completo + un período de revisión
-    U  = math.ceil((Media / (2 * V)) + ((V * R) / 2))
-    s  = math.ceil((Media * (LT + R)) + Z * (V ** 0.5) * ((LT + R) ** 0.5))
-    Q  = math.ceil(((2 * OC * Media) / HC) ** 0.5)
-    S  = s + Q + U
-    SS = max(0, math.ceil((Media * R) + (Z * (V ** 0.5) * ((LT + R) ** 0.5) - U)))
-
-    return {"s": s, "Q": Q, "S": S, "SS": SS, "U": U}
-
+    V      = max(V, 0.001)
+    sigma  = V ** 0.5
+    R_     = max(R, 1)
+    LT_ef  = LT - (math.trunc(LT / R_) * R_)
+    U      = math.ceil((Media / (2 * V)) + ((V * R_) / 2))
+    s      = math.ceil((Media * (LT_ef + R_)) + Z * sigma * ((LT_ef + R_) ** 0.5))
+    Q      = math.ceil(((2 * OC * Media) / max(HC, 0.001)) ** 0.5)
+    S      = s + Q + U
+    SS     = max(0, math.ceil((Media * R_) + (Z * sigma * ((LT_ef + R_) ** 0.5) - U)))
+    return {"s": s, "Q": Q, "S": S, "SS": SS, "U": U, "LT_ef": round(LT_ef, 4)}
 
 # ──────────────────────────────────────────────────────────────────────────────
-# FUNCIÓN: RECOMENDAR PERÍODO DE REVISIÓN
-# Calcula cada cuántos días conviene revisar según el consumo.
+# PARÁMETROS DE PERECIBILIDAD
+# Q_max: máximo lote que se consume antes de vencer con probabilidad beta.
+# Q*: mínimo entre EOQ y Q_max.
+# E[O]: esperanza de caducidad por ciclo de pedido.
+# ──────────────────────────────────────────────────────────────────────────────
+def calcular_perecibilidad(Media, V, Q, SL, SL_eff=None, beta=0.95):
+    """Restricción de perecibilidad sobre la cantidad de pedido."""
+    if SL_eff is None:
+        SL_eff = SL
+    sigma_t = max(V, 0.001) ** 0.5
+    Z_beta  = _norm_inv.ppf(beta)
+    Q_max   = max(1, math.ceil(Media * SL_eff - Z_beta * sigma_t * (SL_eff ** 0.5)))
+    Q_star  = min(Q, Q_max)
+    denom   = sigma_t * (SL_eff ** 0.5)
+    z_o     = (Q_star - Media * SL_eff) / denom if denom > 0 else -10.0
+    E_O     = (Q_star - Media * SL_eff) * _norm_inv.cdf(z_o) + denom * _norm_inv.pdf(z_o)
+    return {
+        "Q_max":  Q_max,
+        "Q_star": Q_star,
+        "z_o":    round(z_o, 4),
+        "E_O":    round(max(E_O, 0.0), 4),
+    }
+
+# ──────────────────────────────────────────────────────────────────────────────
+# RECOMENDAR PERÍODO DE REVISIÓN
 # ──────────────────────────────────────────────────────────────────────────────
 def recomendar_periodo(media_diaria, varianza_diaria, costo_orden, costo_mantener, lead_time):
     d = max(media_diaria, 0.001)
     Q = math.ceil(((2 * costo_orden * d) / costo_mantener) ** 0.5)
     R = Q / d
-
     if R < lead_time:
         R = lead_time
-
-    if R <= 7:
-        return 7, "Semanal (7 días)"
-    if R <= 14:
-        return 14, "Quincenal (14 días)"
-    if R <= 21:
-        return 21, "Cada 3 semanas (21 días)"
-    if R <= 30:
-        return 30, "Mensual (30 días)"
-
+    if R <= 7:  return 7,  "Semanal (7 días)"
+    if R <= 14: return 14, "Quincenal (14 días)"
+    if R <= 21: return 21, "Cada 3 semanas (21 días)"
+    if R <= 30: return 30, "Mensual (30 días)"
     r_redondeado = round(R / 7) * 7
     return int(r_redondeado), "Cada " + str(int(r_redondeado)) + " días"
 
-
 # ──────────────────────────────────────────────────────────────────────────────
-# SIMULACIONES POR EVENTOS (tiempo continuo) — réplica del notebook de referencia.
-#
-# La demanda sigue un proceso de Poisson con tasa Medía (u/día):
-#   tiempo entre llegadas ~ Exp(Media)  →  t = (-1/Media) * ln(U), U ~ Unif(0,1)
-#
-# Eventos posibles en cada paso:
-#   1. Llegada de demanda (una unidad)
-#   2. Revisión de inventario (cada R días)
-#   3. Llegada de un pedido (LT días después de ser colocado)
-#
-# Se hacen NR réplicas y se promedian los costos.
+# SIMULACIÓN (R,s,Q) CON FEFO Y PERECIBILIDAD
+# Código exacto del notebook de referencia adaptado para SAVIA.
 # ──────────────────────────────────────────────────────────────────────────────
-def _simular(Media, V, OC, HC, LT, R, s, Q, S_inicio, politica, NR=5, TiempoTotal=360):
-    """
-    Núcleo de simulación por eventos (tiempo continuo) para las tres políticas.
-    S_inicio es el nivel máximo al que se repone en (R,S) y (R,s,S);
-    en (R,s,Q) es solo el inventario inicial.
+def simular_rsq(Media, V, OC, HC, LT, R, s, Q_star, S_rsQ,
+                NR=5, TiempoTotal=360, SL=None, WC=0):
+    """Política (R,s,Q): pide cantidad fija Q_star cuando IP ≤ s."""
+    SL_eff = float(SL) if SL and SL > 0 else 1e6
+    WC     = float(WC)
+    CostoTotalReplicas       = 0.0
+    CostoDiarioReplicas      = 0.0
+    QuiebresTotalReplicas    = 0
+    VencimientoTotalReplicas = 0
+    Inventario_final = []; Tiempo_final = []; IP_final = []
 
-    La demanda diaria sigue una distribución Poisson con tasa Media:
-      N_d ~ Poisson(Media)  →  entero aleatorio, algunos días más, otros menos
-    Cada unidad del día d se ubica en un instante uniforme dentro de [d, d+1].
-    Esto equivale exactamente al proceso de Poisson homogéneo del notebook de
-    referencia (inter-llegadas ~ Exp(1/Media)), con la variabilidad visible
-    día a día que muestra el gráfico.
-    """
-    CostoTotalReplicas   = 0.0
-    CostoDiarioReplicas  = 0.0
-    QuiebresTotalReplicas = 0   # unidades de demanda no atendidas (acumulado entre réplicas)
-    Inventario_final     = []
-    Tiempo_final         = []
-
-    total_dias = int(TiempoTotal + LT + R) + 10
-
-    for replica in range(NR):
-        np.random.seed(replica)
-
-        # Demanda diaria: N_d ~ Poisson(Media)
-        # Variance = Medía por día  →  consistente con calcular_politicas (V = Media)
-        daily_counts = np.random.poisson(lam=Media, size=total_dias)
-        # Cada unidad se coloca en un instante uniforme dentro de su día
-        day_nums = np.repeat(np.arange(total_dias, dtype=float), daily_counts)
-        if day_nums.size > 0:
-            offsets      = np.random.uniform(0.0, 1.0, day_nums.size)
-            demand_times = np.sort(day_nums + offsets)
-        else:
-            demand_times = np.array([float('inf')])
-        d_idx = 0   # puntero al próximo evento de demanda
-
+    for i in range(NR):
+        np.random.seed(i)
         TNow       = 0.0
-        OH         = float(S_inicio)
+        batches    = [[float(S_rsQ), TNow + SL_eff]]
         IT         = 0.0
         CostoTotal = 0.0
         Tiempo_Ant = 0.0
-        Quiebres   = 0   # unidades sin atender en esta réplica
+        UnidadesVencidas = 0
+        Quiebres   = 0
 
+        Evento_Demanda = (-1 / Media) * math.log(np.random.random())
         Evento_Revisar = float(R)
-        arrivals = []   # lista de (tiempo_llegada, cantidad)
+        T_orden = [float('inf')]
+        Pedidos = []
 
-        Inventario = [OH]
-        Tiempo_sim = [TNow]
-        IP_sim     = [OH]       # Posición de Inventario = OH + IT (IT=0 al inicio)
+        Inventario   = [oh_total(batches) + IT]
+        InventarioOH = [oh_total(batches)]
+        Tiempo       = [TNow]
 
         while TNow <= TiempoTotal:
-            next_demand  = demand_times[d_idx] if d_idx < demand_times.size else float('inf')
-            next_arrival = arrivals[0][0]       if arrivals       else float('inf')
+            T_Llegada = T_orden[0] if T_orden else float('inf')
 
-            # Prioridad: demanda (estricto <), luego revisión, luego llegada
-            if next_demand < min(Evento_Revisar, next_arrival):
-                TNow = next_demand
+            if Evento_Demanda < min(Evento_Revisar, T_Llegada):
+                TNow = Evento_Demanda
+                batches, vencidas = purgar_vencidos(batches, TNow)
+                UnidadesVencidas += vencidas
+                CostoTotal += vencidas * WC
+                OH = oh_total(batches)
                 CostoTotal += OH * (TNow - Tiempo_Ant) * HC
                 Tiempo_Ant  = TNow
                 if OH > 0:
-                    OH -= 1
+                    batches = consumir_demanda(batches, 1)
                 else:
-                    Quiebres += 1   # unidad demandada sin stock disponible
+                    Quiebres += 1
+                Evento_Demanda = TNow + (-1 / Media) * math.log(np.random.random())
 
-                d_idx += 1
-
-            elif Evento_Revisar <= next_arrival:
+            elif Evento_Revisar <= T_Llegada:
                 TNow = Evento_Revisar
+                batches, vencidas = purgar_vencidos(batches, TNow)
+                UnidadesVencidas += vencidas
+                CostoTotal += vencidas * WC
+                OH = oh_total(batches)
                 CostoTotal += OH * (TNow - Tiempo_Ant) * HC
                 Tiempo_Ant  = TNow
                 IP = OH + IT
-
-                if politica == "rsq":
-                    if IP <= s:
-                        IT += Q
-                        arrivals.append((TNow + LT, Q))
-                        CostoTotal += OC
-
-                elif politica == "rs":
-                    # Reponer hasta el nivel máximo S_inicio en cada revisión
-                    cant = float(max(0.0, S_inicio - IP))
-                    if cant > 0:
-                        IT += cant
-                        arrivals.append((TNow + LT, cant))
-                        CostoTotal += OC
-
-                else:   # rss — reponer hasta S_inicio solo cuando IP ≤ s
-                    if IP <= s:
-                        cant = float(max(0.0, S_inicio - IP))
-                        if cant > 0:
-                            IT += cant
-                            arrivals.append((TNow + LT, cant))
-                            CostoTotal += OC
-
+                if IP <= s:
+                    IT += Q_star
+                    Pedidos.append(Q_star)
+                    T_orden.append(TNow + LT)
+                    T_orden.sort()
+                    CostoTotal += OC
                 Evento_Revisar = TNow + R
 
             else:
-                t_arr, cant = arrivals.pop(0)
-                TNow = t_arr
+                TNow = T_Llegada
+                batches, vencidas = purgar_vencidos(batches, TNow)
+                UnidadesVencidas += vencidas
+                CostoTotal += vencidas * WC
+                OH = oh_total(batches)
                 CostoTotal += OH * (TNow - Tiempo_Ant) * HC
                 Tiempo_Ant  = TNow
-                OH += cant
-                IT -= cant
+                cantidad_llegada = Pedidos.pop(0)
+                T_orden.pop(0)
+                batches = agregar_lote(batches, cantidad_llegada, TNow, SL_eff)
+                IT -= cantidad_llegada
 
-            Inventario.append(OH)
-            Tiempo_sim.append(TNow)
-            IP_sim.append(OH + IT)   # IP = inventario físico + pedidos en tránsito
+            Inventario.append(oh_total(batches) + IT)
+            InventarioOH.append(oh_total(batches))
+            Tiempo.append(TNow)
 
-        CostoTotalReplicas    += CostoTotal
-        CostoDiarioReplicas   += CostoTotal / TiempoTotal
-        QuiebresTotalReplicas += Quiebres
-        Inventario_final = Inventario
-        Tiempo_final     = Tiempo_sim
-        IP_final         = IP_sim    # Posición de Inventario de la última réplica
+        CostoTotalReplicas       += CostoTotal
+        CostoDiarioReplicas      += CostoTotal / TiempoTotal
+        QuiebresTotalReplicas    += Quiebres
+        VencimientoTotalReplicas += UnidadesVencidas
+        Inventario_final = InventarioOH
+        Tiempo_final     = Tiempo
+        IP_final         = Inventario
 
-    costo_anual       = round(CostoTotalReplicas  / NR)
-    costo_diario      = round(CostoDiarioReplicas / NR)
-    quiebres_promedio = round(QuiebresTotalReplicas / NR)
-    return costo_diario, costo_anual, Tiempo_final, Inventario_final, quiebres_promedio, IP_final
+    return (
+        round(CostoDiarioReplicas  / NR),
+        round(CostoTotalReplicas   / NR),
+        Tiempo_final, Inventario_final,
+        round(QuiebresTotalReplicas    / NR),
+        IP_final,
+        round(VencimientoTotalReplicas / NR),
+    )
 
+# ──────────────────────────────────────────────────────────────────────────────
+# SIMULACIÓN (R,S) CON FEFO Y PERECIBILIDAD
+# ──────────────────────────────────────────────────────────────────────────────
+def simular_rs(Media, V, OC, HC, LT, R, s, Q_max, S_rs,
+               NR=5, TiempoTotal=360, SL=None, WC=0):
+    """Política (R,S): en cada revisión repone hasta S_rs, restringido por Q_max."""
+    SL_eff = float(SL) if SL and SL > 0 else 1e6
+    WC     = float(WC)
+    CostoTotalReplicas       = 0.0
+    CostoDiarioReplicas      = 0.0
+    QuiebresTotalReplicas    = 0
+    VencimientoTotalReplicas = 0
+    Inventario_final = []; Tiempo_final = []; IP_final = []
 
-def simular_rsq(Media, V, OC, HC, LT, R, s, Q, S, NR=5, TiempoTotal=360):
-    return _simular(Media, V, OC, HC, LT, R, s, Q, S,   "rsq", NR, TiempoTotal)
+    for i in range(NR):
+        np.random.seed(i)
+        TNow       = 0.0
+        batches    = [[float(S_rs), TNow + SL_eff]]
+        IT         = 0.0
+        CostoTotal = 0.0
+        Tiempo_Ant = 0.0
+        UnidadesVencidas = 0
+        Quiebres   = 0
 
-def simular_rs(Media, V, OC, HC, LT, R, s, Q, S, NR=5, TiempoTotal=360):
-    return _simular(Media, V, OC, HC, LT, R, s, Q, S,   "rs",  NR, TiempoTotal)
+        Evento_Demanda = (-1 / Media) * math.log(np.random.random())
+        Evento_Revisar = float(R)
+        T_orden = [float('inf')]
+        Pedidos = []
 
-def simular_rss(Media, V, OC, HC, LT, R, s, Q, S, NR=5, TiempoTotal=360):
-    return _simular(Media, V, OC, HC, LT, R, s, Q, S,   "rss", NR, TiempoTotal)
+        Inventario   = [oh_total(batches) + IT]
+        InventarioOH = [oh_total(batches)]
+        Tiempo       = [TNow]
+
+        while TNow <= TiempoTotal:
+            T_Llegada = T_orden[0] if T_orden else float('inf')
+
+            if Evento_Demanda < min(Evento_Revisar, T_Llegada):
+                TNow = Evento_Demanda
+                batches, vencidas = purgar_vencidos(batches, TNow)
+                UnidadesVencidas += vencidas
+                CostoTotal += vencidas * WC
+                OH = oh_total(batches)
+                CostoTotal += OH * (TNow - Tiempo_Ant) * HC
+                Tiempo_Ant  = TNow
+                if OH > 0:
+                    batches = consumir_demanda(batches, 1)
+                else:
+                    Quiebres += 1
+                Evento_Demanda = TNow + (-1 / Media) * math.log(np.random.random())
+
+            elif Evento_Revisar <= T_Llegada:
+                TNow = Evento_Revisar
+                batches, vencidas = purgar_vencidos(batches, TNow)
+                UnidadesVencidas += vencidas
+                CostoTotal += vencidas * WC
+                OH = oh_total(batches)
+                CostoTotal += OH * (TNow - Tiempo_Ant) * HC
+                Tiempo_Ant  = TNow
+                IP = OH + IT
+                Q_orden = max(0, S_rs - IP)
+                Q_orden = min(Q_orden, Q_max)
+                if Q_orden > 0:
+                    IT += Q_orden
+                    Pedidos.append(Q_orden)
+                    T_orden.append(TNow + LT)
+                    T_orden.sort()
+                    CostoTotal += OC
+                Evento_Revisar = TNow + R
+
+            else:
+                TNow = T_Llegada
+                batches, vencidas = purgar_vencidos(batches, TNow)
+                UnidadesVencidas += vencidas
+                CostoTotal += vencidas * WC
+                OH = oh_total(batches)
+                CostoTotal += OH * (TNow - Tiempo_Ant) * HC
+                Tiempo_Ant  = TNow
+                cantidad_llegada = Pedidos.pop(0)
+                T_orden.pop(0)
+                batches = agregar_lote(batches, cantidad_llegada, TNow, SL_eff)
+                IT -= cantidad_llegada
+
+            Inventario.append(oh_total(batches) + IT)
+            InventarioOH.append(oh_total(batches))
+            Tiempo.append(TNow)
+
+        CostoTotalReplicas       += CostoTotal
+        CostoDiarioReplicas      += CostoTotal / TiempoTotal
+        QuiebresTotalReplicas    += Quiebres
+        VencimientoTotalReplicas += UnidadesVencidas
+        Inventario_final = InventarioOH
+        Tiempo_final     = Tiempo
+        IP_final         = Inventario
+
+    return (
+        round(CostoDiarioReplicas  / NR),
+        round(CostoTotalReplicas   / NR),
+        Tiempo_final, Inventario_final,
+        round(QuiebresTotalReplicas    / NR),
+        IP_final,
+        round(VencimientoTotalReplicas / NR),
+    )
+
+# ──────────────────────────────────────────────────────────────────────────────
+# SIMULACIÓN (R,s,S) CON FEFO Y PERECIBILIDAD
+# ──────────────────────────────────────────────────────────────────────────────
+def simular_rss(Media, V, OC, HC, LT, R, s, Q_max, S_rss,
+                NR=5, TiempoTotal=360, SL=None, WC=0):
+    """Política (R,s,S): si IP ≤ s, repone hasta S_rss, restringido por Q_max."""
+    SL_eff = float(SL) if SL and SL > 0 else 1e6
+    WC     = float(WC)
+    CostoTotalReplicas       = 0.0
+    CostoDiarioReplicas      = 0.0
+    QuiebresTotalReplicas    = 0
+    VencimientoTotalReplicas = 0
+    Inventario_final = []; Tiempo_final = []; IP_final = []
+
+    for i in range(NR):
+        np.random.seed(i)
+        TNow       = 0.0
+        batches    = [[float(S_rss), TNow + SL_eff]]
+        IT         = 0.0
+        CostoTotal = 0.0
+        Tiempo_Ant = 0.0
+        UnidadesVencidas = 0
+        Quiebres   = 0
+
+        Evento_Demanda = (-1 / Media) * math.log(np.random.random())
+        Evento_Revisar = float(R)
+        T_orden = [float('inf')]
+        Pedidos = []
+
+        Inventario   = [oh_total(batches) + IT]
+        InventarioOH = [oh_total(batches)]
+        Tiempo       = [TNow]
+
+        while TNow <= TiempoTotal:
+            T_Llegada = T_orden[0] if T_orden else float('inf')
+
+            if Evento_Demanda < min(Evento_Revisar, T_Llegada):
+                TNow = Evento_Demanda
+                batches, vencidas = purgar_vencidos(batches, TNow)
+                UnidadesVencidas += vencidas
+                CostoTotal += vencidas * WC
+                OH = oh_total(batches)
+                CostoTotal += OH * (TNow - Tiempo_Ant) * HC
+                Tiempo_Ant  = TNow
+                if OH > 0:
+                    batches = consumir_demanda(batches, 1)
+                else:
+                    Quiebres += 1
+                Evento_Demanda = TNow + (-1 / Media) * math.log(np.random.random())
+
+            elif Evento_Revisar <= T_Llegada:
+                TNow = Evento_Revisar
+                batches, vencidas = purgar_vencidos(batches, TNow)
+                UnidadesVencidas += vencidas
+                CostoTotal += vencidas * WC
+                OH = oh_total(batches)
+                CostoTotal += OH * (TNow - Tiempo_Ant) * HC
+                Tiempo_Ant  = TNow
+                IP = OH + IT
+                if IP <= s:
+                    Q_orden = max(0, S_rss - IP)
+                    Q_orden = min(Q_orden, Q_max)
+                    if Q_orden > 0:
+                        IT += Q_orden
+                        Pedidos.append(Q_orden)
+                        T_orden.append(TNow + LT)
+                        T_orden.sort()
+                        CostoTotal += OC
+                Evento_Revisar = TNow + R
+
+            else:
+                TNow = T_Llegada
+                batches, vencidas = purgar_vencidos(batches, TNow)
+                UnidadesVencidas += vencidas
+                CostoTotal += vencidas * WC
+                OH = oh_total(batches)
+                CostoTotal += OH * (TNow - Tiempo_Ant) * HC
+                Tiempo_Ant  = TNow
+                cantidad_llegada = Pedidos.pop(0)
+                T_orden.pop(0)
+                batches = agregar_lote(batches, cantidad_llegada, TNow, SL_eff)
+                IT -= cantidad_llegada
+
+            Inventario.append(oh_total(batches) + IT)
+            InventarioOH.append(oh_total(batches))
+            Tiempo.append(TNow)
+
+        CostoTotalReplicas       += CostoTotal
+        CostoDiarioReplicas      += CostoTotal / TiempoTotal
+        QuiebresTotalReplicas    += Quiebres
+        VencimientoTotalReplicas += UnidadesVencidas
+        Inventario_final = InventarioOH
+        Tiempo_final     = Tiempo
+        IP_final         = Inventario
+
+    return (
+        round(CostoDiarioReplicas  / NR),
+        round(CostoTotalReplicas   / NR),
+        Tiempo_final, Inventario_final,
+        round(QuiebresTotalReplicas    / NR),
+        IP_final,
+        round(VencimientoTotalReplicas / NR),
+    )
+
+# ──────────────────────────────────────────────────────────────────────────────
+# PRONÓSTICO BAYESIANO GAMMA-POISSON
+# Prior conjugado Gamma(α=1, β=0.01) para demanda Poisson.
+# Tomado directamente de Paracetamol_RH.py.
+# ──────────────────────────────────────────────────────────────────────────────
+_PRIOR_ALPHA = 1.0
+_PRIOR_BETA  = 0.01
+
+def bayesian_forecast(consumo_mensual: list, dias_por_mes: list):
+    """Estima λ diario con prior Gamma conjugado sobre consumo mensual histórico."""
+    a_post  = _PRIOR_ALPHA + sum(consumo_mensual)
+    b_post  = _PRIOR_BETA  + sum(dias_por_mes)
+    lam_hat = a_post / b_post
+    lam_lo, lam_hi = gamma_dist.ppf([0.05, 0.95], a=a_post, scale=1 / b_post)
+    media   = float(np.mean(consumo_mensual))
+    desvio  = float(np.std(consumo_mensual))
+    cv      = desvio / media if media > 0 else 0.0
+    return {
+        "lambda_diario_hat": lam_hat,
+        "lambda_lo_diario":  lam_lo,
+        "lambda_hi_diario":  lam_hi,
+        "media_mensual":     media,
+        "desvio_mensual":    desvio,
+        "cv":                cv,
+        "a_post":            a_post,
+        "b_post":            b_post,
+    }
+
+def _forecast_demand_rh(history: list):
+    """Actualiza el pronóstico Bayesiano con el historial de demanda diaria."""
+    n     = len(history)
+    s_val = sum(history)
+    a     = _PRIOR_ALPHA + s_val
+    b     = _PRIOR_BETA  + n
+    lhat  = a / b
+    lo, hi = gamma_dist.ppf([0.05, 0.95], a=a, scale=1 / b)
+    return round(lhat), round(lo), round(hi)
+
+# ──────────────────────────────────────────────────────────────────────────────
+# HORIZONTE RODANTE MIP (Gurobi) — Paracetamol_RH.py
+# Solo disponible si gurobipy está instalado y licenciado.
+# ──────────────────────────────────────────────────────────────────────────────
+if _GUROBI_OK:
+    def _solve_horizon_rh(inv0, d_hat, period, pending, cooldown,
+                          L, tl, R_rh, Qmax, h_cost, k_cost, w_cost):
+        HORIZON = tl + 5
+        A  = list(range(L))
+        A1 = list(range(1, L))
+        TH = list(range(HORIZON))
+
+        arriving = {tau: 0 for tau in TH}
+        for (arr_period, qty) in pending:
+            tau = arr_period - period
+            if 0 <= tau < HORIZON:
+                arriving[tau] += qty
+
+        mdl = Model("SAVIA_RH")
+        mdl.setParam("OutputFlag", 0)
+
+        I = mdl.addVars(A, TH, vtype=GRB.INTEGER, lb=0, name="I")
+        D = mdl.addVars(A1, TH, vtype=GRB.INTEGER, lb=0, name="D")
+        Q = mdl.addVars(TH, vtype=GRB.INTEGER, lb=0, name="Q")
+        Y = mdl.addVars(TH, vtype=GRB.BINARY, name="Y")
+        W = mdl.addVars(TH, vtype=GRB.INTEGER, lb=0, name="W")
+        S = mdl.addVars(TH, vtype=GRB.INTEGER, lb=0, name="S")
+
+        mdl.setObjective(
+            quicksum(h_cost * I[a, tau] for a in A for tau in TH) +
+            quicksum(k_cost * Y[tau]    for tau in TH) +
+            quicksum(w_cost * W[tau]    for tau in TH) +
+            quicksum(w_cost * S[tau]    for tau in TH),
+            GRB.MINIMIZE,
+        )
+
+        for tau in TH:
+            for a in range(L - 1):
+                prev = inv0[a] if tau == 0 else I[a, tau - 1]
+                mdl.addConstr(I[a + 1, tau] == prev - D[a + 1, tau])
+
+        for tau in TH:
+            mdl.addConstr(I[0, tau] == arriving[tau] + (Q[tau - tl] if tau >= tl else 0))
+
+        for tau in TH:
+            mdl.addConstr(quicksum(D[a, tau] for a in A1) + S[tau] == d_hat)
+
+        for tau in TH:
+            for a in A1:
+                prev = inv0[a - 1] if tau == 0 else I[a - 1, tau - 1]
+                mdl.addConstr(D[a, tau] <= prev)
+
+        for tau in TH:
+            mdl.addConstr(W[tau] == I[L - 1, tau])
+
+        for tau in TH:
+            mdl.addConstr(Q[tau] <= Qmax * Y[tau])
+
+        for tau in TH:
+            if tau < cooldown:
+                mdl.addConstr(Y[tau] == 0)
+
+        for tau in TH:
+            if tau >= cooldown:
+                neighbors = [t for t in range(max(0, tau - R_rh + 1), tau) if t >= cooldown]
+                if neighbors:
+                    mdl.addConstr(quicksum(Y[t] for t in neighbors) + Y[tau] <= 1)
+
+        mdl.optimize()
+        if mdl.Status != GRB.OPTIMAL:
+            return None
+
+        return (
+            round(Q[0].X), round(Y[0].X), round(W[0].X), round(S[0].X),
+            {a: round(I[a, 0].X) for a in A},
+        )
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -654,6 +990,7 @@ def _store_global():
         "inv": None, "mov": None, "fuente": None, "formato_hospital": False,
         "inv_lotes": None,   # DataFrame con lotes+vencimientos del archivo Inventario estándar
         "costo_orden": 40000, "costo_mantener": 10, "lead_time": 7, "periodo_revision": 7,
+        "vida_util_dias": 0, "costo_desperdicio": 0, "beta_servicio": 0.95,
         "fecha_revision": date.today(), "hora_revision": None, "responsable": "",
         "archivos":       [],   # [{nombre, size, cargado_en, responsable, preview, n_productos, mov, inv_extra, inv_directo}]
         "historial":      [],   # [{Fecha, Responsable, Accion, Archivo, Productos}]
@@ -662,15 +999,19 @@ def _store_global():
     }
 
 
-def _guardar_params(fecha, hora, resp, c_orden, c_mant, lt, pr):
+def _guardar_params(fecha, hora, resp, c_orden, c_mant, lt, pr,
+                    vida_util=0, c_desp=0, beta=0.95):
     store = _store_global()
-    store["fecha_revision"]   = fecha
-    store["hora_revision"]    = hora
-    store["responsable"]      = resp
-    store["costo_orden"]      = c_orden
-    store["costo_mantener"]   = c_mant
-    store["lead_time"]        = lt
-    store["periodo_revision"] = pr
+    store["fecha_revision"]    = fecha
+    store["hora_revision"]     = hora
+    store["responsable"]       = resp
+    store["costo_orden"]       = c_orden
+    store["costo_mantener"]    = c_mant
+    store["lead_time"]         = lt
+    store["periodo_revision"]  = pr
+    store["vida_util_dias"]    = vida_util
+    store["costo_desperdicio"] = c_desp
+    store["beta_servicio"]     = beta
 
 
 def _excel_mov_actualizado(nuevos_movs: list) -> tuple:
@@ -1323,11 +1664,20 @@ with st.sidebar:
     costo_orden      = st.number_input("Costo por orden (CLP $)",           value=_s["costo_orden"],      step=1000)
     costo_mantener   = st.number_input("Costo mantener ($ / unidad / día)", value=_s["costo_mantener"],   step=1)
     lead_time        = st.number_input("Tiempo de entrega CENABAST (días)", value=_s["lead_time"],        step=1)
-    periodo_revision = st.number_input("Período de revisión (días)",        value=_s["periodo_revision"], step=1)
+    periodo_revision  = st.number_input("Período de revisión (días)",        value=_s["periodo_revision"], step=1)
+    st.divider()
+    st.header("Perecibilidad")
+    vida_util_dias    = st.number_input("Vida útil del producto (días)",      value=int(_s["vida_util_dias"]),    step=1,    min_value=0,
+                                        help="Vida útil en días desde recepción. 0 = sin restricción de perecibilidad.")
+    costo_desperdicio = st.number_input("Costo de desperdicio ($ / u vencida)", value=int(_s["costo_desperdicio"]), step=1000, min_value=0)
+    beta_servicio     = st.number_input("Nivel serv. perecib. (0–1)",        value=float(_s["beta_servicio"]),  step=0.01,
+                                        min_value=0.50, max_value=0.999,
+                                        help="Probabilidad de que Q* se consuma antes de vencer (para calcular Q_max).")
     Z = 1.881  # nivel de servicio 97%
 
 _guardar_params(fecha_revision, hora_revision, responsable,
-                costo_orden, costo_mantener, lead_time, periodo_revision)
+                costo_orden, costo_mantener, lead_time, periodo_revision,
+                vida_util=vida_util_dias, c_desp=costo_desperdicio, beta=beta_servicio)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -3197,7 +3547,7 @@ def _disparar_webhook_plan(payload: dict):
         return False, str(_e)
 
 with tab3:
-    _t3_pron, _t3_ab = st.tabs(["Pronóstico", "Abastecimiento"])
+    _t3_pron, _t3_ab, _t3_rh = st.tabs(["Pronóstico", "Abastecimiento", "Horizonte Rodante"])
 
     # ══════════════════════════════════════════════════════════════════════
     # SUB-TAB: PRONÓSTICO
@@ -3543,15 +3893,27 @@ with tab3:
                     params_sim = calcular_politicas(media_sim, var_sim, costo_orden, costo_mantener, lead_time, periodo_revision, Z)
                     R_rec_sim, _ = recomendar_periodo(media_sim, var_sim, costo_orden, costo_mantener, lead_time)
 
-                    # Nivel máximo (S_inicio) según la política — igual que el notebook de referencia:
-                    #   (R,s,Q) → inventario inicial = s+Q+U; pide Q fija cuando IP ≤ s
-                    #   (R,S)   → S_inicio = s;     repone hasta s en CADA revisión
-                    #   (R,s,S) → S_inicio = s+Q;   repone hasta s+Q solo cuando IP ≤ s
+                    # Niveles según el notebook de referencia:
+                    #   (R,s,Q) → inventario inicial = s+Q+U; pide Q* fija cuando IP ≤ s
+                    #   (R,S)   → S = s+Q*; repone hasta S en CADA revisión (cap Q_max)
+                    #   (R,s,S) → S = s+Q*; repone hasta S solo cuando IP ≤ s (cap Q_max)
                     s_sim  = params_sim["s"]
                     Q_sim  = params_sim["Q"]
-                    S_rsq  = params_sim["S"]   # = s + Q + U  (inventario inicial (R,s,Q))
-                    S_rs   = s_sim             # (R,S)  ordena hasta el propio punto de reorden
-                    S_rss  = s_sim + Q_sim     # (R,s,S) ordena hasta s + Q
+                    S_rsq  = params_sim["S"]   # = s + Q + U
+
+                    # Parámetros de perecibilidad
+                    SL_sim   = int(vida_util_dias)   if vida_util_dias  > 0 else None
+                    WC_sim   = float(costo_desperdicio)
+                    beta_sim = float(beta_servicio)
+                    _per_sim = calcular_perecibilidad(media_sim, var_sim, Q_sim,
+                                                      SL_sim if SL_sim else 3650,
+                                                      beta=beta_sim)
+                    Q_star_sim = _per_sim["Q_star"]
+                    Q_max_sim  = _per_sim["Q_max"]
+                    E_O_sim    = _per_sim["E_O"]
+
+                    S_rs   = s_sim + Q_star_sim   # nivel máximo (R,S)  = s + Q*
+                    S_rss  = s_sim + Q_star_sim   # nivel máximo (R,s,S) = s + Q*
 
                     # ── Resumen de parámetros de simulación ───────────────────────
                     pc1, pc2, pc3 = st.columns(3)
@@ -3571,20 +3933,27 @@ with tab3:
 | Parámetro | Valor |
 |---|---|
 | Tiempo de entrega (LT) | **{int(lead_time)} días** |
+| LT efectivo (LT_ef) | **{round(params_sim['LT_ef'], 2)} días** |
 | Período de revisión (R) | **{int(periodo_revision)} días** |
 | Nivel de servicio (Z) | **{Z} (~97 %)** |
 | Costo por orden (OC) | **${_m(costo_orden)} CLP** |
 | Costo mantener (HC) | **${_m(costo_mantener)} CLP/u/día** |
+| Costo desperdicio (WC) | **${_m(int(WC_sim))} CLP/u** |
 """)
                     with pc3:
-                        st.markdown("**Parámetros de política**")
+                        st.markdown("**Parámetros de política y perecibilidad**")
+                        _sl_str = f"{SL_sim} días" if SL_sim else "Sin restricción"
                         st.markdown(f"""
 | Parámetro | Valor |
 |---|---|
 | Punto de reorden (s) | **{s_sim} u** |
-| Lote fijo (Q) | **{Q_sim} u** |
+| EOQ (Q) | **{Q_sim} u** |
 | Undershoot prom. (U) | **{params_sim['U']} u** |
 | Reserva de seguridad (SS) | **{params_sim['SS']} u** |
+| Vida útil (SL) | **{_sl_str}** |
+| Q_max (restricción SL) | **{Q_max_sim} u** |
+| Q* efectivo | **{Q_star_sim} u** |
+| E[O] esperanza caducidad | **{E_O_sim:.2f} u/pedido** |
 | S — inicio (R,s,Q) | **{S_rsq} u** |
 | S — máximo (R,S) | **{S_rs} u** |
 | S — máximo (R,s,S) | **{S_rss} u** |
@@ -3608,17 +3977,27 @@ with tab3:
                                 x, oh, ip = x[::step], oh[::step], ip[::step]
                             return x, oh, ip
 
-                        _n_días = max(periodo_revision * 4,
+                        _n_dias = max(periodo_revision * 4,
                                       min(max(float(periodo_revision), params_sim["Q"] / max(media_sim, 0.001)) * 15, 360.0))
+                        _sl_arg = SL_sim if SL_sim else None
                         with st.spinner("Ejecutando simulaciónes..."):
-                            r_rsq = simular_rsq(media_sim, var_sim, costo_orden, costo_mantener, lead_time, periodo_revision, s_sim, Q_sim, S_rsq)
-                            r_rs  = simular_rs( media_sim, var_sim, costo_orden, costo_mantener, lead_time, periodo_revision, s_sim, Q_sim, S_rs)
-                            r_rss = simular_rss(media_sim, var_sim, costo_orden, costo_mantener, lead_time, periodo_revision, s_sim, Q_sim, S_rss)
+                            r_rsq = simular_rsq(media_sim, var_sim, costo_orden, costo_mantener,
+                                                lead_time, periodo_revision,
+                                                s_sim, Q_star_sim, S_rsq,
+                                                SL=_sl_arg, WC=WC_sim)
+                            r_rs  = simular_rs( media_sim, var_sim, costo_orden, costo_mantener,
+                                                lead_time, periodo_revision,
+                                                s_sim, Q_max_sim, S_rs,
+                                                SL=_sl_arg, WC=WC_sim)
+                            r_rss = simular_rss(media_sim, var_sim, costo_orden, costo_mantener,
+                                                lead_time, periodo_revision,
+                                                s_sim, Q_max_sim, S_rss,
+                                                SL=_sl_arg, WC=WC_sim)
                         st.session_state["_sim_med"]   = med_sim
                         st.session_state["_sim_cache"] = {
-                            "rsq": (_recortar_sim(r_rsq, _n_dias), r_rsq[0], r_rsq[1], r_rsq[4]),
-                            "rs":  (_recortar_sim(r_rs,  _n_dias), r_rs[0],  r_rs[1],  r_rs[4]),
-                            "rss": (_recortar_sim(r_rss, _n_dias), r_rss[0], r_rss[1], r_rss[4]),
+                            "rsq": (_recortar_sim(r_rsq, _n_dias), r_rsq[0], r_rsq[1], r_rsq[4], r_rsq[6]),
+                            "rs":  (_recortar_sim(r_rs,  _n_dias), r_rs[0],  r_rs[1],  r_rs[4],  r_rs[6]),
+                            "rss": (_recortar_sim(r_rss, _n_dias), r_rss[0], r_rss[1], r_rss[4], r_rss[6]),
                         }
 
                     if "_sim_cache" not in st.session_state:
@@ -3628,6 +4007,7 @@ with tab3:
                         costos_anuales  = {"(R,s,Q)": _sc["rsq"][2], "(R,S)": _sc["rs"][2], "(R,s,S)": _sc["rss"][2]}
                         quiebres_pol    = {"(R,s,Q)": _sc["rsq"][3], "(R,S)": _sc["rs"][3], "(R,s,S)": _sc["rss"][3]}
                         costos_diarios  = {"(R,s,Q)": _sc["rsq"][1], "(R,S)": _sc["rs"][1], "(R,s,S)": _sc["rss"][1]}
+                        vencidas_pol    = {"(R,s,Q)": _sc["rsq"][4], "(R,S)": _sc["rs"][4], "(R,s,S)": _sc["rss"][4]}
 
                         min_quiebres = min(quiebres_pol.values())
                         candidatas   = [p for p, q in quiebres_pol.items() if q == min_quiebres]
@@ -3645,12 +4025,13 @@ with tab3:
                                 dif = round((costos_anuales[pol] - costos_anuales[mejor]) / max(costos_anuales[mejor], 1) * 100, 1)
                                 etiqueta = f"Más cara (+{dif} %)"
                             filas_comparación.append({
-                                "Estrategia":        NOMBRES[pol],
-                                "Cómo funciona":     DESCRIPCION[pol],
-                                "Quiebres de stock": disponibilidad,
-                                "Costo diario ($)":  f"{_m(costos_diarios[pol])}",
-                                "Costo anual ($)":   f"{_m(costos_anuales[pol])}",
-                                "Evaluación":        etiqueta,
+                                "Estrategia":              NOMBRES[pol],
+                                "Cómo funciona":           DESCRIPCION[pol],
+                                "Quiebres de stock":       disponibilidad,
+                                "Unidades vencidas (prom.)": vencidas_pol[pol],
+                                "Costo diario ($)":        f"{_m(costos_diarios[pol])}",
+                                "Costo anual ($)":         f"{_m(costos_anuales[pol])}",
+                                "Evaluación":              etiqueta,
                             })
                         st.dataframe(_safe_df(pd.DataFrame(filas_comparación)), use_container_width=True, hide_index=True)
 
@@ -3713,4 +4094,292 @@ with tab3:
                             "**Naranja** = reserva de seguridad (SS)"
                         )
 
+    # ══════════════════════════════════════════════════════════════════════
+    # SUB-TAB: HORIZONTE RODANTE (Gurobi MIP + Bayesiano Gamma-Poisson)
+    # ══════════════════════════════════════════════════════════════════════
+    with _t3_rh:
+        st.markdown(_ayuda(
+            "<b>Horizonte Rodante</b> — Modelo de optimización MIP (Gurobi) que decide cuándo y cuánto pedir "
+            "día a día durante un mes simulado, usando un <b>pronóstico Bayesiano Gamma-Poisson</b> que se "
+            "actualiza con cada nueva observación de demanda. "
+            "El inventario se modela con <b>envejecimiento por slots</b>: cada unidad avanza un día de edad "
+            "por período y las que alcanzan la vida útil máxima se cuentan como vencidas. "
+            "Requiere <b>Gurobi</b> instalado y licenciado."
+        ), unsafe_allow_html=True)
+
+        if not _GUROBI_OK:
+            st.warning(
+                "**Gurobi no está disponible** en este entorno. "
+                "Instala `gurobipy` y configura una licencia válida para usar esta funcionalidad."
+            )
+        elif not tiene_movimientos:
+            st.warning("Se requiere el archivo de movimientos para ejecutar el Horizonte Rodante.")
+        else:
+            # ── Selector de medicamento ───────────────────────────────────
+            _rh_meds = resumen[resumen["media_diaria"] > 0].sort_values(
+                "media_diaria", ascending=False
+            )[COL_NOMBRE].dropna().tolist()
+            if not _rh_meds:
+                st.warning("No hay medicamentos con historial de consumo.")
+            else:
+                _rh_med = st.selectbox("Medicamento:", _rh_meds, key="rh_med_sel")
+                _rh_row = resumen[resumen[COL_NOMBRE] == _rh_med].iloc[0]
+
+                # ── Construir consumo mensual desde movimientos ───────────
+                _rh_mov = datos_movimientos[
+                    datos_movimientos[COL_MOV_CODIGO] == str(_rh_row[COL_CODIGO])
+                ].copy()
+                _rh_mov[COL_MOV_FECHA]    = pd.to_datetime(_rh_mov[COL_MOV_FECHA], dayfirst=True, errors="coerce")
+                _rh_mov[COL_MOV_CANTIDAD] = pd.to_numeric(_rh_mov[COL_MOV_CANTIDAD], errors="coerce").fillna(0)
+                _rh_mov = _rh_mov.dropna(subset=[COL_MOV_FECHA])
+
+                _rh_mensual = (
+                    _rh_mov.set_index(COL_MOV_FECHA)
+                    .resample("MS")[COL_MOV_CANTIDAD].sum()
+                    .reset_index()
+                )
+                _rh_consumo_list = _rh_mensual[COL_MOV_CANTIDAD].astype(int).tolist()
+                _rh_dias_list    = [
+                    pd.Timestamp(d).days_in_month
+                    for d in _rh_mensual[COL_MOV_FECHA]
+                ]
+
+                if len(_rh_consumo_list) < 2:
+                    st.info("Se necesitan al menos 2 meses de historial para el pronóstico Bayesiano.")
+                else:
+                    # ── Pronóstico Bayesiano ──────────────────────────────
+                    _bf = bayesian_forecast(_rh_consumo_list, _rh_dias_list)
+                    _lambda_d = _bf["lambda_diario_hat"]
+                    _media_m  = _bf["media_mensual"]
+                    _cv_val   = _bf["cv"]
+
+                    st.markdown("#### Pronóstico Bayesiano — demanda diaria")
+                    _bf1, _bf2, _bf3, _bf4 = st.columns(4)
+                    _bf1.metric("λ diario estimado",
+                                f"{_lambda_d:.2f} u/día",
+                                help="Media a posteriori de la tasa diaria Poisson.")
+                    _bf2.metric("IC 90 % mensual",
+                                f"[{_bf['lambda_lo_diario']*30:.0f} – {_bf['lambda_hi_diario']*30:.0f}] u",
+                                help="Intervalo de credibilidad del 90 % para la demanda mensual.")
+                    _bf3.metric("Media mensual histórica", f"{_media_m:,.0f} u",
+                                help="Promedio de los consumos mensuales observados.")
+                    _cv_lbl = "baja" if _cv_val < 0.15 else "moderada" if _cv_val < 0.30 else "alta"
+                    _bf4.metric("Coef. variación", f"{_cv_val:.3f}  ({_cv_lbl})",
+                                help="Desviación estándar / media de los consumos mensuales.")
+
+                    # Gráfico de consumo mensual con IC
+                    _rh_meses_lbl = [pd.Timestamp(d).strftime("%b %Y") for d in _rh_mensual[COL_MOV_FECHA]]
+                    _fig_bf = go.Figure()
+                    _fig_bf.add_trace(go.Bar(
+                        x=_rh_meses_lbl, y=_rh_consumo_list,
+                        marker_color="#2563eb", name="Consumo real",
+                        hovertemplate="%{x}: %{y:,.0f} u<extra></extra>",
+                    ))
+                    _fig_bf.add_hline(y=_lambda_d * 30, line_dash="dash", line_color="#dc2626",
+                                      line_width=1.5,
+                                      annotation_text=f"λ estimado ({_lambda_d*30:.0f} u/mes)",
+                                      annotation_position="top right", annotation_font_size=10)
+                    _fig_bf.add_hrect(
+                        y0=_bf["lambda_lo_diario"] * 30,
+                        y1=_bf["lambda_hi_diario"] * 30,
+                        fillcolor="rgba(220,38,38,0.08)", line_width=0,
+                        annotation_text="IC 90%", annotation_position="top left",
+                        annotation_font_size=9,
+                    )
+                    _fig_bf.update_layout(
+                        height=280, margin=dict(t=20, b=20, l=10, r=100),
+                        xaxis_title="Mes", yaxis_title="Unidades dispensadas",
+                        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="#f8fafc", showlegend=False,
+                    )
+                    st.plotly_chart(_fig_bf, use_container_width=True)
+                    st.caption(
+                        "Barras = consumo mensual real. "
+                        "Línea roja = λ estimado (posterior Gamma-Poisson). "
+                        "Banda rosa = IC 90% para la demanda mensual."
+                    )
+
+                    st.divider()
+
+                    # ── Parámetros del Horizonte Rodante ─────────────────
+                    st.markdown("#### Parámetros del Horizonte Rodante")
+                    _rh_c1, _rh_c2, _rh_c3 = st.columns(3)
+                    with _rh_c1:
+                        _rh_L    = st.number_input("Vida útil L (días, slots)",
+                                                    value=max(int(vida_util_dias), 7),
+                                                    min_value=2, max_value=365, step=1,
+                                                    key="rh_L",
+                                                    help="Número de slots de edad. Unidades en el slot L-1 se contabilizan como vencidas.")
+                        _rh_tl   = st.number_input("Lead time tl (días)",
+                                                    value=int(lead_time), min_value=1,
+                                                    step=1, key="rh_tl")
+                    with _rh_c2:
+                        _rh_R    = st.number_input("Intervalo mínimo entre pedidos R (días)",
+                                                    value=3, min_value=1, step=1, key="rh_R",
+                                                    help="No se puede pedir dos veces dentro de este intervalo.")
+                        _rh_Qmax = st.number_input("Cantidad máxima por pedido (Qmax)",
+                                                    value=max(int(_lambda_d * 30 * 5), 1000),
+                                                    min_value=1, step=100, key="rh_Qmax")
+                    with _rh_c3:
+                        _rh_h    = st.number_input("Costo holding (h, $/u/día)",
+                                                    value=int(costo_mantener), min_value=0,
+                                                    step=1, key="rh_h")
+                        _rh_k    = st.number_input("Costo orden (k, $)",
+                                                    value=int(costo_orden), min_value=0,
+                                                    step=1000, key="rh_k")
+                        _rh_w    = st.number_input("Costo desperdicio (w, $/u)",
+                                                    value=int(costo_desperdicio), min_value=0,
+                                                    step=1000, key="rh_w")
+
+                    # ── Ejecutar Horizonte Rodante ────────────────────────
+                    if st.session_state.get("_rh_med") != _rh_med:
+                        st.session_state.pop("_rh_cache", None)
+
+                    if st.button("Ejecutar Horizonte Rodante", key="btn_rh",
+                                 use_container_width=True, type="primary"):
+                        import calendar as _cal
+                        from datetime import date as _date2
+                        _hoy2          = _date2.today()
+                        _dias_mes_sig  = _cal.monthrange(_hoy2.year, _hoy2.month)[1]
+                        _WINDOW        = 5
+                        _N_ITER        = _dias_mes_sig
+                        _inv_ini       = round((_rh_tl + _rh_R) * _lambda_d)
+
+                        # Ventana inicial de historial simulado
+                        np.random.seed(42)
+                        _demand_hist = [int(np.random.poisson(_lambda_d)) for _ in range(_WINDOW)]
+
+                        # Estado de inventario por slot de edad
+                        _inv_st = {a: 0 for a in range(_rh_L)}
+                        _inv_st[0] = _inv_ini
+
+                        _results_rh    = []
+                        _pending_rh    = []
+                        _last_order    = -_rh_R
+                        _failed        = False
+
+                        _bar = st.progress(0, text="Optimizando días...")
+                        for _it in range(_N_ITER):
+                            _day = _WINDOW + _it
+                            _dh, _dlo, _dhi = _forecast_demand_rh(_demand_hist)
+
+                            # Recepciones del día
+                            _arr_hoy = sum(q for (a, q) in _pending_rh if a == _day)
+                            _inv_st[0] += _arr_hoy
+                            _pending_rh = [(a, q) for (a, q) in _pending_rh if a != _day]
+
+                            _cd = max(0, _rh_R - (_day - _last_order))
+                            _sol = _solve_horizon_rh(
+                                _inv_st, _dh, _day, _pending_rh, _cd,
+                                _rh_L, _rh_tl, _rh_R, _rh_Qmax,
+                                _rh_h, _rh_k, _rh_w,
+                            )
+                            if _sol is None:
+                                st.error(f"Sin solución óptima en el día {_day}.")
+                                _failed = True
+                                break
+
+                            _Qv, _Yv, _Wv, _Sv, _new_inv = _sol
+                            if _Qv > 0:
+                                _pending_rh.append((_day + _rh_tl, _Qv))
+                                _last_order = _day
+
+                            _inv_st = _new_inv
+                            _stk_tot = sum(_inv_st.values())
+                            _demand_hist.append(_dh)
+
+                            _results_rh.append({
+                                "Día": _day, "d̂": _dh,
+                                "IC lo": _dlo, "IC hi": _dhi,
+                                "Pedido (Q)": _Qv, "¿Pide?": "Sí" if _Yv else "No",
+                                "Vencidas (W)": _Wv, "Faltante (S)": _Sv,
+                                "Stock total": _stk_tot,
+                            })
+                            _bar.progress((_it + 1) / _N_ITER,
+                                          text=f"Día {_day}/{_WINDOW + _N_ITER - 1}")
+
+                        _bar.empty()
+                        if not _failed and _results_rh:
+                            st.session_state["_rh_med"]   = _rh_med
+                            st.session_state["_rh_cache"] = {
+                                "results": _results_rh,
+                                "lambda_d": _lambda_d,
+                                "inv_fin": _inv_st,
+                            }
+
+                    # ── Mostrar resultados ────────────────────────────────
+                    if "_rh_cache" in st.session_state and st.session_state.get("_rh_med") == _rh_med:
+                        _rh_c   = st.session_state["_rh_cache"]
+                        _df_rh  = pd.DataFrame(_rh_c["results"])
+                        _lam_d2 = _rh_c["lambda_d"]
+                        _inv_f  = _rh_c["inv_fin"]
+
+                        st.markdown("#### Resumen del mes simulado")
+                        _sr1, _sr2, _sr3, _sr4, _sr5 = st.columns(5)
+                        _sr1.metric("Días simulados",         len(_df_rh))
+                        _sr2.metric("Demanda total estimada", f"{_m(int(_df_rh['d̂'].sum()))} u")
+                        _sr3.metric("Total pedido",
+                                    f"{_m(int(_df_rh['Pedido (Q)'].sum()))} u  "
+                                    f"({int(_df_rh['¿Pide?'].eq('Sí').sum())} órdenes)")
+                        _sr4.metric("Unidades vencidas", f"{_m(int(_df_rh['Vencidas (W)'].sum()))}")
+                        _sr5.metric("Demanda insatisfecha", f"{_m(int(_df_rh['Faltante (S)'].sum()))}")
+
+                        # Gráfico de resultados
+                        _fig_rh = go.Figure()
+                        _fig_rh.add_trace(go.Scatter(
+                            x=_df_rh["Día"], y=_df_rh["Stock total"],
+                            mode="lines", name="Stock total",
+                            line=dict(color="#2563eb", width=2),
+                        ))
+                        _fig_rh.add_trace(go.Bar(
+                            x=_df_rh["Día"], y=_df_rh["Pedido (Q)"],
+                            name="Pedido (Q)", marker_color="#9AE6B4", opacity=0.7,
+                            yaxis="y2",
+                        ))
+                        _dias_pedido_rh = _df_rh[_df_rh["¿Pide?"] == "Sí"]["Día"].tolist()
+                        for _dp in _dias_pedido_rh:
+                            _fig_rh.add_vline(x=_dp, line_dash="dot", line_color="#16a34a",
+                                              line_width=1.2, opacity=0.7)
+                        if _df_rh["Vencidas (W)"].sum() > 0:
+                            _fig_rh.add_trace(go.Bar(
+                                x=_df_rh["Día"], y=_df_rh["Vencidas (W)"],
+                                name="Vencidas", marker_color="#fca5a5", opacity=0.7,
+                                yaxis="y2",
+                            ))
+                        _fig_rh.update_layout(
+                            height=380, margin=dict(t=20, b=40, l=60, r=80),
+                            xaxis_title="Día del mes simulado",
+                            yaxis=dict(title="Stock total (u)", tickformat=","),
+                            yaxis2=dict(title="Pedido / Vencidas (u)", overlaying="y",
+                                        side="right", showgrid=False),
+                            legend=dict(orientation="h", y=-0.18, x=0),
+                            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="#f8fafc",
+                        )
+                        st.plotly_chart(_fig_rh, use_container_width=True)
+                        st.caption(
+                            "Línea azul = stock total en bodega (suma de todos los slots de edad). "
+                            "Barras verdes = cantidad pedida cada día. "
+                            "Líneas punteadas verdes = días en que se generó una orden. "
+                            "Barras rojas = unidades vencidas ese día."
+                        )
+
+                        st.markdown("#### Detalle diario")
+                        _df_rh_show = _df_rh.rename(columns={
+                            "d̂": "Demanda estimada",
+                            "IC lo": "IC 90% inf.",
+                            "IC hi": "IC 90% sup.",
+                        })
+                        st.dataframe(_safe_df(_df_rh_show), use_container_width=True,
+                                     hide_index=True, height=380)
+
+                        _buf_rh = io.BytesIO()
+                        _safe_df(_df_rh_show).to_excel(_buf_rh, index=False, engine="openpyxl")
+                        st.download_button(
+                            label="Descargar resultados del Horizonte Rodante",
+                            data=_buf_rh.getvalue(),
+                            file_name=f"horizonte_rodante_SAVIA_{date.today().strftime('%Y%m%d')}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            key="dl_rh",
+                        )
+                    else:
+                        st.info("Configura los parámetros y haz clic en **Ejecutar Horizonte Rodante**.")
 
