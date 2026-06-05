@@ -4054,14 +4054,8 @@ with tab3:
 
                     st.divider()
 
-                    # ── Horizonte Rodante MIP (requiere Gurobi) ──────────
-                    if not _GUROBI_OK:
-                        st.info(
-                            "**Horizonte Rodante (MIP)** no disponible en este entorno: "
-                            "requiere Gurobi instalado y licenciado. "
-                            "El pronóstico Bayesiano de arriba está disponible en todos los entornos."
-                        )
-                    else:
+                    # ── Horizonte Rodante MIP (PuLP/CBC, sin licencia) ───
+                    if True:
                         # ── Parámetros del Horizonte Rodante ─────────────
                         st.markdown("#### Parámetros del Horizonte Rodante")
                         _rh_c1, _rh_c2, _rh_c3 = st.columns(3)
