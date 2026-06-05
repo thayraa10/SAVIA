@@ -4097,75 +4097,75 @@ with tab3:
                         st.session_state.pop("_rh_cache", None)
 
                     if _btn_rh:
-                            import calendar as _cal
-                            from datetime import date as _date2
-                            _hoy2          = _date2.today()
-                            _dias_mes_sig  = _cal.monthrange(_hoy2.year, _hoy2.month)[1]
-                            _WINDOW        = 5
-                            _N_ITER        = _dias_mes_sig
-                            _inv_ini       = round((_rh_tl + _rh_R) * _lambda_d)
+                        import calendar as _cal
+                        from datetime import date as _date2
+                        _hoy2          = _date2.today()
+                        _dias_mes_sig  = _cal.monthrange(_hoy2.year, _hoy2.month)[1]
+                        _WINDOW        = 5
+                        _N_ITER        = _dias_mes_sig
+                        _inv_ini       = round((_rh_tl + _rh_R) * _lambda_d)
 
-                            np.random.seed(42)
-                            _demand_hist = [int(np.random.poisson(_lambda_d)) for _ in range(_WINDOW)]
+                        np.random.seed(42)
+                        _demand_hist = [int(np.random.poisson(_lambda_d)) for _ in range(_WINDOW)]
 
-                            _inv_st = {a: 0 for a in range(_rh_L)}
-                            _inv_st[0] = _inv_ini
+                        _inv_st = {a: 0 for a in range(_rh_L)}
+                        _inv_st[0] = _inv_ini
 
-                            _results_rh = []
-                            _pending_rh = []
-                            _last_order = -_rh_R
-                            _failed     = False
+                        _results_rh = []
+                        _pending_rh = []
+                        _last_order = -_rh_R
+                        _failed     = False
 
-                            _bar = st.progress(0, text="Optimizando días...")
-                            for _it in range(_N_ITER):
-                                _day = _WINDOW + _it
-                                _dh, _dlo, _dhi = _forecast_demand_rh(_demand_hist)
+                        _bar = st.progress(0, text="Optimizando días...")
+                        for _it in range(_N_ITER):
+                            _day = _WINDOW + _it
+                            _dh, _dlo, _dhi = _forecast_demand_rh(_demand_hist)
 
-                                _arr_hoy = sum(q for (a, q) in _pending_rh if a == _day)
-                                _inv_st[0] += _arr_hoy
-                                _pending_rh = [(a, q) for (a, q) in _pending_rh if a != _day]
+                            _arr_hoy = sum(q for (a, q) in _pending_rh if a == _day)
+                            _inv_st[0] += _arr_hoy
+                            _pending_rh = [(a, q) for (a, q) in _pending_rh if a != _day]
 
-                                _cd  = max(0, _rh_R - (_day - _last_order))
-                                _sol = _solve_horizon_rh(
-                                    _inv_st, _dh, _day, _pending_rh, _cd,
-                                    _rh_L, _rh_tl, _rh_R, _rh_Qmax,
-                                    _rh_h, _rh_k, _rh_w,
-                                )
-                                if _sol is None:
-                                    st.error(f"Sin solución óptima en el día {_day}.")
-                                    _failed = True
-                                    break
+                            _cd  = max(0, _rh_R - (_day - _last_order))
+                            _sol = _solve_horizon_rh(
+                                _inv_st, _dh, _day, _pending_rh, _cd,
+                                _rh_L, _rh_tl, _rh_R, _rh_Qmax,
+                                _rh_h, _rh_k, _rh_w,
+                            )
+                            if _sol is None:
+                                st.error(f"Sin solución óptima en el día {_day}.")
+                                _failed = True
+                                break
 
-                                _Qv, _Yv, _Wv, _Sv, _new_inv = _sol
-                                if _Qv > 0:
-                                    _pending_rh.append((_day + _rh_tl, _Qv))
-                                    _last_order = _day
+                            _Qv, _Yv, _Wv, _Sv, _new_inv = _sol
+                            if _Qv > 0:
+                                _pending_rh.append((_day + _rh_tl, _Qv))
+                                _last_order = _day
 
-                                _inv_st  = _new_inv
-                                _stk_tot = sum(_inv_st.values())
-                                _demand_hist.append(_dh)
+                            _inv_st  = _new_inv
+                            _stk_tot = sum(_inv_st.values())
+                            _demand_hist.append(_dh)
 
-                                _results_rh.append({
-                                    "Día": _day, "d̂": _dh,
-                                    "IC lo": _dlo, "IC hi": _dhi,
-                                    "Pedido (Q)": _Qv, "¿Pide?": "Sí" if _Yv else "No",
-                                    "Vencidas (W)": _Wv, "Faltante (S)": _Sv,
-                                    "Stock total": _stk_tot,
-                                })
-                                _bar.progress((_it + 1) / _N_ITER,
-                                              text=f"Día {_day}/{_WINDOW + _N_ITER - 1}")
+                            _results_rh.append({
+                                "Día": _day, "d̂": _dh,
+                                "IC lo": _dlo, "IC hi": _dhi,
+                                "Pedido (Q)": _Qv, "¿Pide?": "Sí" if _Yv else "No",
+                                "Vencidas (W)": _Wv, "Faltante (S)": _Sv,
+                                "Stock total": _stk_tot,
+                            })
+                            _bar.progress((_it + 1) / _N_ITER,
+                                          text=f"Día {_day}/{_WINDOW + _N_ITER - 1}")
 
-                            _bar.empty()
-                            if not _failed and _results_rh:
-                                st.session_state["_rh_med"]   = _rh_med
-                                st.session_state["_rh_cache"] = {
-                                    "results": _results_rh,
-                                    "lambda_d": _lambda_d,
-                                    "inv_fin":  _inv_st,
-                                }
+                        _bar.empty()
+                        if not _failed and _results_rh:
+                            st.session_state["_rh_med"]   = _rh_med
+                            st.session_state["_rh_cache"] = {
+                                "results": _results_rh,
+                                "lambda_d": _lambda_d,
+                                "inv_fin":  _inv_st,
+                            }
 
-                        # ── Mostrar resultados ────────────────────────────
-                        if "_rh_cache" in st.session_state and st.session_state.get("_rh_med") == _rh_med:
+                    # ── Mostrar resultados ────────────────────────────
+                    if "_rh_cache" in st.session_state and st.session_state.get("_rh_med") == _rh_med:
                             _rh_c  = st.session_state["_rh_cache"]
                             _df_rh = pd.DataFrame(_rh_c["results"])
 
@@ -4232,6 +4232,6 @@ with tab3:
                                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                 key="dl_rh",
                             )
-                        else:
-                            st.info("Configura los parámetros y haz clic en **Ejecutar Horizonte Rodante**.")
+                    else:
+                        st.info("Configura los parámetros y haz clic en **Ejecutar Horizonte Rodante**.")
 
