@@ -821,19 +821,34 @@ def detectar_formato_hospital(df):
 
 def leer_con_encabezado_correcto(archivo_bytes, nombre_hoja):
     """
-    Lee una hoja de Excel detectando si los encabezados reales están en la fila 1 o en la fila 4.
-    El formato del hospital a veces tiene un título fusionado en las primeras 3 filas,
-    y los encabezados reales (CODIGO, NOMBRE, ...) empiezan en la fila 4.
+    Detecta si los encabezados reales están en la fila 1 (header=0) o en la fila 4 (header=3).
+    El formato del hospital tiene un título fusionado en las primeras 3 filas.
+    Cualquier otro archivo estándar tiene encabezados en la primera fila.
     """
-    # Leer solo la primera fila para ver qué hay en el encabezado
     df_prueba = pd.read_excel(io.BytesIO(archivo_bytes), sheet_name=nombre_hoja, header=0, nrows=1)
     primera_col = str(df_prueba.columns[0]).lower()
-    # Si la primera columna ya dice "codigo" o "sku", los encabezados están en fila 1
-    if "codigo" in primera_col or "sku" in primera_col:
+    # Palabras clave que indican que los encabezados ya están en la fila 1
+    _palabras_h0 = ["codigo", "sku", "clave", "f_pedido", "fecha", "matcod",
+                    "pedido", "material", "id", "item", "producto"]
+    if any(p in primera_col for p in _palabras_h0):
         return pd.read_excel(io.BytesIO(archivo_bytes), sheet_name=nombre_hoja, header=0)
-    else:
-        # Si no, los encabezados están en la fila 4 (índice 3)
+    # Indicadores de que los encabezados reales están en la fila 4:
+    # - primera columna es "unnamed" o NaN (celda vacía → título fusionado encima)
+    # - primera columna tiene más de 25 caracteres (es un título largo, no un nombre de campo)
+    # - primera columna es un número o fecha
+    usa_header3 = (
+        primera_col.startswith("unnamed")
+        or primera_col == "nan"
+        or len(primera_col) > 25
+    )
+    try:
+        float(primera_col)
+        usa_header3 = True
+    except ValueError:
+        pass
+    if usa_header3:
         return pd.read_excel(io.BytesIO(archivo_bytes), sheet_name=nombre_hoja, header=3)
+    return pd.read_excel(io.BytesIO(archivo_bytes), sheet_name=nombre_hoja, header=0)
 
 def transformar_formato_ancho(df):
     """
