@@ -4069,7 +4069,7 @@ with tab3:
                             )
                             _rh_L    = st.number_input("Vida útil L (días, slots)",
                                                         value=max(_rh_sl_default, 2),
-                                                        min_value=2, max_value=730, step=1,
+                                                        min_value=2, step=1,
                                                         key="rh_L",
                                                         help="Pre-llenado desde FVenvimiento del inventario. Número de slots de edad — unidades en el slot L-1 se contabilizan como vencidas.")
                             _rh_tl   = st.number_input("Lead time tl (días)",
