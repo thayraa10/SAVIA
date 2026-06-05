@@ -1464,6 +1464,17 @@ def _recompute():
             store["inv_lotes"] = _il_raw
             _il_cl = {str(c).lower(): c for c in _il_raw.columns}
             def _find_il(kws):
+                # 1° coincidencia exacta  (ej: "codigo" == "codigo")
+                for kw in kws:
+                    for cl, co in _il_cl.items():
+                        if cl == kw:
+                            return co
+                # 2° empieza con la palabra (ej: "codigo" en "codigoproducto")
+                for kw in kws:
+                    for cl, co in _il_cl.items():
+                        if cl.startswith(kw):
+                            return co
+                # 3° contiene la palabra (ej: "codigo" en "matcodigo") — último recurso
                 for kw in kws:
                     for cl, co in _il_cl.items():
                         if kw in cl:
