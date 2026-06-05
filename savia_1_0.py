@@ -4055,50 +4055,48 @@ with tab3:
                     st.divider()
 
                     # ── Horizonte Rodante MIP (PuLP/CBC, sin licencia) ───
-                    if True:
-                        # ── Parámetros del Horizonte Rodante ─────────────
-                        st.markdown("#### Parámetros del Horizonte Rodante")
+                    # SL del producto desde FVenvimiento → sidebar → 30 días por defecto
+                    _rh_sl_prod = _rh_row.get("sl_dias", None)
+                    _rh_sl_default = (
+                        int(_rh_sl_prod) if _rh_sl_prod and pd.notna(_rh_sl_prod) and int(_rh_sl_prod) > 1
+                        else int(vida_util_dias) if vida_util_dias > 0
+                        else 30
+                    )
+
+                    st.markdown("#### Parámetros del Horizonte Rodante")
+                    st.caption("Ajusta los parámetros y presiona **Ejecutar** — la página no recarga hasta ese momento.")
+
+                    with st.form("form_rh"):
                         _rh_c1, _rh_c2, _rh_c3 = st.columns(3)
                         with _rh_c1:
-                            # SL del producto desde FVenvimiento → sidebar → 30 días por defecto
-                            _rh_sl_prod = _rh_row.get("sl_dias", None)
-                            _rh_sl_default = (
-                                int(_rh_sl_prod) if _rh_sl_prod and pd.notna(_rh_sl_prod) and int(_rh_sl_prod) > 1
-                                else int(vida_util_dias) if vida_util_dias > 0
-                                else 30
-                            )
                             _rh_L    = st.number_input("Vida útil L (días, slots)",
                                                         value=max(_rh_sl_default, 2),
                                                         min_value=2, step=1,
-                                                        key="rh_L",
-                                                        help="Pre-llenado desde FVenvimiento del inventario. Número de slots de edad — unidades en el slot L-1 se contabilizan como vencidas.")
+                                                        help="Pre-llenado desde FVenvimiento. Unidades en slot L-1 se contabilizan como vencidas.")
                             _rh_tl   = st.number_input("Lead time tl (días)",
-                                                        value=int(lead_time), min_value=1,
-                                                        step=1, key="rh_tl")
+                                                        value=int(lead_time), min_value=1, step=1)
                         with _rh_c2:
                             _rh_R    = st.number_input("Intervalo mínimo entre pedidos R (días)",
-                                                        value=3, min_value=1, step=1, key="rh_R",
+                                                        value=3, min_value=1, step=1,
                                                         help="No se puede pedir dos veces dentro de este intervalo.")
                             _rh_Qmax = st.number_input("Cantidad máxima por pedido (Qmax)",
                                                         value=max(int(_lambda_d * 30 * 5), 1000),
-                                                        min_value=1, step=100, key="rh_Qmax")
+                                                        min_value=1, step=100)
                         with _rh_c3:
                             _rh_h    = st.number_input("Costo holding (h, $/u/día)",
-                                                        value=int(costo_mantener), min_value=0,
-                                                        step=1, key="rh_h")
+                                                        value=int(costo_mantener), min_value=0, step=1)
                             _rh_k    = st.number_input("Costo orden (k, $)",
-                                                        value=int(costo_orden), min_value=0,
-                                                        step=1000, key="rh_k")
-                            _rh_w    = st.number_input("Costo desperdicio (w, $/u)",
-                                                        value=int(costo_desperdicio), min_value=0,
-                                                        step=1000, key="rh_w")
+                                                        value=int(costo_orden), min_value=0, step=1000)
+                            _rh_w    = st.number_input("Costo desperdicio/faltante (w, $/u)",
+                                                        value=int(costo_desperdicio), min_value=0, step=1000)
+                        _btn_rh = st.form_submit_button("Ejecutar Horizonte Rodante",
+                                                         use_container_width=True, type="primary")
 
-                        # ── Ejecutar Horizonte Rodante ────────────────────
-                        if st.session_state.get("_rh_med") != _rh_med:
-                            st.session_state.pop("_rh_cache", None)
+                    # ── Ejecutar Horizonte Rodante ────────────────────
+                    if st.session_state.get("_rh_med") != _rh_med:
+                        st.session_state.pop("_rh_cache", None)
 
-                        if st.button("Ejecutar Horizonte Rodante", key="btn_rh",
-                                     use_container_width=True, type="primary"):
+                    if _btn_rh:
                             import calendar as _cal
                             from datetime import date as _date2
                             _hoy2          = _date2.today()
