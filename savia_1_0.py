@@ -13,9 +13,17 @@ import gc
 import streamlit.components.v1 as _components
 from streamlit_autorefresh import st_autorefresh
 import requests as _requests
-from scipy.stats import norm as _norm_inv, gamma as gamma_dist
+from scipy.stats import gamma as gamma_dist, norm as _norm_inv
 import pulp as _pulp
-_GUROBI_OK = True   # solver siempre disponible vía PuLP/CBC
+
+try:
+    from gurobipy import *
+    _GUROBI_OK = True
+except Exception:
+    _GUROBI_OK = False
+import calendar
+from dateutil.relativedelta import relativedelta
+
 st.set_page_config(page_title="SAVIA — Abastecimiento de Medi"
                               "camentos", layout="wide")
 
@@ -655,8 +663,9 @@ def bayesian_forecast(consumo_mensual: list, dias_por_mes: list):
     Prior: λ_mensual ~ Gamma(PRIOR_ALPHA, 1/PRIOR_BETA)
     Posterior: λ_mensual | datos ~ Gamma(a_post, 1/b_post)
       a_post = PRIOR_ALPHA + Σ consumo_mensual
-      b_post = PRIOR_BETA  + n_meses          ← exactamente como el código original
+      b_post = PRIOR_BETA  + n_meses
     λ_diario = λ_mensual / días_mes_siguiente
+    Nota: se usa el mes siguiente (no el promedio histórico) igual que en Paracetamol_RH.py.
     """
     n_meses    = len(consumo_mensual)
     a_post     = _PRIOR_ALPHA + sum(consumo_mensual)
@@ -666,11 +675,17 @@ def bayesian_forecast(consumo_mensual: list, dias_por_mes: list):
     lam_mensual_lo, lam_mensual_hi = gamma_dist.ppf(
         [0.05, 0.95], a=a_post, scale=1 / b_post
     )
-    # Convertir a tasa diaria usando el promedio de días por mes del historial
-    avg_dias   = float(np.mean(dias_por_mes)) if dias_por_mes else 30.0
-    lam_hat    = lam_mensual_hat / avg_dias
-    lam_lo     = lam_mensual_lo  / avg_dias
-    lam_hi     = lam_mensual_hi  / avg_dias
+    # Días del mes siguiente: usar el último mes del historial + 1 mes (igual que Paracetamol_RH.py)
+    if dias_por_mes:
+        _ultimo_dias = int(dias_por_mes[-1])
+        # Aproximar días del mes siguiente como el mismo número de días del último mes
+        # (en producción se puede pasar el valor exacto desde la UI)
+        dias_sig = _ultimo_dias
+    else:
+        dias_sig = 30
+    lam_hat    = lam_mensual_hat / dias_sig
+    lam_lo     = lam_mensual_lo  / dias_sig
+    lam_hi     = lam_mensual_hi  / dias_sig
 
     media  = float(np.mean(consumo_mensual))
     desvio = float(np.std(consumo_mensual))
@@ -1452,9 +1467,10 @@ def _recompute():
                 if _c_il_prec:
                     _il_raw[_c_il_prec] = pd.to_numeric(_il_raw[_c_il_prec], errors="coerce")
                 _il_agg = {}
-                if _c_il_stk:  _il_agg["STOCK"]      = (_c_il_stk,  "sum")
-                if _c_il_venc: _il_agg["VENCIMIENTO"] = (_c_il_venc, "min")
-                if _c_il_prec: _il_agg["COSTO"]       = (_c_il_prec, "first")
+                if _c_il_stk:  _il_agg["STOCK"]           = (_c_il_stk,  "sum")
+                if _c_il_venc: _il_agg["VENCIMIENTO"]      = (_c_il_venc, "min")
+                if _c_il_venc: _il_agg["VENCIMIENTO_MAX"]  = (_c_il_venc, "max")
+                if _c_il_prec: _il_agg["COSTO"]            = (_c_il_prec, "first")
                 if _il_agg:
                     _il_grp = (_il_raw.groupby(_c_il_cod)
                                       .agg(**_il_agg)
@@ -1468,14 +1484,12 @@ def _recompute():
                     for _col in list(_il_agg.keys()):
                         _col_il = _col + "_IL"
                         if _col_il in productos.columns:
-                            if _col == "VENCIMIENTO":
-                                # Siempre usar la fecha del inventario (antes era todo NaT)
+                            if _col in ("VENCIMIENTO", "VENCIMIENTO_MAX"):
                                 productos[_col] = productos[_col_il]
                             else:
-                                # Preferir valor del inventario; caer en el de consumos si falta
                                 productos[_col] = productos[_col_il].fillna(productos[_col].fillna(0))
                             productos.drop(columns=[_col_il], inplace=True)
-                        elif _col in productos.columns and _col != "VENCIMIENTO":
+                        elif _col in productos.columns and _col not in ("VENCIMIENTO", "VENCIMIENTO_MAX"):
                             productos[_col] = productos[_col].fillna(0)
         else:
             store["inv_lotes"] = None
@@ -1815,9 +1829,29 @@ agrupado_inv = inv.groupby([COL_CODIGO, COL_NOMBRE])
 resumen = agrupado_inv.agg(
     stock_total     = (COL_STOCK,    "sum"),
     min_dias_vencer = ("dias_vencer", "min"),
-    n_lotes         = (COL_STOCK,    "count"),  # cuenta cuántas filas (lotes) hay
+    max_dias_vencer = ("dias_vencer", "max"),  # lote más fresco → aproxima vida útil real
+    n_lotes         = (COL_STOCK,    "count"),
     costo_unitario  = (COL_COSTO,    "mean"),
 ).reset_index()
+# sl_dias: días hasta el vencimiento del lote más fresco, por producto.
+# Fuente prioritaria: VENCIMIENTO_MAX guardado en _recompute() desde max(FVenvimiento).
+# Fallback: max_dias_vencer del agrupado (mismo valor si no hay lotes separados).
+_hoy_ts = pd.Timestamp(date.today())
+if "VENCIMIENTO_MAX" in datos_inventario.columns:
+    _vm_map = (
+        datos_inventario[[COL_CODIGO, "VENCIMIENTO_MAX"]]
+        .drop_duplicates(COL_CODIGO)
+        .copy()
+    )
+    _vm_map["VENCIMIENTO_MAX"] = pd.to_datetime(_vm_map["VENCIMIENTO_MAX"], errors="coerce")
+    _vm_map["sl_dias"] = (_vm_map["VENCIMIENTO_MAX"] - _hoy_ts).dt.days.apply(
+        lambda x: int(x) if pd.notna(x) and x > 0 else None
+    )
+    resumen = resumen.merge(_vm_map[[COL_CODIGO, "sl_dias"]], on=COL_CODIGO, how="left")
+else:
+    resumen["sl_dias"] = resumen["max_dias_vencer"].apply(
+        lambda x: int(x) if pd.notna(x) and x > 0 else None
+    )
 
 # Agregar la columna de unidad de medida si existe
 if COL_UNIDAD is not None:
@@ -3551,225 +3585,7 @@ def _disparar_webhook_plan(payload: dict):
         return False, str(_e)
 
 with tab3:
-    _t3_pron, _t3_ab, _t3_rh = st.tabs(["Pronóstico", "Abastecimiento", "Horizonte Rodante"])
-
-    # ══════════════════════════════════════════════════════════════════════
-    # SUB-TAB: PRONÓSTICO
-    # ══════════════════════════════════════════════════════════════════════
-    with _t3_pron:
-        st.markdown(_ayuda(
-            "<b>Pronóstico de demanda</b> — Visualiza el consumo real de las últimas 12 semanas "
-            "y la demanda proyectada para las próximas 4 semanas por medicamento. "
-            "La tabla inferior identifica los productos cuyo stock proyectado será "
-            "<span style='color:#DD6B20;font-weight:700'>insuficiente</span>. "
-            "Si el stock cae bajo el punto de reorden dentro de 2 semanas, se marca como "
-            "<span style='color:#E53E3E;font-weight:700'>crítico</span> y se puede enviar una alerta preventiva."
-        ), unsafe_allow_html=True)
-
-        if not tiene_movimientos:
-            st.warning("Se requiere el archivo de movimientos para calcular el pronóstico.")
-        else:
-            # ── Preparar datos semanales de consumo ───────────────────────
-            _df_mov_p = datos_movimientos.copy()
-            try:
-                _df_mov_p[COL_MOV_FECHA] = pd.to_datetime(_df_mov_p[COL_MOV_FECHA], errors="coerce")
-                _df_mov_p[COL_MOV_CANTIDAD] = pd.to_numeric(_df_mov_p[COL_MOV_CANTIDAD], errors="coerce").fillna(0)
-                _df_mov_p = _df_mov_p.dropna(subset=[COL_MOV_FECHA])
-                _df_mov_p["_semana"] = _df_mov_p[COL_MOV_FECHA].dt.to_period("W").dt.start_time
-                _hoy = pd.Timestamp.today().normalize()
-                _inicio_hist = _hoy - pd.Timedelta(weeks=12)
-                _df_mov_hist = _df_mov_p[_df_mov_p["_semana"] >= _inicio_hist]
-                _tiene_hist = len(_df_mov_hist) > 0
-            except Exception:
-                _tiene_hist = False
-
-            # ── Selector de medicamento ───────────────────────────────────
-            _res_med = resumen[resumen["media_diaria"] > 0].copy()
-            _med_pron_lista = _res_med.sort_values("media_diaria", ascending=False)[COL_NOMBRE].dropna().tolist()
-            if not _med_pron_lista:
-                st.warning("No hay medicamentos con datos de demanda.")
-                st.stop()
-
-            _med_pron = st.selectbox(
-                "Medicamento:", _med_pron_lista,
-                key="pron_med_sel",
-                help="Ordenados de mayor a menor consumo promedio.",
-            )
-            _fila_pron = _res_med[_res_med[COL_NOMBRE] == _med_pron].iloc[0]
-            _cod_pron  = str(_fila_pron[COL_CODIGO])
-            _media_sem = float(_fila_pron["media_diaria"]) * 7          # consumo semanal proyectado
-            _stock_act = float(_fila_pron["stock_total"])
-            _s_reorden = float(pd.to_numeric(_fila_pron.get("STC_MIN", None), errors="coerce") or 0)
-            if _s_reorden == 0:
-                # Calcular punto de reorden si no viene en el archivo
-                _var_p = max(float(_fila_pron.get("var_diaria", _fila_pron["media_diaria"])), 0.001)
-                _pol_p = calcular_politicas(_fila_pron["media_diaria"], _var_p, costo_orden, costo_mantener, lead_time, periodo_revision, Z)
-                _s_reorden = float(_pol_p["s"])
-
-            # ── Gráfico consumo real + proyectado ─────────────────────────
-            _fig_pron = go.Figure()
-
-            if _tiene_hist:
-                # Consumo semanal histórico de este medicamento
-                _cod_col = COL_MOV_CODIGO
-                _df_med_h = _df_mov_hist[
-                    _df_mov_hist[_cod_col].astype(str).str.strip() == _cod_pron
-                ].groupby("_semana")[COL_MOV_CANTIDAD].sum().reset_index()
-                _df_med_h.columns = ["Semana", "Consumo real"]
-                _df_med_h = _df_med_h.sort_values("Semana")
-
-                if len(_df_med_h) > 0:
-                    _fig_pron.add_trace(go.Scatter(
-                        x=_df_med_h["Semana"], y=_df_med_h["Consumo real"],
-                        mode="lines+markers", name="Consumo real",
-                        line=dict(color="#3182CE", width=2.5),
-                        marker=dict(size=6),
-                    ))
-                    # Línea de promedio histórico
-                    _avg_real = _df_med_h["Consumo real"].mean()
-                    _fig_pron.add_hline(y=_avg_real, line_dash="dot", line_color="#3182CE",
-                                        line_width=1.2, opacity=0.5,
-                                        annotation_text=f"Promedio real ({_avg_real:.0f} u/sem)",
-                                        annotation_position="right",
-                                        annotation_font_size=10)
-
-            # Proyección: próximas 4 semanas
-            _semanas_futuras = [_hoy + pd.Timedelta(weeks=i) for i in range(1, 6)]
-            _x_fut  = [_hoy] + _semanas_futuras
-            _y_fut  = [_stock_act] + [max(0, _stock_act - _media_sem * i) for i in range(1, 6)]
-
-            _fig_pron.add_trace(go.Scatter(
-                x=_x_fut, y=_y_fut,
-                mode="lines+markers", name="Stock proyectado",
-                line=dict(color="#DD6B20", width=2, dash="dash"),
-                marker=dict(size=7, symbol="diamond"),
-            ))
-
-            # Consumo proyectado (barras semana a semana)
-            _x_cons = _semanas_futuras
-            _y_cons = [_media_sem] * 5
-            _fig_pron.add_trace(go.Bar(
-                x=_x_cons, y=_y_cons,
-                name="Consumo proyectado / sem",
-                marker_color="#9AE6B4", opacity=0.55,
-                yaxis="y2",
-            ))
-
-            # Línea de punto de reorden
-            if _s_reorden > 0:
-                _fig_pron.add_hline(y=_s_reorden, line_dash="dash", line_color="#E53E3E",
-                                    line_width=1.5,
-                                    annotation_text=f"Punto de reorden ({int(_s_reorden)} u)",
-                                    annotation_position="right",
-                                    annotation_font_size=10)
-
-            _fig_pron.update_layout(
-                height=360,
-                margin=dict(t=20, b=40, l=60, r=140),
-                legend=dict(orientation="h", y=-0.18, x=0),
-                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="#f8fafc",
-                xaxis=dict(title="Semana", showgrid=True, gridcolor="#e2e8f0"),
-                yaxis=dict(title="Unidades en stock / consumo real", showgrid=True,
-                           gridcolor="#e2e8f0", tickformat=","),
-                yaxis2=dict(title="Consumo proyectado (u/sem)",
-                            overlaying="y", side="right", showgrid=False),
-                barmode="overlay",
-            )
-            st.plotly_chart(_fig_pron, use_container_width=True)
-            st.caption(
-                "Consumo real semanal  |  Stock proyectado (descontando consumo promedio)  |  "
-                "Consumo proyectado por semana  |  Punto de reorden"
-            )
-
-            st.divider()
-
-            # ── Tabla: productos con stock insuficiente en 4 semanas ─────
-            st.markdown("#### Alertas de stock proyectado — próximas 4 semanas")
-            _filas_alerta = []
-            _alertas_webhook = []
-            for _, _rr in _res_med.iterrows():
-                _md   = float(_rr["media_diaria"])
-                if _md <= 0:
-                    continue
-                _stk  = float(_rr["stock_total"])
-                _nom_a = _rr[COL_NOMBRE]
-                _cod_a = str(_rr[COL_CODIGO])
-                _s_a   = float(pd.to_numeric(_rr.get("STC_MIN", None), errors="coerce") or 0)
-                if _s_a == 0:
-                    _vd_a = max(float(_rr.get("var_diaria", _md)), 0.001)
-                    _s_a  = float(calcular_politicas(_md, _vd_a, costo_orden, costo_mantener, lead_time, periodo_revision, Z)["s"])
-
-                _stk_2s = max(0.0, _stk - _md * 14)   # stock en 2 semanas
-                _stk_4s = max(0.0, _stk - _md * 28)   # stock en 4 semanas
-
-                _bajo_2s = _stk_2s < _s_a and _s_a > 0
-                _bajo_4s = _stk_4s < _s_a and _s_a > 0
-
-                if not (_bajo_2s or _bajo_4s):
-                    continue
-
-                _estado_a = "Crítico — pedir esta semana" if _bajo_2s else "Atención — pedir pronto"
-                _filas_alerta.append({
-                    "Medicamento":               _nom_a,
-                    "Stock actual (u)":          int(_stk),
-                    "Consumo prom. semanal (u)": round(_md * 7, 1),
-                    "Stock en 2 semanas (u)":    int(_stk_2s),
-                    "Stock en 4 semanas (u)":    int(_stk_4s),
-                    "Punto de reorden (u)":      int(_s_a),
-                    "Estado":                    _estado_a,
-                })
-                if _bajo_2s:
-                    _alertas_webhook.append({
-                        "tipo_alerta":        "pronóstico_stock_bajo",
-                        "medicamento":        _nom_a,
-                        "codigo":             _cod_a,
-                        "stock_actual":       int(_stk),
-                        "stock_en_2_semanas": int(_stk_2s),
-                        "punto_reorden":      int(_s_a),
-                        "consumo_semanal":    round(_md * 7, 1),
-                        "fecha_cálculo":      date.today().strftime("%d/%m/%Y"),
-                    })
-
-            if _filas_alerta:
-                _df_alert = pd.DataFrame(_filas_alerta)
-                _ord_alert = {"Crítico — pedir esta semana": 0, "Atención — pedir pronto": 1}
-                _df_alert["_ord"] = _df_alert["Estado"].map(_ord_alert)
-                _df_alert = _df_alert.sort_values("_ord").drop(columns="_ord").reset_index(drop=True)
-
-                _n_crit = len(_df_alert[_df_alert["Estado"].str.startswith("Crítico")])
-                _n_warn = len(_df_alert[_df_alert["Estado"].str.startswith("Atención")])
-                _c1a, _c2a = st.columns(2)
-                _c1a.metric("Críticos (≤ 2 semanas)", _n_crit, delta="Pedir esta semana" if _n_crit else None, delta_color="inverse")
-                _c2a.metric("Atención (≤ 4 semanas)", _n_warn)
-
-                st.dataframe(_safe_df(_df_alert), use_container_width=True, hide_index=True, height=350)
-                _buf_alerta_dl = io.BytesIO()
-                _safe_df(_df_alert).to_excel(_buf_alerta_dl, index=False, engine="openpyxl")
-                st.download_button(
-                    label=f"Descargar alertas de stock ({len(_df_alert)} productos)",
-                    data=_buf_alerta_dl.getvalue(),
-                    file_name=f"alertas_stock_SAVIA_{date.today().strftime('%Y%m%d')}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    key="dl_alertas_pronostico",
-                )
-
-                # ── Webhook preventivo (una vez por sesión) ───────────────
-                if _alertas_webhook:
-                    _wh_key = f"_pron_wh_{date.today().isoformat()}"
-                    if not st.session_state.get(_wh_key):
-                        _ok_wh, _msg_wh = _disparar_webhook_plan({
-                            "tipo_alerta":   "pronóstico_preventivo",
-                            "fecha_cálculo": date.today().strftime("%d/%m/%Y"),
-                            "n_criticos":    len(_alertas_webhook),
-                            "productos":     _alertas_webhook,
-                        })
-                        st.session_state[_wh_key] = True
-                        if _ok_wh:
-                            st.info(f"Alerta preventiva enviada al webhook: {len(_alertas_webhook)} medicamento(s) bajo punto de reorden en ≤ 2 semanas.")
-                        elif _store_global().get("webhook_url", ""):
-                            st.warning(f"No se pudo enviar la alerta preventiva: {_msg_wh}")
-            else:
-                st.success("Todos los medicamentos tienen stock proyectado suficiente para las próximas 4 semanas.")
+    _t3_ab, _t3_rh = st.tabs(["Abastecimiento", "Horizonte Rodante"])
 
     # ══════════════════════════════════════════════════════════════════════
     # SUB-TAB: ABASTECIMIENTO
@@ -3903,10 +3719,17 @@ with tab3:
                     #   (R,s,S) → S = s+Q*; repone hasta S solo cuando IP ≤ s (cap Q_max)
                     s_sim  = params_sim["s"]
                     Q_sim  = params_sim["Q"]
-                    S_rsq  = params_sim["S"]   # = s + Q + U
+                    U_sim  = params_sim["U"]
 
                     # Parámetros de perecibilidad
-                    SL_sim   = int(vida_util_dias)   if vida_util_dias  > 0 else None
+                    # Prioridad: sl_dias del producto (desde FVenvimiento) → sidebar → sin restricción
+                    _sl_producto = fila_simulación.get("sl_dias", None)
+                    if _sl_producto and pd.notna(_sl_producto) and int(_sl_producto) > 0:
+                        SL_sim = int(_sl_producto)
+                    elif vida_util_dias > 0:
+                        SL_sim = int(vida_util_dias)
+                    else:
+                        SL_sim = None
                     WC_sim   = float(costo_desperdicio)
                     beta_sim = float(beta_servicio)
                     _per_sim = calcular_perecibilidad(media_sim, var_sim, Q_sim,
@@ -3916,8 +3739,10 @@ with tab3:
                     Q_max_sim  = _per_sim["Q_max"]
                     E_O_sim    = _per_sim["E_O"]
 
-                    S_rs   = s_sim + Q_star_sim   # nivel máximo (R,S)  = s + Q*
-                    S_rss  = s_sim + Q_star_sim   # nivel máximo (R,s,S) = s + Q*
+                    S_sim  = s_sim + Q_star_sim   # S = s + Q* — igual para las 3 políticas
+                    S_rsq  = S_sim
+                    S_rs   = S_sim
+                    S_rss  = S_sim
 
                     # ── Resumen de parámetros de simulación ───────────────────────
                     pc1, pc2, pc3 = st.columns(3)
@@ -3946,7 +3771,8 @@ with tab3:
 """)
                     with pc3:
                         st.markdown("**Parámetros de política y perecibilidad**")
-                        _sl_str = f"{SL_sim} días" if SL_sim else "Sin restricción"
+                        _sl_fuente = " (desde inventario)" if (_sl_producto and pd.notna(_sl_producto) and int(_sl_producto) > 0) else " (sidebar)" if SL_sim else ""
+                        _sl_str = f"{SL_sim} días{_sl_fuente}" if SL_sim else "Sin restricción"
                         st.markdown(f"""
 | Parámetro | Valor |
 |---|---|
@@ -3958,9 +3784,7 @@ with tab3:
 | Q_max (restricción SL) | **{Q_max_sim} u** |
 | Q* efectivo | **{Q_star_sim} u** |
 | E[O] esperanza caducidad | **{E_O_sim:.2f} u/pedido** |
-| S — inicio (R,s,Q) | **{S_rsq} u** |
-| S — máximo (R,S) | **{S_rs} u** |
-| S — máximo (R,s,S) | **{S_rss} u** |
+| Nivel máximo (S) | **{S_sim} u** |
 """)
                     st.divider()
 
@@ -4056,9 +3880,9 @@ with tab3:
                         st.markdown("**Evolución de existencias en bodega — últimos 90 días de simulación:**")
 
                         refs_por_politica = {
-                            "(R,s,Q)": [(s_sim, "#dc2626", "s = punto reorden"), (params_sim["SS"], "#d97706", "SS = seg.")],
-                            "(R,S)":   [(S_rs,  "#16a34a", "S = s (nivel máx.)"), (params_sim["SS"], "#d97706", "SS = seg.")],
-                            "(R,s,S)": [(s_sim, "#dc2626", "s = punto reorden"), (S_rss, "#16a34a", "S = s+Q (nivel máx.)"), (params_sim["SS"], "#d97706", "SS = seg.")],
+                            "(R,s,Q)": [(s_sim,  "#dc2626", "s = punto reorden"), (S_sim, "#16a34a", "S = nivel máx."), (params_sim["SS"], "#d97706", "SS = seg.")],
+                            "(R,S)":   [(S_sim,  "#16a34a", "S = nivel máx."),    (params_sim["SS"], "#d97706", "SS = seg.")],
+                            "(R,s,S)": [(s_sim,  "#dc2626", "s = punto reorden"), (S_sim, "#16a34a", "S = nivel máx."), (params_sim["SS"], "#d97706", "SS = seg.")],
                         }
                         titulos_estrategias = [
                             f"Política (R,s,Q) — {NOMBRES['(R,s,Q)']}",
@@ -4141,12 +3965,18 @@ with tab3:
                     pd.Timestamp(d).days_in_month
                     for d in _rh_mensual[COL_MOV_FECHA]
                 ]
+                # Calcular días del mes siguiente (igual que en Paracetamol_RH.py)
+                _ultimo_mes_ts   = pd.Timestamp(_rh_mensual[COL_MOV_FECHA].iloc[-1])
+                _mes_sig_ts      = _ultimo_mes_ts + pd.DateOffset(months=1)
+                _dias_mes_sig    = _mes_sig_ts.days_in_month
+                # Reemplazar el último elemento de _rh_dias_list por el mes siguiente
+                _rh_dias_sig     = _rh_dias_list + [_dias_mes_sig]
 
                 if len(_rh_consumo_list) < 2:
                     st.info("Se necesitan al menos 2 meses de historial para el pronóstico Bayesiano.")
                 else:
                     # ── Pronóstico Bayesiano ──────────────────────────────
-                    _bf = bayesian_forecast(_rh_consumo_list, _rh_dias_list)
+                    _bf = bayesian_forecast(_rh_consumo_list, _rh_dias_sig)
                     _lambda_d = _bf["lambda_diario_hat"]
                     _media_m  = _bf["media_mensual"]
                     _cv_val   = _bf["cv"]
@@ -4210,11 +4040,18 @@ with tab3:
                         st.markdown("#### Parámetros del Horizonte Rodante")
                         _rh_c1, _rh_c2, _rh_c3 = st.columns(3)
                         with _rh_c1:
+                            # SL del producto desde FVenvimiento → sidebar → 30 días por defecto
+                            _rh_sl_prod = _rh_row.get("sl_dias", None)
+                            _rh_sl_default = (
+                                int(_rh_sl_prod) if _rh_sl_prod and pd.notna(_rh_sl_prod) and int(_rh_sl_prod) > 1
+                                else int(vida_util_dias) if vida_util_dias > 0
+                                else 30
+                            )
                             _rh_L    = st.number_input("Vida útil L (días, slots)",
-                                                        value=max(int(vida_util_dias), 7),
-                                                        min_value=2, max_value=365, step=1,
+                                                        value=max(_rh_sl_default, 2),
+                                                        min_value=2, max_value=730, step=1,
                                                         key="rh_L",
-                                                        help="Número de slots de edad. Unidades en el slot L-1 se contabilizan como vencidas.")
+                                                        help="Pre-llenado desde FVenvimiento del inventario. Número de slots de edad — unidades en el slot L-1 se contabilizan como vencidas.")
                             _rh_tl   = st.number_input("Lead time tl (días)",
                                                         value=int(lead_time), min_value=1,
                                                         step=1, key="rh_tl")
