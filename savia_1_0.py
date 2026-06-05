@@ -1023,7 +1023,7 @@ def _store_global():
     return {
         "inv": None, "mov": None, "fuente": None, "formato_hospital": False,
         "inv_lotes": None,   # DataFrame con lotes+vencimientos del archivo Inventario estándar
-        "costo_orden": 40000, "costo_mantener": 10, "lead_time": 7, "periodo_revision": 7,
+        "costo_orden": 40000, "costo_mantener": 10, "lead_time": 1.625, "periodo_revision": 0.5,
         "nivel_servicio_z": 1.645,
         "vida_util_dias": 0, "costo_desperdicio": 0, "beta_servicio": 0.95,
         "fecha_revision": date.today(), "hora_revision": None, "responsable": "",
@@ -1709,8 +1709,8 @@ with st.sidebar:
     st.header("Parámetros configurables")
     costo_orden      = st.number_input("Costo por orden (CLP $)",           value=_s["costo_orden"],      step=1000)
     costo_mantener   = st.number_input("Costo mantener ($ / unidad / día)", value=_s["costo_mantener"],   step=1)
-    lead_time        = st.number_input("Tiempo de entrega CENABAST (días)", value=_s["lead_time"],        step=1)
-    periodo_revision  = st.number_input("Período de revisión (días)",        value=_s["periodo_revision"], step=1)
+    lead_time        = st.number_input("Tiempo de entrega CENABAST (días)", value=float(_s["lead_time"]),        step=0.5, min_value=0.5)
+    periodo_revision  = st.number_input("Período de revisión (días)",        value=float(_s["periodo_revision"]), step=0.5, min_value=0.5)
     st.divider()
     st.header("Perecibilidad")
     vida_util_dias    = st.number_input("Vida útil del producto (días)",      value=int(_s["vida_util_dias"]),    step=1,    min_value=0,
