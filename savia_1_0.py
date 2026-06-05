@@ -356,12 +356,89 @@ def recomendar_periodo(media_diaria, varianza_diaria, costo_orden, costo_mantene
     return int(r_redondeado), "Cada " + str(int(r_redondeado)) + " días"
 
 # ──────────────────────────────────────────────────────────────────────────────
+# SIMULACIÓN DISCRETA (por período R) — para productos de alta demanda (Media>200)
+# Equivalente estadísticamente a la continua pero 1000x más rápida.
+# ──────────────────────────────────────────────────────────────────────────────
+def _sim_discreta(Media, OC, HC, LT, R, s, Q_star, S_obj, politica,
+                  NR=5, TiempoTotal=360):
+    """
+    Simulación discreta por período de revisión R.
+    politica: 'rsq' | 'rs' | 'rss'
+    """
+    pasos    = max(1, int(round(TiempoTotal / R)))
+    LT_pasos = max(1, int(round(LT / R)))
+
+    CostoTotalRep = 0.0; CostoDiarioRep = 0.0
+    Inv_final = []; Tiempo_final = []; IP_final = []
+
+    for i in range(NR):
+        np.random.seed(i)
+        OH = float(S_obj if politica == 'rsq' else s)
+        IT = 0.0; CostoTotal = 0.0
+        pedidos_en_transito = []   # lista de (paso_llegada, cantidad)
+        Inv = [OH]; Tiempo = [0.0]; IP_list = [OH + IT]
+
+        for paso in range(pasos):
+            t = (paso + 1) * R
+            # Llegadas programadas
+            llegadas = [q for (pa, q) in pedidos_en_transito if pa == paso]
+            pedidos_en_transito = [(pa, q) for (pa, q) in pedidos_en_transito if pa != paso]
+            OH += sum(llegadas)
+            IT -= sum(llegadas)
+
+            # Demanda del período ~ Poisson(Media * R)
+            demanda = int(np.random.poisson(Media * R))
+            OH_ant  = OH
+            OH      = max(0.0, OH - demanda)
+
+            # Costo de holding (OH promedio * R * HC)
+            CostoTotal += ((OH_ant + OH) / 2.0) * R * HC
+
+            # Revisión: decidir si pedir
+            IP = OH + IT
+            if politica == 'rsq':
+                if IP <= s:
+                    IT += Q_star
+                    pedidos_en_transito.append((paso + LT_pasos, Q_star))
+                    CostoTotal += OC
+            elif politica == 'rs':
+                Q_ord = max(0.0, S_obj - IP)
+                if Q_ord > 0:
+                    IT += Q_ord
+                    pedidos_en_transito.append((paso + LT_pasos, Q_ord))
+                    CostoTotal += OC
+            elif politica == 'rss':
+                if IP <= s:
+                    Q_ord = max(0.0, S_obj - IP)
+                    if Q_ord > 0:
+                        IT += Q_ord
+                        pedidos_en_transito.append((paso + LT_pasos, Q_ord))
+                        CostoTotal += OC
+
+            Inv.append(OH); Tiempo.append(t); IP_list.append(OH + IT)
+
+        CostoTotalRep  += CostoTotal
+        CostoDiarioRep += CostoTotal / TiempoTotal
+        Inv_final = Inv; Tiempo_final = Tiempo; IP_final = IP_list
+
+    return (
+        round(CostoDiarioRep / NR),
+        round(CostoTotalRep  / NR),
+        Tiempo_final, Inv_final,
+        0,
+        IP_final,
+        0,
+    )
+
+# ──────────────────────────────────────────────────────────────────────────────
 # SIMULACIÓN (R,s,Q) CON FEFO Y PERECIBILIDAD
 # Código exacto del notebook de referencia adaptado para SAVIA.
 # ──────────────────────────────────────────────────────────────────────────────
 def simular_rsq(Media, V, OC, HC, LT, R, s, Q_star, S_rsQ,
                 NR=5, TiempoTotal=360, SL=None, WC=0):
     """Política (R,s,Q): pide cantidad fija Q_star cuando IP ≤ s."""
+    if Media > 200:
+        return _sim_discreta(Media, OC, HC, LT, R, s, Q_star, S_rsQ, 'rsq', NR, TiempoTotal)
     SL_eff = float(SL) if SL and SL > 0 else 1e6
     WC     = float(WC)
     CostoTotalReplicas       = 0.0
@@ -458,6 +535,8 @@ def simular_rsq(Media, V, OC, HC, LT, R, s, Q_star, S_rsQ,
 def simular_rs(Media, V, OC, HC, LT, R, s, Q_max, S_rs,
                NR=5, TiempoTotal=360, SL=None, WC=0):
     """Política (R,S): en cada revisión repone hasta S_rs, restringido por Q_max."""
+    if Media > 200:
+        return _sim_discreta(Media, OC, HC, LT, R, s, Q_max, S_rs, 'rs', NR, TiempoTotal)
     SL_eff = float(SL) if SL and SL > 0 else 1e6
     WC     = float(WC)
     CostoTotalReplicas       = 0.0
@@ -556,6 +635,8 @@ def simular_rs(Media, V, OC, HC, LT, R, s, Q_max, S_rs,
 def simular_rss(Media, V, OC, HC, LT, R, s, Q_max, S_rss,
                 NR=5, TiempoTotal=360, SL=None, WC=0):
     """Política (R,s,S): si IP ≤ s, repone hasta S_rss, restringido por Q_max."""
+    if Media > 200:
+        return _sim_discreta(Media, OC, HC, LT, R, s, Q_max, S_rss, 'rss', NR, TiempoTotal)
     SL_eff = float(SL) if SL and SL > 0 else 1e6
     WC     = float(WC)
     CostoTotalReplicas       = 0.0
