@@ -1024,6 +1024,7 @@ def _store_global():
         "inv": None, "mov": None, "fuente": None, "formato_hospital": False,
         "inv_lotes": None,   # DataFrame con lotes+vencimientos del archivo Inventario estándar
         "costo_orden": 40000, "costo_mantener": 10, "lead_time": 7, "periodo_revision": 7,
+        "nivel_servicio_z": 1.645,
         "vida_util_dias": 0, "costo_desperdicio": 0, "beta_servicio": 0.95,
         "fecha_revision": date.today(), "hora_revision": None, "responsable": "",
         "archivos":       [],   # [{nombre, size, cargado_en, responsable, preview, n_productos, mov, inv_extra, inv_directo}]
@@ -1034,7 +1035,7 @@ def _store_global():
 
 
 def _guardar_params(fecha, hora, resp, c_orden, c_mant, lt, pr,
-                    vida_util=0, c_desp=0, beta=0.95):
+                    vida_util=0, c_desp=0, beta=0.95, z=1.645):
     store = _store_global()
     store["fecha_revision"]    = fecha
     store["hora_revision"]     = hora
@@ -1046,6 +1047,7 @@ def _guardar_params(fecha, hora, resp, c_orden, c_mant, lt, pr,
     store["vida_util_dias"]    = vida_util
     store["costo_desperdicio"] = c_desp
     store["beta_servicio"]     = beta
+    store["nivel_servicio_z"]  = z
 
 
 def _excel_mov_actualizado(nuevos_movs: list) -> tuple:
@@ -1717,11 +1719,18 @@ with st.sidebar:
     beta_servicio     = st.number_input("Nivel serv. perecib. (0–1)",        value=float(_s["beta_servicio"]),  step=0.01,
                                         min_value=0.50, max_value=0.999,
                                         help="Probabilidad de que Q* se consuma antes de vencer (para calcular Q_max).")
-    Z = 1.881  # nivel de servicio 97%
+    st.divider()
+    st.header("Nivel de servicio")
+    nivel_servicio_z  = st.number_input("Z — nivel de servicio",
+                                        value=float(_s.get("nivel_servicio_z", 1.645)),
+                                        step=0.001, min_value=0.5, max_value=3.5,
+                                        help="Valor Z de la distribución normal. Ejemplos: 1.645 = 95%, 1.881 = 97%, 2.054 = 98%, 2.326 = 99%.")
+    Z = nivel_servicio_z
 
 _guardar_params(fecha_revision, hora_revision, responsable,
                 costo_orden, costo_mantener, lead_time, periodo_revision,
-                vida_util=vida_util_dias, c_desp=costo_desperdicio, beta=beta_servicio)
+                vida_util=vida_util_dias, c_desp=costo_desperdicio, beta=beta_servicio,
+                z=nivel_servicio_z)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
