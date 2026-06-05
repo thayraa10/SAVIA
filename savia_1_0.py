@@ -3956,8 +3956,8 @@ with tab3:
             "<b>Pronóstico Bayesiano Gamma-Poisson</b> — Estima la tasa de demanda diaria (λ) usando un prior "
             "Gamma conjugado sobre el historial de consumo mensual. El intervalo de credibilidad del 90 % "
             "muestra la incertidumbre del pronóstico. "
-            "La sección <b>Horizonte Rodante (MIP)</b> optimiza las decisiones de pedido día a día y "
-            "requiere <b>Gurobi</b> instalado y licenciado (disponible en entorno local)."
+            "La sección <b>Horizonte Rodante (MIP)</b> optimiza las decisiones de pedido día a día "
+            "resuelto con PuLP/CBC."
         ), unsafe_allow_html=True)
 
         if not tiene_movimientos:
@@ -4064,9 +4064,15 @@ with tab3:
                     )
 
                     st.markdown("#### Parámetros del Horizonte Rodante")
-                    st.caption("Ajusta los parámetros y presiona **Ejecutar** — la página no recarga hasta ese momento.")
+                    st.caption("Selecciona el medicamento, ajusta los parámetros y presiona **Ejecutar** — la página no recarga hasta ese momento.")
 
                     with st.form("form_rh"):
+                        _rh_med_form = st.selectbox(
+                            "Medicamento a simular:",
+                            _rh_meds,
+                            index=_rh_meds.index(_rh_med) if _rh_med in _rh_meds else 0,
+                            key="rh_med_form",
+                        )
                         _rh_c1, _rh_c2, _rh_c3 = st.columns(3)
                         with _rh_c1:
                             _rh_L    = st.number_input("Vida útil L (días, slots)",
@@ -4097,6 +4103,26 @@ with tab3:
                         st.session_state.pop("_rh_cache", None)
 
                     if _btn_rh:
+                        # Recalcular lambda con el medicamento elegido en el formulario
+                        _rh_med = _rh_med_form
+                        _rh_row = resumen[resumen[COL_NOMBRE] == _rh_med].iloc[0]
+                        _rh_mov2 = datos_movimientos[
+                            datos_movimientos[COL_MOV_CODIGO] == str(_rh_row[COL_CODIGO])
+                        ].copy()
+                        _rh_mov2[COL_MOV_FECHA]    = pd.to_datetime(_rh_mov2[COL_MOV_FECHA], dayfirst=True, errors="coerce")
+                        _rh_mov2[COL_MOV_CANTIDAD] = pd.to_numeric(_rh_mov2[COL_MOV_CANTIDAD], errors="coerce").fillna(0)
+                        _rh_mensual2 = (
+                            _rh_mov2.dropna(subset=[COL_MOV_FECHA])
+                            .set_index(COL_MOV_FECHA)
+                            .resample("MS")[COL_MOV_CANTIDAD].sum()
+                            .reset_index()
+                        )
+                        _cons2   = _rh_mensual2[COL_MOV_CANTIDAD].astype(int).tolist()
+                        _dias2   = [pd.Timestamp(d).days_in_month for d in _rh_mensual2[COL_MOV_FECHA]]
+                        _dias2s  = _dias2 + [( pd.Timestamp(_rh_mensual2[COL_MOV_FECHA].iloc[-1]) + pd.DateOffset(months=1)).days_in_month] if _dias2 else [30]
+                        _bf2     = bayesian_forecast(_cons2, _dias2s)
+                        _lambda_d = _bf2["lambda_diario_hat"]
+
                         import calendar as _cal
                         from datetime import date as _date2
                         _hoy2          = _date2.today()
