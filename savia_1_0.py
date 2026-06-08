@@ -306,13 +306,13 @@ def agregar_lote(batches, cantidad, t_arribo, sl_dias):
 def calcular_politicas(Media, V, OC, HC, LT, R, Z=1.645):
     V      = max(V, 0.001)
     sigma  = V ** 0.5
-    R_     = max(R, 1)
-    LT_ef  = LT - (math.trunc(LT / R_) * R_)
+    R_     = max(R, 0.001)                                          # sin clamp a 1
+    LT_ef  = min(LT, LT - (math.trunc(LT / R_) * R_))             # fórmula exacta del notebook
     U      = math.ceil((Media / (2 * V)) + ((V * R_) / 2))
     s      = math.ceil((Media * (LT_ef + R_)) + Z * sigma * ((LT_ef + R_) ** 0.5))
     Q      = math.ceil(((2 * OC * Media) / max(HC, 0.001)) ** 0.5)
     S      = s + Q + U
-    SS     = max(0, math.ceil((Media * R_) + (Z * sigma * ((LT_ef + R_) ** 0.5) - U)))
+    SS     = math.ceil((Media * R_) + (Z * sigma * ((LT_ef + R_) ** 0.5) - U))  # sin max(0,...)
     return {"s": s, "Q": Q, "S": S, "SS": SS, "U": U, "LT_ef": round(LT_ef, 4)}
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -2050,10 +2050,10 @@ if tiene_movimientos:
             return pd.Series({"media_diaria": 0.0, "var_diaria": 0.0})
 
         media     = math.ceil(lambda_estable)
-        var_batch = float(pd.Series(batch_vals).var())
-        if np.isnan(var_batch) or var_batch <= 0:
-            var_batch = float(media)
-        V = min(float(media), var_batch)
+        var_diaria = float(pd.Series(lambdas).var())   # var de tasas diarias, igual que notebook
+        if np.isnan(var_diaria) or var_diaria <= 0:
+            var_diaria = float(media)
+        V = min(float(media), var_diaria)
 
         return pd.Series({"media_diaria": float(media), "var_diaria": V})
 
@@ -3877,9 +3877,9 @@ with tab3:
                         st.markdown(f"""
 | Parámetro | Valor |
 |---|---|
-| Tiempo de entrega (LT) | **{int(lead_time)} días** |
+| Tiempo de entrega (LT) | **{round(lead_time, 2)} días** |
 | LT efectivo (LT_ef) | **{round(params_sim['LT_ef'], 2)} días** |
-| Período de revisión (R) | **{int(periodo_revision)} días** |
+| Período de revisión (R) | **{round(periodo_revision, 2)} días** |
 | Nivel de servicio (Z) | **{Z} (~97 %)** |
 | Costo por orden (OC) | **${_m(costo_orden)} CLP** |
 | Costo mantener (HC) | **${_m(costo_mantener)} CLP/u/día** |
