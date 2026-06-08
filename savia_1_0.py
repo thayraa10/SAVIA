@@ -340,6 +340,30 @@ def calcular_perecibilidad(Media, V, Q, SL, SL_eff=None, beta=0.95):
     }
 
 # ──────────────────────────────────────────────────────────────────────────────
+# COSTOS ANALÍTICOS — fórmulas exactas del notebook "Calculadora de Políticas"
+# CT1 (R,s,Q) / CT2 (R,S) / CT3 (R,s,S)  × 360 días
+# ──────────────────────────────────────────────────────────────────────────────
+def calcular_costos_analiticos(D, V, OC, HC, LT, R, Z, s, Q, S, U):
+    """Costo anual teórico de cada política según "Calculadora de Políticas.ipynb"."""
+    V  = max(V, 0.001)
+    Q  = max(Q, 1)
+    R  = max(R, 0.001)
+    CT1 = 360 * math.ceil(
+        OC * (D / Q) + HC * (Q / 2) +
+        HC * (D * R + Z * ((R + LT) ** 0.5) * (V ** 0.5) - U)
+    )
+    CT2 = 360 * math.ceil(
+        OC / R + HC * (D * R / 2) +
+        HC * Z * ((R + LT) ** 0.5) * (V ** 0.5)
+    )
+    denom = max(S - s + U, 1)
+    CT3 = 360 * math.ceil(
+        OC * (D / denom) + HC * (denom / 2) +
+        HC * (D * R + Z * ((R + LT) ** 0.5) * (V ** 0.5) - U)
+    )
+    return {"CT1": CT1, "CT2": CT2, "CT3": CT3}
+
+# ──────────────────────────────────────────────────────────────────────────────
 # RECOMENDAR PERÍODO DE REVISIÓN
 # ──────────────────────────────────────────────────────────────────────────────
 def recomendar_periodo(media_diaria, varianza_diaria, costo_orden, costo_mantener, lead_time):
@@ -373,7 +397,7 @@ def _sim_discreta(Media, OC, HC, LT, R, s, Q_star, S_obj, politica,
 
     for i in range(NR):
         np.random.seed(i)
-        OH = float(S_obj if politica == 'rsq' else s)
+        OH = float(S_obj)   # todas las políticas arrancan en su nivel máximo (notebook: OH_init=S)
         IT = 0.0; CostoTotal = 0.0
         pedidos_en_transito = []   # lista de (paso_llegada, cantidad)
         Inv = [OH]; Tiempo = [0.0]; IP_list = [OH + IT]
@@ -431,25 +455,37 @@ def _sim_discreta(Media, OC, HC, LT, R, s, Q_star, S_obj, politica,
     )
 
 # ──────────────────────────────────────────────────────────────────────────────
-# SIMULACIÓN (R,s,Q) CON FEFO Y PERECIBILIDAD
-# Código exacto del notebook de referencia adaptado para SAVIA.
+# SIMULACIÓN UNIFICADA CON FEFO Y PERECIBILIDAD
+# Función única equivalente al notebook Politicas_Inventario_Paracetamol.
+#   Q_fijo=Q_star, usar_s=True,  S_obj=None    → política (R,s,Q)
+#   Q_fijo=None,   usar_s=False, S_obj=nivel_S  → política (R,S)
+#   Q_fijo=None,   usar_s=True,  S_obj=nivel_S  → política (R,s,S)
+# Retorna: (cd, ct, Tiempo, OH, 0, IP, vencidas)
 # ──────────────────────────────────────────────────────────────────────────────
-def simular_rsq(Media, V, OC, HC, LT, R, s, Q_star, S_rsQ,
-                NR=5, TiempoTotal=360, SL=None, WC=0):
-    """Política (R,s,Q): pide cantidad fija Q_star cuando IP ≤ s."""
-    if Media > 200:
-        return _sim_discreta(Media, OC, HC, LT, R, s, Q_star, S_rsQ, 'rsq', NR, TiempoTotal)
+def simular(OH_init, Q_fijo, usar_s, S_obj,
+            Media, V, OC, HC, LT, R, s, Q_max,
+            NR=5, TiempoTotal=360, SL=None, WC=0):
+    # _sim_discreta es una aproximación periódica sin FEFO; solo se activa para demandas
+    # extremadamente altas donde la simulación continua sería prohibitiva en tiempo.
+    # Para demandas típicas de farmacia (incluso Paracetamol ~6000 u/día) se usa
+    # siempre la simulación continua FEFO, igual que el notebook de referencia.
+    if Media > 1_000_000:
+        pol = 'rsq' if Q_fijo is not None else ('rs' if not usar_s else 'rss')
+        _Q  = Q_fijo if Q_fijo is not None else Q_max
+        _S  = S_obj  if S_obj  is not None else OH_init
+        return _sim_discreta(Media, OC, HC, LT, R, s, _Q, _S, pol, NR, TiempoTotal)
+
     SL_eff = float(SL) if SL and SL > 0 else 1e6
     WC     = float(WC)
-    CostoTotalReplicas       = 0.0
-    CostoDiarioReplicas      = 0.0
-    VencimientoTotalReplicas = 0
-    Inventario_final = []; Tiempo_final = []; IP_final = []
+    CostoDiarioReplica = 0.0
+    CostoTotalReplica  = 0.0
+    VencimientoTotal   = 0
+    Tiempo_out = Inventario_out = OH_out = None
 
     for i in range(NR):
         np.random.seed(i)
         TNow       = 0.0
-        batches    = [[float(S_rsQ), TNow + SL_eff]]
+        batches    = [[float(OH_init), TNow + SL_eff]]
         IT         = 0.0
         CostoTotal = 0.0
         Tiempo_Ant = 0.0
@@ -459,7 +495,6 @@ def simular_rsq(Media, V, OC, HC, LT, R, s, Q_star, S_rsQ,
         Evento_Revisar = float(R)
         T_orden = [float('inf')]
         Pedidos = []
-
         Inventario   = [oh_total(batches) + IT]
         InventarioOH = [oh_total(batches)]
         Tiempo       = [TNow]
@@ -488,210 +523,21 @@ def simular_rsq(Media, V, OC, HC, LT, R, s, Q_star, S_rsQ,
                 CostoTotal += OH * (TNow - Tiempo_Ant) * HC
                 Tiempo_Ant  = TNow
                 IP = OH + IT
-                if IP <= s:
-                    IT += Q_star
-                    Pedidos.append(Q_star)
-                    T_orden.append(TNow + LT)
-                    T_orden.sort()
-                    CostoTotal += OC
-                Evento_Revisar = TNow + R
 
-            else:
-                TNow = T_Llegada
-                batches, vencidas = purgar_vencidos(batches, TNow)
-                UnidadesVencidas += vencidas
-                CostoTotal += vencidas * WC
-                OH = oh_total(batches)
-                CostoTotal += OH * (TNow - Tiempo_Ant) * HC
-                Tiempo_Ant  = TNow
-                cantidad_llegada = Pedidos.pop(0)
-                T_orden.pop(0)
-                batches = agregar_lote(batches, cantidad_llegada, TNow, SL_eff)
-                IT -= cantidad_llegada
-
-            Inventario.append(oh_total(batches) + IT)
-            InventarioOH.append(oh_total(batches))
-            Tiempo.append(TNow)
-
-        CostoTotalReplicas       += CostoTotal
-        CostoDiarioReplicas      += CostoTotal / TiempoTotal
-        VencimientoTotalReplicas += UnidadesVencidas
-        Inventario_final = InventarioOH
-        Tiempo_final     = Tiempo
-        IP_final         = Inventario
-
-    return (
-        round(CostoDiarioReplicas  / NR),
-        round(CostoTotalReplicas   / NR),
-        Tiempo_final, Inventario_final,
-        0,
-        IP_final,
-        round(VencimientoTotalReplicas / NR),
-    )
-
-# ──────────────────────────────────────────────────────────────────────────────
-# SIMULACIÓN (R,S) CON FEFO Y PERECIBILIDAD
-# ──────────────────────────────────────────────────────────────────────────────
-def simular_rs(Media, V, OC, HC, LT, R, s, Q_max, S_rs,
-               NR=5, TiempoTotal=360, SL=None, WC=0):
-    """Política (R,S): en cada revisión repone hasta S_rs, restringido por Q_max."""
-    if Media > 200:
-        return _sim_discreta(Media, OC, HC, LT, R, s, Q_max, S_rs, 'rs', NR, TiempoTotal)
-    SL_eff = float(SL) if SL and SL > 0 else 1e6
-    WC     = float(WC)
-    CostoTotalReplicas       = 0.0
-    CostoDiarioReplicas      = 0.0
-    VencimientoTotalReplicas = 0
-    Inventario_final = []; Tiempo_final = []; IP_final = []
-
-    for i in range(NR):
-        np.random.seed(i)
-        TNow       = 0.0
-        batches    = [[float(S_rs), TNow + SL_eff]]
-        IT         = 0.0
-        CostoTotal = 0.0
-        Tiempo_Ant = 0.0
-        UnidadesVencidas = 0
-
-        Evento_Demanda = (-1 / Media) * math.log(np.random.random())
-        Evento_Revisar = float(R)
-        T_orden = [float('inf')]
-        Pedidos = []
-
-        Inventario   = [oh_total(batches) + IT]
-        InventarioOH = [oh_total(batches)]
-        Tiempo       = [TNow]
-
-        while TNow <= TiempoTotal:
-            T_Llegada = T_orden[0] if T_orden else float('inf')
-
-            if Evento_Demanda < min(Evento_Revisar, T_Llegada):
-                TNow = Evento_Demanda
-                batches, vencidas = purgar_vencidos(batches, TNow)
-                UnidadesVencidas += vencidas
-                CostoTotal += vencidas * WC
-                OH = oh_total(batches)
-                CostoTotal += OH * (TNow - Tiempo_Ant) * HC
-                Tiempo_Ant  = TNow
-                if OH > 0:
-                    batches = consumir_demanda(batches, 1)
-                Evento_Demanda = TNow + (-1 / Media) * math.log(np.random.random())
-
-            elif Evento_Revisar < T_Llegada:
-                TNow = Evento_Revisar
-                batches, vencidas = purgar_vencidos(batches, TNow)
-                UnidadesVencidas += vencidas
-                CostoTotal += vencidas * WC
-                OH = oh_total(batches)
-                CostoTotal += OH * (TNow - Tiempo_Ant) * HC
-                Tiempo_Ant  = TNow
-                IP = OH + IT
-                Q_orden = max(0, S_rs - IP)
-                Q_orden = min(Q_orden, Q_max)
-                if Q_orden > 0:
-                    IT += Q_orden
-                    Pedidos.append(Q_orden)
-                    T_orden.append(TNow + LT)
-                    T_orden.sort()
-                    CostoTotal += OC
-                Evento_Revisar = TNow + R
-
-            else:
-                TNow = T_Llegada
-                batches, vencidas = purgar_vencidos(batches, TNow)
-                UnidadesVencidas += vencidas
-                CostoTotal += vencidas * WC
-                OH = oh_total(batches)
-                CostoTotal += OH * (TNow - Tiempo_Ant) * HC
-                Tiempo_Ant  = TNow
-                cantidad_llegada = Pedidos.pop(0)
-                T_orden.pop(0)
-                batches = agregar_lote(batches, cantidad_llegada, TNow, SL_eff)
-                IT -= cantidad_llegada
-
-            Inventario.append(oh_total(batches) + IT)
-            InventarioOH.append(oh_total(batches))
-            Tiempo.append(TNow)
-
-        CostoTotalReplicas       += CostoTotal
-        CostoDiarioReplicas      += CostoTotal / TiempoTotal
-        VencimientoTotalReplicas += UnidadesVencidas
-        Inventario_final = InventarioOH
-        Tiempo_final     = Tiempo
-        IP_final         = Inventario
-
-    return (
-        round(CostoDiarioReplicas  / NR),
-        round(CostoTotalReplicas   / NR),
-        Tiempo_final, Inventario_final,
-        0,
-        IP_final,
-        round(VencimientoTotalReplicas / NR),
-    )
-
-# ──────────────────────────────────────────────────────────────────────────────
-# SIMULACIÓN (R,s,S) CON FEFO Y PERECIBILIDAD
-# ──────────────────────────────────────────────────────────────────────────────
-def simular_rss(Media, V, OC, HC, LT, R, s, Q_max, S_rss,
-                NR=5, TiempoTotal=360, SL=None, WC=0):
-    """Política (R,s,S): si IP ≤ s, repone hasta S_rss, restringido por Q_max."""
-    if Media > 200:
-        return _sim_discreta(Media, OC, HC, LT, R, s, Q_max, S_rss, 'rss', NR, TiempoTotal)
-    SL_eff = float(SL) if SL and SL > 0 else 1e6
-    WC     = float(WC)
-    CostoTotalReplicas       = 0.0
-    CostoDiarioReplicas      = 0.0
-    VencimientoTotalReplicas = 0
-    Inventario_final = []; Tiempo_final = []; IP_final = []
-
-    for i in range(NR):
-        np.random.seed(i)
-        TNow       = 0.0
-        batches    = [[float(S_rss), TNow + SL_eff]]
-        IT         = 0.0
-        CostoTotal = 0.0
-        Tiempo_Ant = 0.0
-        UnidadesVencidas = 0
-
-        Evento_Demanda = (-1 / Media) * math.log(np.random.random())
-        Evento_Revisar = float(R)
-        T_orden = [float('inf')]
-        Pedidos = []
-
-        Inventario   = [oh_total(batches) + IT]
-        InventarioOH = [oh_total(batches)]
-        Tiempo       = [TNow]
-
-        while TNow <= TiempoTotal:
-            T_Llegada = T_orden[0] if T_orden else float('inf')
-
-            if Evento_Demanda < min(Evento_Revisar, T_Llegada):
-                TNow = Evento_Demanda
-                batches, vencidas = purgar_vencidos(batches, TNow)
-                UnidadesVencidas += vencidas
-                CostoTotal += vencidas * WC
-                OH = oh_total(batches)
-                CostoTotal += OH * (TNow - Tiempo_Ant) * HC
-                Tiempo_Ant  = TNow
-                if OH > 0:
-                    batches = consumir_demanda(batches, 1)
-                Evento_Demanda = TNow + (-1 / Media) * math.log(np.random.random())
-
-            elif Evento_Revisar < T_Llegada:
-                TNow = Evento_Revisar
-                batches, vencidas = purgar_vencidos(batches, TNow)
-                UnidadesVencidas += vencidas
-                CostoTotal += vencidas * WC
-                OH = oh_total(batches)
-                CostoTotal += OH * (TNow - Tiempo_Ant) * HC
-                Tiempo_Ant  = TNow
-                IP = OH + IT
-                if IP <= s:
-                    Q_orden = max(0, S_rss - IP)
-                    Q_orden = min(Q_orden, Q_max)
-                    if Q_orden > 0:
-                        IT += Q_orden
-                        Pedidos.append(Q_orden)
+                if usar_s:
+                    if IP <= s:
+                        lote = Q_fijo if Q_fijo is not None else min(max(0, S_obj - IP), Q_max)
+                        if lote > 0:
+                            IT += lote
+                            Pedidos.append(lote)
+                            T_orden.append(TNow + LT)
+                            T_orden.sort()
+                            CostoTotal += OC
+                else:
+                    lote = min(max(0, S_obj - IP), Q_max)
+                    if lote > 0:
+                        IT += lote
+                        Pedidos.append(lote)
                         T_orden.append(TNow + LT)
                         T_orden.sort()
                         CostoTotal += OC
@@ -705,29 +551,27 @@ def simular_rss(Media, V, OC, HC, LT, R, s, Q_max, S_rss,
                 OH = oh_total(batches)
                 CostoTotal += OH * (TNow - Tiempo_Ant) * HC
                 Tiempo_Ant  = TNow
-                cantidad_llegada = Pedidos.pop(0)
+                cantidad = Pedidos.pop(0)
                 T_orden.pop(0)
-                batches = agregar_lote(batches, cantidad_llegada, TNow, SL_eff)
-                IT -= cantidad_llegada
+                batches = agregar_lote(batches, cantidad, TNow, SL_eff)
+                IT -= cantidad
 
             Inventario.append(oh_total(batches) + IT)
             InventarioOH.append(oh_total(batches))
             Tiempo.append(TNow)
 
-        CostoTotalReplicas       += CostoTotal
-        CostoDiarioReplicas      += CostoTotal / TiempoTotal
-        VencimientoTotalReplicas += UnidadesVencidas
-        Inventario_final = InventarioOH
-        Tiempo_final     = Tiempo
-        IP_final         = Inventario
+        CostoDiarioReplica += CostoTotal / TiempoTotal
+        CostoTotalReplica  += CostoTotal
+        VencimientoTotal   += UnidadesVencidas
+        Tiempo_out = Tiempo; Inventario_out = Inventario; OH_out = InventarioOH
 
     return (
-        round(CostoDiarioReplicas  / NR),
-        round(CostoTotalReplicas   / NR),
-        Tiempo_final, Inventario_final,
+        round(CostoDiarioReplica / NR),
+        round(CostoTotalReplica  / NR),
+        Tiempo_out, OH_out,
         0,
-        IP_final,
-        round(VencimientoTotalReplicas / NR),
+        Inventario_out,
+        round(VencimientoTotal   / NR),
     )
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1888,9 +1732,9 @@ if datos_inv_lotes is not None and len(datos_inv_lotes) > 0:
 # ──────────────────────────────────────────────────────────────────────────────
 usadas_inv = set()  # rastrea qué columnas ya fueron asignadas
 COL_CODIGO      = encontrar_columna(datos_inventario, ["codigo", "sku", "clave", "articulo", "referencia"],             usadas_inv)
-COL_NOMBRE      = encontrar_columna(datos_inventario, ["nombre", "medicamento", "fármaco", "descripción"],              usadas_inv)
+COL_NOMBRE      = encontrar_columna(datos_inventario, ["nombre", "material", "medicamento", "fármaco", "descripción"],              usadas_inv)
 COL_LOTE        = encontrar_columna(datos_inventario, ["lote", "batch", "partida"],                                     usadas_inv)
-COL_VENCIMIENTO = encontrar_columna(datos_inventario, ["vencimiento", "vence", "caducidad", "expiry", "fec venc", "vto"], usadas_inv)
+COL_VENCIMIENTO = encontrar_columna(datos_inventario, ["vencimiento", "vence", "caducidad", "expiry", "fec venc", "vto", "fvenv"], usadas_inv)
 COL_STOCK       = encontrar_columna(datos_inventario, ["stock", "existencia", "disponible", "inventario", "saldo"],     usadas_inv)
 COL_COSTO       = encontrar_columna(datos_inventario, ["costo", "cost", "precio compra", "valor compra", "precio"],     usadas_inv)
 COL_MARCA       = encontrar_columna(datos_inventario, ["marca", "laboratorio", "fabricante"],                           usadas_inv)
@@ -2041,9 +1885,25 @@ if tiene_movimientos:
         if len(dias_entre) == 0:
             dias_entre = np.array([30.0])
 
-        # lambda_i = demanda_i / días_desde_pedido_anterior  (igual que el notebook)
-        k       = min(len(dias_entre), n - 1)
-        lambdas = batch_vals[1: k + 1] / dias_entre[:k]
+        # Detectar datos mensuales (fechas en el día 1 del mes, gaps ~28-31 días).
+        # En ese caso se aplica la misma lógica del notebook:
+        #   lambda_i = demanda_mes_i / días_calendario_del_mes_i  (incluye TODOS los meses)
+        # Para datos no mensuales se mantiene el enfoque de tasa inter-llegada.
+        _es_mensual = (
+            fechas.notna().all()
+            and (fechas.dt.day == 1).all()
+            and len(dias_entre) > 0
+            and float(dias_entre.mean()) <= 32
+        )
+        if _es_mensual:
+            _dias_mes = fechas.apply(
+                lambda d: float(calendar.monthrange(d.year, d.month)[1])
+            ).values
+            lambdas = batch_vals / _dias_mes   # incluye el primer mes (igual que notebook)
+        else:
+            # lambda_i = demanda_i / días_desde_pedido_anterior
+            k       = min(len(dias_entre), n - 1)
+            lambdas = batch_vals[1: k + 1] / dias_entre[:k]
 
         lambda_estable = lambdas.mean()
         if lambda_estable <= 0 or np.isnan(lambda_estable):
@@ -3837,15 +3697,8 @@ with tab3:
                     Q_sim  = params_sim["Q"]
                     U_sim  = params_sim["U"]
 
-                    # Parámetros de perecibilidad
-                    # Prioridad: sl_dias del producto (desde FVenvimiento) → sidebar → sin restricción
-                    _sl_producto = fila_simulación.get("sl_dias", None)
-                    if _sl_producto and pd.notna(_sl_producto) and int(_sl_producto) > 0:
-                        SL_sim = int(_sl_producto)
-                    elif vida_util_dias > 0:
-                        SL_sim = int(vida_util_dias)
-                    else:
-                        SL_sim = None
+                    # Parámetros de perecibilidad — solo desde sidebar (Programa de compras no tiene FVenvimiento)
+                    SL_sim = int(vida_util_dias) if vida_util_dias > 0 else None
                     WC_sim   = float(costo_desperdicio)
                     beta_sim = float(beta_servicio)
                     _per_sim = calcular_perecibilidad(media_sim, var_sim, Q_sim,
@@ -3855,10 +3708,13 @@ with tab3:
                     Q_max_sim  = _per_sim["Q_max"]
                     E_O_sim    = _per_sim["E_O"]
 
-                    S_sim  = s_sim + Q_star_sim   # S = s + Q* — igual para las 3 políticas
-                    S_rsq  = S_sim
-                    S_rs   = S_sim
-                    S_rss  = S_sim
+                    # Niveles iniciales por política — fórmulas exactas del notebook:
+                    #   (R,s,Q)  cell_005: OH_init = s + Q* + U
+                    #   (R,S)    cell_007: OH_init = S_obj = s + Q*
+                    #   (R,s,S)  cell_009: OH_init = S_obj = s + Q*
+                    S_rsq  = s_sim + Q_star_sim + U_sim   # inventario inicial (R,s,Q)
+                    S_rs   = s_sim + Q_star_sim            # nivel máximo (R,S)
+                    S_rss  = s_sim + Q_star_sim            # nivel máximo (R,s,S)
 
                     # ── Resumen de parámetros de simulación ───────────────────────
                     pc1, pc2, pc3 = st.columns(3)
@@ -3900,8 +3756,30 @@ with tab3:
 | Q_max (restricción SL) | **{Q_max_sim} u** |
 | Q* efectivo | **{Q_star_sim} u** |
 | E[O] esperanza caducidad | **{E_O_sim:.2f} u/pedido** |
-| Nivel máximo (S) | **{S_sim} u** |
+| Inv. inicial (R,s,Q) | **{S_rsq} u** |
+| Nivel máx. (R,S) y (R,s,S) | **{S_rs} u** |
 """)
+                    st.divider()
+
+                    # ── Costos analíticos (fórmulas cerradas del notebook) ─────────
+                    _ct_an = calcular_costos_analiticos(
+                        media_sim, var_sim,
+                        costo_orden, costo_mantener,
+                        params_sim["LT_ef"], periodo_revision, Z,
+                        s_sim, Q_sim, S_rs, U_sim,
+                    )
+                    st.markdown("**Costos teóricos anuales — fórmulas analíticas:**")
+                    _ca1, _ca2, _ca3 = st.columns(3)
+                    _ca1.metric("(R,s,Q) — Analítico", f"${_m(_ct_an['CT1'])} CLP",
+                                help="CT₁ = 360 × ⌈OC·(D/Q) + HC·(Q/2) + HC·(D·R + Z·√(R+LT)·√V − U)⌉")
+                    _ca2.metric("(R,S) — Analítico",   f"${_m(_ct_an['CT2'])} CLP",
+                                help="CT₂ = 360 × ⌈OC/R + HC·(D·R/2) + HC·Z·√(R+LT)·√V⌉")
+                    _ca3.metric("(R,s,S) — Analítico", f"${_m(_ct_an['CT3'])} CLP",
+                                help="CT₃ = 360 × ⌈OC·(D/(S−s+U)) + HC·((S−s+U)/2) + HC·(D·R + Z·√(R+LT)·√V − U)⌉")
+                    st.caption(
+                        "Los costos analíticos son estimados teóricos (fórmula cerrada). "
+                        "Los costos simulados (abajo) incorporan variabilidad estocástica y perecibilidad."
+                    )
                     st.divider()
 
                     # Limpiar resultados si el usuario cambia de medicamento
@@ -3924,19 +3802,23 @@ with tab3:
                         _n_dias = max(periodo_revision * 4,
                                       min(max(float(periodo_revision), params_sim["Q"] / max(media_sim, 0.001)) * 15, 360.0))
                         _sl_arg = SL_sim if SL_sim else None
+                        # El notebook usa LT_ef (= LT mod R) en el simulador, no el LT crudo.
+                        # Esto hace que los pedidos lleguen en el tiempo efectivo dentro del
+                        # ciclo de revisión, replicando exactamente la lógica del notebook.
+                        LT_sim = params_sim["LT_ef"]
                         with st.spinner("Ejecutando simulaciónes..."):
-                            r_rsq = simular_rsq(media_sim, var_sim, costo_orden, costo_mantener,
-                                                lead_time, periodo_revision,
-                                                s_sim, Q_star_sim, S_rsq,
-                                                SL=_sl_arg, WC=WC_sim)
-                            r_rs  = simular_rs( media_sim, var_sim, costo_orden, costo_mantener,
-                                                lead_time, periodo_revision,
-                                                s_sim, Q_max_sim, S_rs,
-                                                SL=_sl_arg, WC=WC_sim)
-                            r_rss = simular_rss(media_sim, var_sim, costo_orden, costo_mantener,
-                                                lead_time, periodo_revision,
-                                                s_sim, Q_max_sim, S_rss,
-                                                SL=_sl_arg, WC=WC_sim)
+                            r_rsq = simular(S_rsq, Q_star_sim, True,  None,
+                                            media_sim, var_sim, costo_orden, costo_mantener,
+                                            LT_sim, periodo_revision, s_sim, Q_max_sim,
+                                            SL=_sl_arg, WC=WC_sim)
+                            r_rs  = simular(S_rs,  None,        False, S_rs,
+                                            media_sim, var_sim, costo_orden, costo_mantener,
+                                            LT_sim, periodo_revision, s_sim, Q_max_sim,
+                                            SL=_sl_arg, WC=WC_sim)
+                            r_rss = simular(S_rss, None,        True,  S_rss,
+                                            media_sim, var_sim, costo_orden, costo_mantener,
+                                            LT_sim, periodo_revision, s_sim, Q_max_sim,
+                                            SL=_sl_arg, WC=WC_sim)
                         st.session_state["_sim_med"]   = med_sim
                         st.session_state["_sim_cache"] = {
                             "rsq": (_recortar_sim(r_rsq, _n_dias), r_rsq[0], r_rsq[1], r_rsq[4], r_rsq[6]),
@@ -3996,9 +3878,9 @@ with tab3:
                         st.markdown("**Evolución de existencias en bodega — últimos 90 días de simulación:**")
 
                         refs_por_politica = {
-                            "(R,s,Q)": [(s_sim,  "#dc2626", "s = punto reorden"), (S_sim, "#16a34a", "S = nivel máx."), (params_sim["SS"], "#d97706", "SS = seg.")],
-                            "(R,S)":   [(S_sim,  "#16a34a", "S = nivel máx."),    (params_sim["SS"], "#d97706", "SS = seg.")],
-                            "(R,s,S)": [(s_sim,  "#dc2626", "s = punto reorden"), (S_sim, "#16a34a", "S = nivel máx."), (params_sim["SS"], "#d97706", "SS = seg.")],
+                            "(R,s,Q)": [(s_sim,  "#dc2626", "s = punto reorden"), (S_rsq, "#16a34a", "S = s+Q*+U"), (params_sim["SS"], "#d97706", "SS = seg.")],
+                            "(R,S)":   [(S_rs,   "#16a34a", "S = s+Q* (nivel máx.)"),    (params_sim["SS"], "#d97706", "SS = seg.")],
+                            "(R,s,S)": [(s_sim,  "#dc2626", "s = punto reorden"), (S_rss, "#16a34a", "S = s+Q* (nivel máx.)"), (params_sim["SS"], "#d97706", "SS = seg.")],
                         }
                         titulos_estrategias = [
                             f"Política (R,s,Q) — {NOMBRES['(R,s,Q)']}",
@@ -4145,13 +4027,8 @@ with tab3:
                     st.divider()
 
                     # ── Horizonte Rodante MIP (PuLP/CBC, sin licencia) ───
-                    # SL del producto desde FVenvimiento → sidebar → 30 días por defecto
-                    _rh_sl_prod = _rh_row.get("sl_dias", None)
-                    _rh_sl_default = (
-                        int(_rh_sl_prod) if _rh_sl_prod and pd.notna(_rh_sl_prod) and int(_rh_sl_prod) > 1
-                        else int(vida_util_dias) if vida_util_dias > 0
-                        else 30
-                    )
+                    # SL solo desde sidebar (Programa de compras no tiene FVenvimiento)
+                    _rh_sl_default = int(vida_util_dias) if vida_util_dias > 0 else 30
 
                     st.markdown("#### Parámetros del Horizonte Rodante")
                     st.caption("Selecciona el medicamento, ajusta los parámetros y presiona **Ejecutar** — la página no recarga hasta ese momento.")
