@@ -3743,7 +3743,7 @@ with tab3:
 """)
                     with pc3:
                         st.markdown("**Parámetros de política y perecibilidad**")
-                        _sl_fuente = " (desde inventario)" if (_sl_producto and pd.notna(_sl_producto) and int(_sl_producto) > 0) else " (sidebar)" if SL_sim else ""
+                        _sl_fuente = " (desde sidebar)" if SL_sim else ""
                         _sl_str = f"{SL_sim} días{_sl_fuente}" if SL_sim else "Sin restricción"
                         st.markdown(f"""
 | Parámetro | Valor |
