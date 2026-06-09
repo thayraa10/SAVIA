@@ -490,6 +490,7 @@ def simular(OH_init, Q_fijo, usar_s, S_obj,
     CostoDiarioReplica = 0.0
     CostoTotalReplica  = 0.0
     VencimientoTotal   = 0
+    QuiebresTotal      = 0
     Tiempo_out = Inventario_out = OH_out = None
 
     for rep in range(NR):
@@ -499,6 +500,7 @@ def simular(OH_init, Q_fijo, usar_s, S_obj,
         IT       = 0.0
         CT       = 0.0
         UV       = 0
+        QQ       = 0   # unidades sin atender (quiebres) en esta réplica
         pending  = []          # [(t_llegada, qty)], ordenado
         next_rev = float(R)    # próxima revisión
 
@@ -540,6 +542,9 @@ def simular(OH_init, Q_fijo, usar_s, S_obj,
                             if b[0] > 0:
                                 new_b.append(b)
                     batches = new_b
+
+                    # Si rem > 0 después del FEFO, esas unidades no pudieron atenderse
+                    QQ += rem   # acumula quiebres de esta réplica
 
                     OH_post = oh_total(batches)
                     # Costo mantener: aproximación trapezoidal
@@ -596,13 +601,14 @@ def simular(OH_init, Q_fijo, usar_s, S_obj,
         CostoDiarioReplica += CT / TiempoTotal
         CostoTotalReplica  += CT
         VencimientoTotal   += UV
+        QuiebresTotal      += QQ
         Tiempo_out = Tiempo; Inventario_out = Inventario; OH_out = InventarioOH
 
     return (
         round(CostoDiarioReplica / NR),
         round(CostoTotalReplica  / NR),
         Tiempo_out, OH_out,
-        0,
+        round(QuiebresTotal      / NR),   # promedio de quiebres entre réplicas
         Inventario_out,
         round(VencimientoTotal   / NR),
     )
