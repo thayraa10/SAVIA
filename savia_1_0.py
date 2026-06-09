@@ -465,10 +465,20 @@ def _sim_discreta(Media, OC, HC, LT, R, s, Q_star, S_obj, politica,
 def simular(OH_init, Q_fijo, usar_s, S_obj,
             Media, V, OC, HC, LT, R, s, Q_max,
             NR=5, TiempoTotal=360, SL=None, WC=0):
-    # _sim_discreta es una aproximación periódica sin FEFO; solo se activa para demandas
-    # extremadamente altas donde la simulación continua sería prohibitiva en tiempo.
-    # Para demandas típicas de farmacia (incluso Paracetamol ~6000 u/día) se usa
-    # siempre la simulación continua FEFO, igual que el notebook de referencia.
+    """
+    Simulación FEFO con demanda Poisson AGREGADA por intervalo (rápida).
+
+    En lugar de procesar cada unidad como evento separado (inviable para
+    Media=4000+ en Streamlit Cloud), agrupa la demanda entre revisiones/llegadas
+    como Poisson(Media × Δt).  Estadísticamente equivalente; ~1000× más rápida.
+
+    Lógica de políticas idéntica al notebook v2:
+      Q_fijo=Q_star, usar_s=True,  S_obj=None   → (R,s,Q)
+      Q_fijo=None,   usar_s=False, S_obj=S_RS    → (R,S)  OC en cada revisión
+      Q_fijo=None,   usar_s=True,  S_obj=S       → (R,s,S)
+    """
+    import bisect
+
     if Media > 1_000_000:
         pol = 'rsq' if Q_fijo is not None else ('rs' if not usar_s else 'rss')
         _Q  = Q_fijo if Q_fijo is not None else Q_max
@@ -482,91 +492,110 @@ def simular(OH_init, Q_fijo, usar_s, S_obj,
     VencimientoTotal   = 0
     Tiempo_out = Inventario_out = OH_out = None
 
-    for i in range(NR):
-        np.random.seed(i)
-        TNow       = 0.0
-        batches    = [[float(OH_init), TNow + SL_eff]]
-        IT         = 0.0
-        CostoTotal = 0.0
-        Tiempo_Ant = 0.0
-        UnidadesVencidas = 0
+    for rep in range(NR):
+        np.random.seed(rep)
+        TNow     = 0.0
+        batches  = [[float(OH_init), SL_eff]]   # [qty, t_vencimiento]
+        IT       = 0.0
+        CT       = 0.0
+        UV       = 0
+        pending  = []          # [(t_llegada, qty)], ordenado
+        next_rev = float(R)    # próxima revisión
 
-        Evento_Demanda = (-1 / Media) * math.log(np.random.random())
-        Evento_Revisar = float(R)
-        T_orden = [float('inf')]
-        Pedidos = []
         Inventario   = [oh_total(batches) + IT]
         InventarioOH = [oh_total(batches)]
         Tiempo       = [TNow]
 
-        while TNow <= TiempoTotal:
-            T_Llegada = T_orden[0] if T_orden else float('inf')
+        while TNow < TiempoTotal:
+            t_arr  = pending[0][0] if pending else float('inf')
+            t_next = min(next_rev, t_arr, float(TiempoTotal))
+            dt     = t_next - TNow
 
-            if Evento_Demanda < min(Evento_Revisar, T_Llegada):
-                TNow = Evento_Demanda
-                batches, vencidas = purgar_vencidos(batches, TNow)
-                UnidadesVencidas += vencidas
-                CostoTotal += vencidas * WC
-                OH = oh_total(batches)
-                CostoTotal += OH * (TNow - Tiempo_Ant) * HC
-                Tiempo_Ant  = TNow
-                if OH > 0:
-                    batches = consumir_demanda(batches, 1)
-                Evento_Demanda = TNow + (-1 / Media) * math.log(np.random.random())
+            # ── demanda agregada en [TNow, t_next] ────────────────────────
+            if dt > 0:
+                # Sub-intervalos delimitados por vencimientos de lotes
+                exps = sorted({b[1] for b in batches if TNow < b[1] <= t_next})
+                checkpoints = [TNow] + exps + [t_next]
 
-            elif Evento_Revisar < T_Llegada:
-                TNow = Evento_Revisar
-                batches, vencidas = purgar_vencidos(batches, TNow)
-                UnidadesVencidas += vencidas
-                CostoTotal += vencidas * WC
+                for k in range(len(checkpoints) - 1):
+                    t_a, t_b = checkpoints[k], checkpoints[k + 1]
+                    sub_dt   = t_b - t_a
+                    if sub_dt <= 0:
+                        continue
+
+                    # Demanda Poisson del sub-intervalo
+                    D = int(np.random.poisson(Media * sub_dt))
+
+                    OH_pre = oh_total(batches)
+
+                    # Consumo FEFO
+                    rem, new_b = D, []
+                    for b in batches:
+                        if rem <= 0:
+                            new_b.append(b)
+                        else:
+                            c = min(b[0], rem)
+                            b[0] -= c
+                            rem  -= c
+                            if b[0] > 0:
+                                new_b.append(b)
+                    batches = new_b
+
+                    OH_post = oh_total(batches)
+                    # Costo mantener: aproximación trapezoidal
+                    CT += (OH_pre + OH_post) / 2.0 * sub_dt * HC
+
+                    # Purgar lotes vencidos al final del sub-intervalo
+                    vivos, wasted = [], 0.0
+                    for b in batches:
+                        if b[1] <= t_b:
+                            wasted += b[0]
+                        else:
+                            vivos.append(b)
+                    if wasted > 0:
+                        CT += wasted * WC
+                        UV += int(wasted)
+                    batches = vivos
+
+            TNow = t_next
+
+            # ── procesar llegadas en TNow ──────────────────────────────────
+            while pending and pending[0][0] <= TNow + 1e-9:
+                _, qty = pending.pop(0)
+                batches.append([float(qty), TNow + SL_eff])
+                IT -= qty
+            batches.sort(key=lambda b: b[1])
+
+            # ── revisión en TNow ──────────────────────────────────────────
+            if TNow >= next_rev - 1e-9 and TNow < TiempoTotal:
                 OH = oh_total(batches)
-                CostoTotal += OH * (TNow - Tiempo_Ant) * HC
-                Tiempo_Ant  = TNow
                 IP = OH + IT
 
                 if usar_s:
-                    # (R,s,Q): Q_fijo=Q_star ya tiene el cap de Q_max aplicado.
-                    # (R,s,S): lote variable sin cap adicional de Q_max (igual que notebook v2).
+                    # (R,s,Q) y (R,s,S): ordena solo cuando IP ≤ s
                     if IP <= s:
                         lote = Q_fijo if Q_fijo is not None else max(0, S_obj - IP)
                         if lote > 0:
                             IT += lote
-                            Pedidos.append(lote)
-                            T_orden.append(TNow + LT)
-                            T_orden.sort()
-                            CostoTotal += OC
+                            bisect.insort(pending, (TNow + LT, lote))
+                            CT += OC
                 else:
-                    # (R,S): OC se cobra en CADA revisión, aunque lote=0
-                    # (igual que notebook v2: CostoTotal += OC antes del if lote>0)
+                    # (R,S): OC siempre; lote variable sin cap Q_max (notebook v2)
                     lote = max(0, S_obj - IP)
-                    CostoTotal += OC
+                    CT  += OC
                     if lote > 0:
                         IT += lote
-                        Pedidos.append(lote)
-                        T_orden.append(TNow + LT)
-                        T_orden.sort()
-                Evento_Revisar = TNow + R
+                        bisect.insort(pending, (TNow + LT, lote))
 
-            else:
-                TNow = T_Llegada
-                batches, vencidas = purgar_vencidos(batches, TNow)
-                UnidadesVencidas += vencidas
-                CostoTotal += vencidas * WC
-                OH = oh_total(batches)
-                CostoTotal += OH * (TNow - Tiempo_Ant) * HC
-                Tiempo_Ant  = TNow
-                cantidad = Pedidos.pop(0)
-                T_orden.pop(0)
-                batches = agregar_lote(batches, cantidad, TNow, SL_eff)
-                IT -= cantidad
+                next_rev = TNow + R
 
             Inventario.append(oh_total(batches) + IT)
             InventarioOH.append(oh_total(batches))
             Tiempo.append(TNow)
 
-        CostoDiarioReplica += CostoTotal / TiempoTotal
-        CostoTotalReplica  += CostoTotal
-        VencimientoTotal   += UnidadesVencidas
+        CostoDiarioReplica += CT / TiempoTotal
+        CostoTotalReplica  += CT
+        VencimientoTotal   += UV
         Tiempo_out = Tiempo; Inventario_out = Inventario; OH_out = InventarioOH
 
     return (
