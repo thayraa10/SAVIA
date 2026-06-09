@@ -2971,10 +2971,21 @@ with tab2:
     # SUB-TAB 2 — VENCIMIENTOS
     # ══════════════════════════════════════════════════════════════════════════
     with _t2_venc:
+        # ── Explicación al tope ───────────────────────────────────────────────
+        st.markdown(_ayuda(
+            "<b>Control de fechas de caducidad</b> — Esta pestaña muestra cuándo vencen los lotes de medicamentos, "
+            "independientemente de si hay o no existencias. "
+            "La lógica recomendada es <span style='color:#3182CE;font-weight:700'>FEFO</span> (First Expired, First Out): "
+            "el lote que vence primero debe despacharse primero para evitar pérdidas. "
+            "Un mismo medicamento puede aparecer varias veces si tiene múltiples lotes con fechas distintas. "
+            "<b>Días restantes</b>: días entre hoy y la fecha de caducidad. "
+            "Un valor <span style='color:#E53E3E;font-weight:700'>negativo</span> significa que ese lote <span style='color:#E53E3E;font-weight:700'>ya caducó</span> "
+            "y debe retirarse de bodega."
+        ), unsafe_allow_html=True)
         # ── Tarjetas conceptuales con botones de filtro ─────────────────────
         st.markdown(
             '<div style="font-size:0.72rem;font-weight:700;color:#94A3B8;text-transform:uppercase;'
-            'letter-spacing:0.07em;margin:0 0 8px 0">'
+            'letter-spacing:0.07em;margin:8px 0 8px 0">'
             'Esta pestaña trata de fechas de caducidad — no de cantidades en bodega</div>',
             unsafe_allow_html=True,
         )
@@ -3007,16 +3018,6 @@ with tab2:
                 st.session_state["_venc_panel"] = (
                     None if st.session_state.get("_venc_panel") == "sin_stock" else "sin_stock"
                 )
-        st.markdown(_ayuda(
-            "<b>Control de fechas de caducidad</b> — Esta pestaña muestra cuándo vencen los lotes de medicamentos, "
-            "independientemente de si hay o no existencias. "
-            "La lógica recomendada es <span style='color:#3182CE;font-weight:700'>FEFO</span> (First Expired, First Out): "
-            "el lote que vence primero debe despacharse primero para evitar pérdidas. "
-            "Un mismo medicamento puede aparecer varias veces si tiene múltiples lotes con fechas distintas. "
-            "<b>Días restantes</b>: días entre hoy y la fecha de caducidad. "
-            "Un valor <span style='color:#E53E3E;font-weight:700'>negativo</span> significa que ese lote <span style='color:#E53E3E;font-weight:700'>ya caducó</span> "
-            "y debe retirarse de bodega."
-        ), unsafe_allow_html=True)
         # ── Origen de datos ───────────────────────────────────────────────────
         _venc_df   = pd.DataFrame()
         _venc_nom  = COL_NOMBRE
@@ -3372,12 +3373,7 @@ with tab2:
 
             st.divider()
 
-            # ── Gauge (izq) + Tabla info / Lotes (der) — tarjeta blanca ───────
-            st.markdown(
-                '<div style="background:white;border-radius:14px;padding:20px 24px 16px 24px;'
-                'box-shadow:0 2px 10px rgba(0,0,0,0.07);margin:4px 0 16px 0">',
-                unsafe_allow_html=True,
-            )
+            # ── Gauge (izq) + Tabla info / Lotes (der) ───────────────────────
             _gcol, _tcol = st.columns([1, 1])
 
             with _gcol:
@@ -3535,7 +3531,6 @@ with tab2:
                         _lotes_med[COL_VENCIMIENTO] = _lotes_med[COL_VENCIMIENTO].dt.strftime("%d/%m/%Y")
                     st.dataframe(_safe_df(_lotes_med), use_container_width=True, hide_index=True)
 
-            st.markdown('</div>', unsafe_allow_html=True)
 
             # ── Historial de consumo mensual ──────────────────────────────────
             st.markdown(
