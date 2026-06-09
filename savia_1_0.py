@@ -3964,23 +3964,14 @@ with tab3:
                             "concreta basada en la estrategia recomendada por la simulacion."
                         )
 
-                        _ri1, _ri2 = st.columns(2)
-                        with _ri1:
-                            _stock_act = st.number_input(
-                                "Stock actual en bodega (unidades)",
-                                min_value=0, value=int(s_sim), step=100,
-                                key="rec_stock_act",
-                                help="Unidades fisicamente disponibles en bodega en este momento.",
-                            )
-                        with _ri2:
-                            _en_camino = st.number_input(
-                                "Pedidos ya hechos que aun no han llegado (unidades)",
-                                min_value=0, value=0, step=100,
-                                key="rec_en_camino",
-                                help="Si ya emitiste una orden de compra que esta en transito, incluyela aqui para un calculo mas preciso.",
-                            )
+                        _stock_act = st.number_input(
+                            "Stock actual en bodega (unidades)",
+                            min_value=0, value=int(s_sim), step=100,
+                            key="rec_stock_act",
+                            help="Unidades fisicamente disponibles en bodega en este momento.",
+                        )
 
-                        _ip_rec = int(_stock_act) + int(_en_camino)
+                        _ip_rec = int(_stock_act)
                         _dem_per   = int(round(media_sim * periodo_revision))   # demanda 1 periodo
                         _min_2per  = int(round(media_sim * 2 * periodo_revision))  # demanda 2 periodos
 
