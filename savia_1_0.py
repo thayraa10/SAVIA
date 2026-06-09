@@ -4002,57 +4002,103 @@ with tab3:
                                 f"No se requiere accion inmediata."
                             )
 
-                        st.markdown(
-                            f"<div style='background:{_sbg};border-left:5px solid {_sbord};"
-                            f"border-radius:8px;padding:14px 18px;margin:10px 0;font-size:14px;'>"
-                            f"<b>{_stit}</b><br>{_smsg}"
-                            f"</div>",
-                            unsafe_allow_html=True,
-                        )
+                        # ── Título de estado (grande y llamativo, sin caja) ───────────
+                        if _ip_rec <= s_sim:
+                            st.markdown(
+                                f"<p style='color:#dc2626;font-size:22px;font-weight:700;"
+                                f"margin:12px 0 4px 0;'>&#9888; {_stit}</p>"
+                                f"<p style='color:#6b7280;font-size:14px;margin:0 0 12px 0;'>{_smsg}</p>",
+                                unsafe_allow_html=True,
+                            )
+                        elif _sbord == "#d97706":
+                            st.markdown(
+                                f"<p style='color:#d97706;font-size:22px;font-weight:700;"
+                                f"margin:12px 0 4px 0;'>&#9889; {_stit}</p>"
+                                f"<p style='color:#6b7280;font-size:14px;margin:0 0 12px 0;'>{_smsg}</p>",
+                                unsafe_allow_html=True,
+                            )
+                        else:
+                            st.markdown(
+                                f"<p style='color:#16a34a;font-size:22px;font-weight:700;"
+                                f"margin:12px 0 4px 0;'>&#10003; {_stit}</p>"
+                                f"<p style='color:#6b7280;font-size:14px;margin:0 0 12px 0;'>{_smsg}</p>",
+                                unsafe_allow_html=True,
+                            )
 
-                        _rca, _rcb = st.columns(2)
-                        with _rca:
-                            st.markdown("**Detalle del pedido**")
+                        # ── Métricas clave en tarjetas ────────────────────────────────
+                        _ncols = 4 if _q_final_rec > 0 else 3
+                        if _ncols == 4:
+                            _mc1, _mc2, _mc3, _mc4 = st.columns(4)
+                        else:
+                            _mc1, _mc2, _mc3 = st.columns(3)
+
+                        with _mc1:
                             if _q_final_rec > 0:
-                                _nota_aj = " *(ajustado al minimo de 2 periodos)*" if _q_ajustado else ""
-                                st.markdown(
-                                    f"| Parametro | Valor |\n"
-                                    f"|---|---|\n"
-                                    f"| Estrategia recomendada | {NOMBRES[mejor]} ({mejor}) |\n"
-                                    f"| Umbral de pedido | {s_sim:,} u. |\n"
-                                    f"| Posicion de inventario actual | {_ip_rec:,} u. |\n"
-                                    f"| Cantidad segun politica | {_q_pol:,} u. |\n"
-                                    f"| Minimo recomendado (2 periodos) | {_min_2per:,} u. |\n"
-                                    f"| **Cantidad a pedir{_nota_aj}** | **{_q_final_rec:,} u.** |"
+                                st.metric(
+                                    "Pedir ahora",
+                                    f"{_q_final_rec:,} u.",
+                                    help="Cantidad recomendada a ordenar. Cubre al menos 2 periodos de demanda.",
                                 )
                             else:
-                                st.markdown(
-                                    f"| Parametro | Valor |\n"
-                                    f"|---|---|\n"
-                                    f"| Estrategia recomendada | {NOMBRES[mejor]} ({mejor}) |\n"
-                                    f"| Umbral de pedido | {s_sim:,} u. |\n"
-                                    f"| Posicion de inventario actual | {_ip_rec:,} u. |\n"
-                                    f"| **Estado** | **No se requiere pedido ahora** |"
+                                st.metric(
+                                    "Estado del stock",
+                                    "Sin pedido urgente",
+                                    help="El inventario actual supera el umbral de pedido.",
                                 )
 
-                        with _rcb:
-                            st.markdown("**Proyeccion**")
-                            _rows_p = [
-                                f"| Periodo de revision | cada {periodo_revision} dia(s) |",
-                                f"| Demanda esperada por periodo | ~{_dem_per:,} u. |",
-                                f"| Stock estimado en proxima revision | ~{_stock_prox_rev:,} u. |",
-                            ]
+                        with _mc2:
+                            _delta_prox = _stock_prox_rev - s_sim
+                            st.metric(
+                                "Stock en proxima revision",
+                                f"~{_stock_prox_rev:,} u.",
+                                delta=f"{_delta_prox:+,} vs umbral",
+                                delta_color="normal" if _delta_prox >= 0 else "inverse",
+                                help="Stock fisico estimado al llegar la proxima revision (descontando demanda esperada).",
+                            )
+
+                        with _mc3:
                             if _q_final_rec > 0:
-                                _rows_p += [
-                                    f"| Stock tras llegada del pedido | ~{_stock_tras_ped:,} u. |",
-                                    f"| Nivel maximo del modelo (S) | {_s_obj:,} u. |",
-                                ]
-                            if _dias_al_umbral > 0:
-                                _prox_ord_d = math.ceil(_dias_al_umbral / max(periodo_revision, 0.001)) * periodo_revision
-                                _rows_p.append(
-                                    f"| Proximo pedido estimado (sin pedir hoy) | en ~{_prox_ord_d:.0f} dias |"
+                                st.metric(
+                                    "Stock tras llegada del pedido",
+                                    f"~{_stock_tras_ped:,} u.",
+                                    help="Stock estimado cuando llegue el pedido ordenado hoy.",
                                 )
-                            st.markdown("| Parametro | Valor |\n|---|---|\n" + "\n".join(_rows_p))
+                            else:
+                                st.metric(
+                                    "Demanda por periodo",
+                                    f"~{_dem_per:,} u.",
+                                    help=f"Demanda esperada en {periodo_revision} dia(s).",
+                                )
+
+                        if _ncols == 4:
+                            with _mc4:
+                                st.metric(
+                                    "Demanda por periodo",
+                                    f"~{_dem_per:,} u.",
+                                    help=f"Demanda esperada en {periodo_revision} dia(s).",
+                                )
+
+                        # ── Barra de contexto secundario ──────────────────────────────
+                        _ctx_parts = [
+                            f"<b>Estrategia:</b> {NOMBRES[mejor]} ({mejor})",
+                            f"<b>Umbral de pedido:</b> {s_sim:,} u.",
+                            f"<b>Revision cada:</b> {periodo_revision} dia(s)",
+                        ]
+                        if _q_ajustado:
+                            _ctx_parts.append(
+                                f"<b>Cant. segun politica:</b> {_q_pol:,} u. "
+                                f"<i>(ajustado a min. 2 periodos: {_q_final_rec:,} u.)</i>"
+                            )
+                        if _dias_al_umbral > 0 and _q_final_rec == 0:
+                            _prox_ord_d = math.ceil(_dias_al_umbral / max(periodo_revision, 0.001)) * periodo_revision
+                            _ctx_parts.append(f"<b>Proximo pedido estimado:</b> en ~{_prox_ord_d:.0f} dias")
+                        st.markdown(
+                            "<div style='background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;"
+                            "padding:10px 16px;font-size:13px;color:#475569;margin-top:8px;'>"
+                            + " &nbsp;|&nbsp; ".join(_ctx_parts)
+                            + "</div>",
+                            unsafe_allow_html=True,
+                        )
 
                         # ═══════════════════════════════════════════════════════
                         # SECCIÓN: GRAFICOS
