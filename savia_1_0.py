@@ -1680,9 +1680,7 @@ with st.sidebar:
     vida_util_dias    = st.number_input("Vida útil del producto (días)",      value=int(_s["vida_util_dias"]),    step=1,    min_value=0,
                                         help="Vida útil en días desde recepción. 0 = sin restricción de perecibilidad.")
     costo_desperdicio = st.number_input("Costo de desperdicio ($ / u vencida)", value=int(_s["costo_desperdicio"]), step=1000, min_value=0)
-    beta_servicio     = st.number_input("Nivel serv. perecib. (0–1)",        value=float(_s["beta_servicio"]),  step=0.01,
-                                        min_value=0.50, max_value=0.999,
-                                        help="Probabilidad de que Q* se consuma antes de vencer (para calcular Q_max).")
+    beta_servicio     = float(_s.get("beta_servicio", 0.95))
     st.divider()
     st.header("Nivel de servicio")
     nivel_servicio_z  = st.number_input("Z — nivel de servicio",
@@ -3711,50 +3709,94 @@ with tab3:
                     S_rss  = s_sim + Q_sim + U_sim          # inv. inicial (R,s,S) = s + Q + U  (notebook v2)
 
                     # ── Resumen de parámetros de simulación ───────────────────────
-                    pc1, pc2, pc3 = st.columns(3)
-                    with pc1:
-                        st.markdown("**Demanda**")
-                        st.markdown(f"""
-| Parámetro | Valor |
-|---|---|
-| Tasa de demanda (λ) | **{round(media_sim, 2)} u/día** |
-| Varianza diaria (V) | **{round(var_sim, 2)} u²/día** |
-| Horizonte simulado | **360 días** |
-| Réplicas | **5** |
-""")
-                    with pc2:
-                        st.markdown("**Operación y costos**")
-                        st.markdown(f"""
-| Parámetro | Valor |
-|---|---|
-| Tiempo de entrega (LT) | **{round(lead_time, 2)} días** |
-| LT efectivo (LT_ef) | **{round(params_sim['LT_ef'], 2)} días** |
-| Período de revisión (R) | **{round(periodo_revision, 2)} días** |
-| Nivel de servicio (Z) | **{Z} (~97 %)** |
-| Costo por orden (OC) | **${_m(costo_orden)} CLP** |
-| Costo mantener (HC) | **${_m(costo_mantener)} CLP/u/día** |
-| Costo desperdicio (WC) | **${_m(int(WC_sim))} CLP/u** |
-""")
-                    with pc3:
-                        st.markdown("**Parámetros de política y perecibilidad**")
+                    st.markdown(
+                        "<p style='font-size:13px;color:#64748b;margin:0 0 12px 0;'>"
+                        "Parámetros calculados automáticamente a partir del historial de "
+                        "consumo y la configuración ingresada.</p>",
+                        unsafe_allow_html=True,
+                    )
+
+                    # Fila 1 — parámetros clave de política
+                    _pa, _pb, _pc, _pd = st.columns(4)
+                    _pa.metric(
+                        "Demanda diaria (λ)", f"{round(media_sim, 1):,.1f} u/día",
+                        help="Tasa media de consumo diario estimada con el historial del medicamento.",
+                    )
+                    _pb.metric(
+                        "Punto de reorden (s)", f"{s_sim:,} u",
+                        help="Cuando el inventario disponible cae a este nivel, se emite un pedido.",
+                    )
+                    _pc.metric(
+                        "Cantidad a pedir (Q*)", f"{Q_star_sim:,} u",
+                        help="Lote de pedido económicamente óptimo, ajustado por perecibilidad.",
+                    )
+                    _pd.metric(
+                        "Reserva de seguridad (SS)", f"{params_sim['SS']:,} u",
+                        help="Colchón extra de stock para absorber variaciones en demanda o entrega.",
+                    )
+
+                    st.markdown("<div style='margin-top:6px;'></div>", unsafe_allow_html=True)
+
+                    # Fila 2 — parámetros operacionales y costos
+                    _po1, _po2, _po3, _po4, _po5 = st.columns(5)
+                    _po1.metric(
+                        "Tiempo entrega (LT)", f"{round(lead_time, 1)} días",
+                        help="Días entre emitir el pedido y recibirlo en bodega.",
+                    )
+                    _po2.metric(
+                        "Período revisión (R)", f"c/{round(periodo_revision, 1)} días",
+                        help="Frecuencia con que se revisa el nivel de stock.",
+                    )
+                    _sl_label = f"{SL_sim} días" if SL_sim else "Sin límite"
+                    _po3.metric(
+                        "Vida útil (SL)", _sl_label,
+                        help="Vida útil en días desde recepción. 'Sin límite' = no perecible.",
+                    )
+                    _po4.metric(
+                        "Costo por orden", f"${_m(costo_orden)} CLP",
+                        help="Costo fijo administrativo cada vez que se emite un pedido.",
+                    )
+                    _po5.metric(
+                        "Costo mantener", f"${_m(costo_mantener)} CLP/u/día",
+                        help="Costo diario de mantener una unidad en bodega.",
+                    )
+
+                    # Detalles técnicos colapsados
+                    with st.expander("Ver parámetros técnicos completos", expanded=False):
                         _sl_fuente = " (desde sidebar)" if SL_sim else ""
                         _sl_str = f"{SL_sim} días{_sl_fuente}" if SL_sim else "Sin restricción"
-                        st.markdown(f"""
+                        _dt1, _dt2, _dt3 = st.columns(3)
+                        with _dt1:
+                            st.markdown("**Demanda**")
+                            st.markdown(f"""
 | Parámetro | Valor |
 |---|---|
-| Punto de reorden (s) | **{s_sim} u** |
-| EOQ (Q) | **{Q_sim} u** |
-| Undershoot prom. (U) | **{params_sim['U']} u** |
-| Reserva de seguridad (SS) | **{params_sim['SS']} u** |
-| Vida útil (SL) | **{_sl_str}** |
-| Q_max (restricción SL) | **{Q_max_sim} u** |
-| Q* efectivo | **{Q_star_sim} u** |
-| E[O] esperanza caducidad | **{E_O_sim:.2f} u/pedido** |
-| Inv. inicial (R,s,Q) = s+Q*+U | **{S_rsq} u** |
-| Inv. inicial (R,S) = S_RS = s | **{S_rs} u** |
-| Inv. inicial (R,s,S) = s+Q+U  | **{S_rss} u** |
+| Varianza diaria (V) | {round(var_sim, 2)} u²/día |
+| Horizonte simulado | 360 días |
+| Réplicas | 5 |
 """)
-                    st.divider()
+                        with _dt2:
+                            st.markdown("**Operación**")
+                            st.markdown(f"""
+| Parámetro | Valor |
+|---|---|
+| LT efectivo (LT_ef) | {round(params_sim['LT_ef'], 3)} días |
+| Nivel servicio (Z) | {Z} |
+| Costo desperdicio (WC) | ${_m(int(WC_sim))} CLP/u |
+""")
+                        with _dt3:
+                            st.markdown("**Política y perecibilidad**")
+                            st.markdown(f"""
+| Parámetro | Valor |
+|---|---|
+| EOQ base (Q) | {Q_sim:,} u |
+| Undershoot (U) | {params_sim['U']:,} u |
+| Q_max (restricción SL) | {Q_max_sim:,} u |
+| E[O] caducidad | {E_O_sim:.2f} u/pedido |
+| Inv. inicial (R,s,Q) | {S_rsq:,} u |
+| Inv. inicial (R,S) | {S_rs:,} u |
+| Inv. inicial (R,s,S) | {S_rss:,} u |
+""")
 
                     st.divider()
 
@@ -4383,59 +4425,6 @@ with tab3:
                 if len(_rh_consumo_list) < 2:
                     st.info("Se necesitan al menos 2 meses de historial para el pronóstico Bayesiano.")
                 else:
-                    # ── Pronóstico Bayesiano ──────────────────────────────
-                    _bf = bayesian_forecast(_rh_consumo_list, _rh_dias_sig)
-                    _lambda_d = _bf["lambda_diario_hat"]
-                    _media_m  = _bf["media_mensual"]
-                    _cv_val   = _bf["cv"]
-
-                    st.markdown("#### Pronóstico Bayesiano — demanda diaria")
-                    _bf1, _bf2, _bf3, _bf4 = st.columns(4)
-                    _bf1.metric("λ diario estimado",
-                                f"{_lambda_d:.2f} u/día",
-                                help="Media a posteriori de la tasa diaria Poisson.")
-                    _bf2.metric("IC 90 % mensual",
-                                f"[{_bf['lambda_lo_diario']*30:.0f} – {_bf['lambda_hi_diario']*30:.0f}] u",
-                                help="Intervalo de credibilidad del 90 % para la demanda mensual.")
-                    _bf3.metric("Media mensual histórica", f"{_media_m:,.0f} u",
-                                help="Promedio de los consumos mensuales observados.")
-                    _cv_lbl = "baja" if _cv_val < 0.15 else "moderada" if _cv_val < 0.30 else "alta"
-                    _bf4.metric("Coef. variación", f"{_cv_val:.3f}  ({_cv_lbl})",
-                                help="Desviación estándar / media de los consumos mensuales.")
-
-                    # Gráfico de consumo mensual con IC
-                    _rh_meses_lbl = [pd.Timestamp(d).strftime("%b %Y") for d in _rh_mensual[COL_MOV_FECHA]]
-                    _fig_bf = go.Figure()
-                    _fig_bf.add_trace(go.Bar(
-                        x=_rh_meses_lbl, y=_rh_consumo_list,
-                        marker_color="#2563eb", name="Consumo real",
-                        hovertemplate="%{x}: %{y:,.0f} u<extra></extra>",
-                    ))
-                    _fig_bf.add_hline(y=_lambda_d * 30, line_dash="dash", line_color="#dc2626",
-                                      line_width=1.5,
-                                      annotation_text=f"λ estimado ({_lambda_d*30:.0f} u/mes)",
-                                      annotation_position="top right", annotation_font_size=10)
-                    _fig_bf.add_hrect(
-                        y0=_bf["lambda_lo_diario"] * 30,
-                        y1=_bf["lambda_hi_diario"] * 30,
-                        fillcolor="rgba(220,38,38,0.08)", line_width=0,
-                        annotation_text="IC 90%", annotation_position="top left",
-                        annotation_font_size=9,
-                    )
-                    _fig_bf.update_layout(
-                        height=280, margin=dict(t=20, b=20, l=10, r=100),
-                        xaxis_title="Mes", yaxis_title="Unidades dispensadas",
-                        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="#f8fafc", showlegend=False,
-                    )
-                    st.plotly_chart(_fig_bf, use_container_width=True)
-                    st.caption(
-                        "Barras = consumo mensual real. "
-                        "Línea roja = λ estimado (posterior Gamma-Poisson). "
-                        "Banda rosa = IC 90% para la demanda mensual."
-                    )
-
-                    st.divider()
-
                     # ── Horizonte Rodante MIP (PuLP/CBC, sin licencia) ───
                     # SL solo desde sidebar (Programa de compras no tiene FVenvimiento)
                     _rh_sl_default = int(vida_util_dias) if vida_util_dias > 0 else 30
