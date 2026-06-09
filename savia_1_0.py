@@ -4362,13 +4362,6 @@ with tab3:
     # SUB-TAB: HORIZONTE RODANTE (Gurobi MIP + Bayesiano Gamma-Poisson)
     # ══════════════════════════════════════════════════════════════════════
     with _t3_rh:
-        st.markdown(_ayuda(
-            "<b>Pronóstico Bayesiano Gamma-Poisson</b> — Estima la tasa de demanda diaria (λ) usando un prior "
-            "Gamma conjugado sobre el historial de consumo mensual. El intervalo de credibilidad del 90 % "
-            "muestra la incertidumbre del pronóstico. "
-            "La sección <b>Horizonte Rodante (MIP)</b> optimiza las decisiones de pedido día a día "
-            "resuelto con PuLP/CBC."
-        ), unsafe_allow_html=True)
 
         if not tiene_movimientos:
             st.warning("Se requiere el archivo de movimientos para calcular el pronóstico.")
@@ -4429,6 +4422,12 @@ with tab3:
                             index=_rh_meds.index(_rh_med) if _rh_med in _rh_meds else 0,
                             key="rh_med_form",
                         )
+                        _rh_inv_ini = st.number_input(
+                            "Inventario inicial (unidades)",
+                            value=int(round((_rh_sl_default / 2) * _lambda_d)) if _rh_sl_default else int(round(10 * _lambda_d)),
+                            min_value=0, step=100,
+                            help="Stock con que parte la simulación el día 1. Ajústalo al stock actual real para obtener una proyección más precisa.",
+                        )
                         _rh_c1, _rh_c2, _rh_c3 = st.columns(3)
                         with _rh_c1:
                             _rh_L    = st.number_input("Vida útil L (días, slots)",
@@ -4483,13 +4482,12 @@ with tab3:
                         # igual que Paracetamol_RH.py: DIAS_MES_SIGUIENTE = calendar.monthrange(MES_SIGUIENTE...)
                         _WINDOW        = 5
                         _N_ITER        = _dias2s[-1]
-                        _inv_ini       = round((_rh_tl + _rh_R) * _lambda_d)
 
                         np.random.seed(42)
                         _demand_hist = [int(np.random.poisson(_lambda_d)) for _ in range(_WINDOW)]
 
                         _inv_st = {a: 0 for a in range(_rh_L)}
-                        _inv_st[0] = _inv_ini
+                        _inv_st[0] = int(_rh_inv_ini)
 
                         _results_rh = []
                         _pending_rh = []
@@ -4539,9 +4537,12 @@ with tab3:
                         if not _failed and _results_rh:
                             st.session_state["_rh_med"]   = _rh_med
                             st.session_state["_rh_cache"] = {
-                                "results": _results_rh,
+                                "results":  _results_rh,
                                 "lambda_d": _lambda_d,
                                 "inv_fin":  _inv_st,
+                                "h_cost":   _rh_h,
+                                "k_cost":   _rh_k,
+                                "w_cost":   _rh_w,
                             }
 
                     # ── Mostrar resultados ────────────────────────────
@@ -4550,14 +4551,47 @@ with tab3:
                             _df_rh = pd.DataFrame(_rh_c["results"])
 
                             st.markdown("#### Resumen del mes simulado")
+                            # ── Fila 1: métricas de servicio ──────────────
                             _sr1, _sr2, _sr3, _sr4, _sr5 = st.columns(5)
-                            _sr1.metric("Días simulados",         len(_df_rh))
-                            _sr2.metric("Demanda total estimada", f"{_m(int(_df_rh['d̂'].sum()))} u")
+                            _sr1.metric("Días simulados", len(_df_rh))
+                            _sr2.metric("Demanda total estimada",
+                                        f"{_m(int(_df_rh['d̂'].sum()))} u")
+                            _n_ord = int(_df_rh['¿Pide?'].eq('Sí').sum())
                             _sr3.metric("Total pedido",
-                                        f"{_m(int(_df_rh['Pedido (Q)'].sum()))} u  "
-                                        f"({int(_df_rh['¿Pide?'].eq('Sí').sum())} órdenes)")
-                            _sr4.metric("Unidades vencidas",      f"{_m(int(_df_rh['Vencidas (W)'].sum()))}")
-                            _sr5.metric("Demanda insatisfecha",   f"{_m(int(_df_rh['Faltante (S)'].sum()))}")
+                                        f"{_m(int(_df_rh['Pedido (Q)'].sum()))} u",
+                                        delta=f"{_n_ord} órdenes emitidas",
+                                        delta_color="off")
+                            _sr4.metric("Unidades vencidas",
+                                        f"{_m(int(_df_rh['Vencidas (W)'].sum()))} u")
+                            _sr5.metric("Demanda insatisfecha",
+                                        f"{_m(int(_df_rh['Faltante (S)'].sum()))} u")
+
+                            # ── Fila 2: costos ─────────────────────────────
+                            _h_c = _rh_c.get("h_cost", 0)
+                            _k_c = _rh_c.get("k_cost", 0)
+                            _w_c = _rh_c.get("w_cost", 0)
+                            _costo_hold  = int(_df_rh["Stock total"].sum() * _h_c)
+                            _costo_ord   = _n_ord * int(_k_c)
+                            _costo_desp  = int(_df_rh["Vencidas (W)"].sum() * _w_c)
+                            _costo_falt  = int(_df_rh["Faltante (S)"].sum() * _w_c)
+                            _costo_total = _costo_hold + _costo_ord + _costo_desp + _costo_falt
+                            st.markdown("<div style='margin-top:4px'></div>", unsafe_allow_html=True)
+                            _sc1, _sc2, _sc3, _sc4, _sc5 = st.columns(5)
+                            _sc1.metric("Costo total del mes",
+                                        f"${_m(_costo_total)} CLP",
+                                        help="Suma de todos los costos: holding + órdenes + desperdicio + faltante.")
+                            _sc2.metric("Costo holding",
+                                        f"${_m(_costo_hold)} CLP",
+                                        help="Costo de mantener inventario (stock diario × h).")
+                            _sc3.metric("Costo por órdenes",
+                                        f"${_m(_costo_ord)} CLP",
+                                        help=f"{_n_ord} órdenes × ${_m(int(_k_c))} CLP/orden.")
+                            _sc4.metric("Costo desperdicio",
+                                        f"${_m(_costo_desp)} CLP",
+                                        help="Unidades vencidas × w.")
+                            _sc5.metric("Costo faltante",
+                                        f"${_m(_costo_falt)} CLP",
+                                        help="Demanda insatisfecha × w.")
 
                             _fig_rh = go.Figure()
                             _fig_rh.add_trace(go.Scatter(
