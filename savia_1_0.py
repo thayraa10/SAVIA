@@ -3909,49 +3909,173 @@ with tab3:
                         )
 
                         st.divider()
-                        st.markdown("**Evolución de existencias en bodega — últimos 90 días de simulación:**")
+                        st.markdown("### 📊 Evolución del stock en bodega — últimas semanas de simulación")
+                        st.markdown(
+                            "Los gráficos muestran cómo sube y baja el stock de medicamento a lo largo del tiempo "
+                            "bajo cada estrategia de pedido. El patrón en **dientes de sierra** es normal: "
+                            "el stock baja con la demanda diaria y sube cuando llega un pedido."
+                        )
 
+                        # ── Referencias horizontales con etiquetas legibles ───────────────
                         refs_por_politica = {
-                            "(R,s,Q)": [(s_sim,  "#dc2626", "s = punto reorden"), (S_rsq, "#16a34a", f"S = s+Q*+U = {S_rsq}"), (params_sim["SS"], "#d97706", "SS = seg.")],
-                            "(R,S)":   [(S_rs,   "#16a34a", f"S_RS = s = {S_rs}"),                   (params_sim["SS"], "#d97706", "SS = seg.")],
-                            "(R,s,S)": [(s_sim,  "#dc2626", "s = punto reorden"), (S_rss, "#16a34a", f"S = s+Q+U = {S_rss}"),   (params_sim["SS"], "#d97706", "SS = seg.")],
+                            "(R,s,Q)": [
+                                (params_sim["SS"], "#d97706", f"Reserva mínima: {params_sim['SS']:,} u."),
+                                (s_sim,            "#dc2626", f"Umbral de pedido: {s_sim:,} u."),
+                                (S_rsq,            "#16a34a", f"Nivel máximo: {S_rsq:,} u."),
+                            ],
+                            "(R,S)": [
+                                (params_sim["SS"], "#d97706", f"Reserva mínima: {params_sim['SS']:,} u."),
+                                (S_rs,             "#16a34a", f"Nivel máximo: {S_rs:,} u."),
+                            ],
+                            "(R,s,S)": [
+                                (params_sim["SS"], "#d97706", f"Reserva mínima: {params_sim['SS']:,} u."),
+                                (s_sim,            "#dc2626", f"Umbral de pedido: {s_sim:,} u."),
+                                (S_rss,            "#16a34a", f"Nivel máximo: {S_rss:,} u."),
+                            ],
                         }
-                        titulos_estrategias = [
-                            f"Política (R,s,Q) — {NOMBRES['(R,s,Q)']}",
-                            f"Política (R,S) — {NOMBRES['(R,S)']}",
-                            f"Política (R,s,S) — {NOMBRES['(R,s,S)']}",
+
+                        _colores_pol = {
+                            "(R,s,Q)": "#1a3a5c",
+                            "(R,S)":   "#2563eb",
+                            "(R,s,S)": "#16a34a",
+                        }
+                        _titulos_sim = [
+                            "Estrategia 1 — Pedido de cantidad fija  (R,s,Q)",
+                            "Estrategia 2 — Reponer hasta el nivel máximo  (R,S)",
+                            "Estrategia 3 — Pedido variable hasta el nivel máximo  (R,s,S)",
                         ]
-                        fig_sim = make_subplots(rows=3, cols=1, shared_xaxes=True,
-                                                subplot_titles=titulos_estrategias, vertical_spacing=0.12)
 
-                        for num_fila, (pol, color_linea) in enumerate([("(R,s,Q)", "#1a3a5c"), ("(R,S)", "#2563eb"), ("(R,s,S)", "#16a34a")], start=1):
-                            x_datos, y_oh, y_ip = _sc[pol.lower().replace(",", "").replace("(", "").replace(")", "")][0]
-                            fig_sim.add_trace(go.Scatter(x=x_datos, y=y_oh, mode="lines",
-                                name=f"OH {NOMBRES[pol]}", legendgroup=pol,
-                                line=dict(color=color_linea, width=1.8), showlegend=True), row=num_fila, col=1)
-                            fig_sim.add_trace(go.Scatter(x=x_datos, y=y_ip, mode="lines",
-                                name=f"IP {NOMBRES[pol]}", legendgroup=pol,
-                                line=dict(color=color_linea, width=1, dash="dot"),
-                                opacity=0.55, showlegend=True), row=num_fila, col=1)
-                            for nivel, color_ref, etiqueta in refs_por_politica[pol]:
-                                fig_sim.add_hline(y=nivel, line_dash="dash", line_color=color_ref, line_width=1,
-                                    annotation_text=etiqueta, annotation_position="right",
-                                    annotation_font_size=10, row=num_fila, col=1)
+                        fig_sim = make_subplots(
+                            rows=3, cols=1,
+                            shared_xaxes=True,
+                            subplot_titles=_titulos_sim,
+                            vertical_spacing=0.10,
+                        )
 
-                        fig_sim.update_layout(height=780, margin=dict(t=50, b=30, l=80, r=130),
-                                              paper_bgcolor="white", plot_bgcolor="#f8fafc")
-                        fig_sim.update_xaxes(title_text="Día de simulación", row=3, col=1)
-                        for num_fila in [1, 2, 3]:
-                            fig_sim.update_yaxes(title_text="Unidades en bodega", tickformat=",",
-                                                 title_font_size=11, row=num_fila, col=1)
+                        _pols_orden = [("(R,s,Q)", 1), ("(R,S)", 2), ("(R,s,S)", 3)]
+                        for pol, num_fila in _pols_orden:
+                            _clave = pol.lower().replace(",", "").replace("(", "").replace(")", "")
+                            x_datos, y_oh, y_ip = _sc[_clave][0]
+                            _col = _colores_pol[pol]
+                            _mostrar_leyenda = (num_fila == 1)
+
+                            # Línea sólida: stock físico en bodega
+                            fig_sim.add_trace(go.Scatter(
+                                x=x_datos, y=y_oh, mode="lines",
+                                name="Stock físico en bodega",
+                                legendgroup="oh",
+                                line=dict(color=_col, width=2.2),
+                                showlegend=_mostrar_leyenda,
+                                hovertemplate=(
+                                    "<b>Día %{x:.0f}</b><br>"
+                                    "Stock en bodega: <b>%{y:,.0f} u.</b><extra></extra>"
+                                ),
+                            ), row=num_fila, col=1)
+
+                            # Línea punteada: posición de inventario (incluye pedidos en camino)
+                            fig_sim.add_trace(go.Scatter(
+                                x=x_datos, y=y_ip, mode="lines",
+                                name="Stock + pedidos en camino",
+                                legendgroup="ip",
+                                line=dict(color=_col, width=1.3, dash="dot"),
+                                opacity=0.6,
+                                showlegend=_mostrar_leyenda,
+                                hovertemplate=(
+                                    "<b>Día %{x:.0f}</b><br>"
+                                    "Stock + pedidos en camino: <b>%{y:,.0f} u.</b><extra></extra>"
+                                ),
+                            ), row=num_fila, col=1)
+
+                            # Líneas de referencia con etiquetas claras
+                            for _nivel, _color_ref, _etiqueta in refs_por_politica[pol]:
+                                fig_sim.add_hline(
+                                    y=_nivel,
+                                    line_dash="dash",
+                                    line_color=_color_ref,
+                                    line_width=1.3,
+                                    annotation_text=_etiqueta,
+                                    annotation_position="right",
+                                    annotation_font_size=10,
+                                    annotation_font_color=_color_ref,
+                                    row=num_fila, col=1,
+                                )
+
+                        # Agrandar solo los títulos de subplot (los 3 primeros annotations
+                        # que añade make_subplots); los de add_hline vienen después y
+                        # ya tienen su color propio — no los tocamos.
+                        for ann in fig_sim.layout.annotations[:3]:
+                            ann.font.size = 13
+                            ann.font.color = "#1e293b"
+
+                        fig_sim.update_layout(
+                            height=950,
+                            margin=dict(t=65, b=55, l=95, r=195),
+                            paper_bgcolor="white",
+                            plot_bgcolor="#f8fafc",
+                            font=dict(family="sans-serif", size=12, color="#1e293b"),
+                            legend=dict(
+                                orientation="h",
+                                x=0.5, xanchor="center",
+                                y=1.015, yanchor="bottom",
+                                font=dict(size=12),
+                                bgcolor="rgba(255,255,255,0.9)",
+                                bordercolor="#cbd5e1",
+                                borderwidth=1,
+                            ),
+                            hoverlabel=dict(
+                                bgcolor="white",
+                                font_size=12,
+                                bordercolor="#94a3b8",
+                            ),
+                        )
+
+                        # Eje X: etiqueta en fila 3, marcas en todas
+                        fig_sim.update_xaxes(
+                            title_text="Día de simulación",
+                            title_font_size=12,
+                            tickfont_size=11,
+                            gridcolor="#e2e8f0",
+                            row=3, col=1,
+                        )
+                        for _fila in [1, 2]:
+                            fig_sim.update_xaxes(
+                                tickfont_size=11,
+                                gridcolor="#e2e8f0",
+                                row=_fila, col=1,
+                            )
+
+                        # Eje Y: etiqueta y formato en las 3 filas
+                        for _fila in [1, 2, 3]:
+                            fig_sim.update_yaxes(
+                                title_text="Unidades en bodega",
+                                tickformat=",",
+                                title_font_size=11,
+                                tickfont_size=11,
+                                gridcolor="#e2e8f0",
+                                row=_fila, col=1,
+                            )
+
                         st.plotly_chart(fig_sim, use_container_width=True)
-                        st.caption(
-                            "**Línea sólida (OH)** = inventario físico en bodega  |  "
-                            "**Línea punteada (IP)** = posición de inventario (OH + pedidos en tránsito) — "
-                            "la orden se activa cuando **IP** cruza el umbral **s**, no cuando lo hace OH  \n"
-                            "**Rojo** = punto de reorden (s)  |  "
-                            "**Verde** = nivel máximo (S)  |  "
-                            "**Naranja** = reserva de seguridad (SS)"
+
+                        # Leyenda visual simplificada al pie
+                        st.markdown(
+                            "<div style='background:#f1f5f9;border-radius:10px;padding:14px 20px;"
+                            "font-size:13px;line-height:2;border:1px solid #e2e8f0;'>"
+                            "<b>Cómo leer el gráfico</b><br>"
+                            "━━ <b>Línea sólida</b> → stock físico disponible en bodega<br>"
+                            "┄┄ <b>Línea punteada</b> → stock físico + pedidos que están en camino "
+                            "(se usa para decidir si se hace un pedido)<br>"
+                            "<span style='color:#dc2626'>— —</span> "
+                            "<b style='color:#dc2626'>Roja</b> → umbral de pedido: cuando el stock cae aquí, "
+                            "se genera una orden de compra<br>"
+                            "<span style='color:#16a34a'>— —</span> "
+                            "<b style='color:#16a34a'>Verde</b> → nivel máximo: el stock objetivo al que se "
+                            "repone en cada pedido<br>"
+                            "<span style='color:#d97706'>— —</span> "
+                            "<b style='color:#d97706'>Naranja</b> → reserva mínima de seguridad: colchón para "
+                            "cubrir variaciones inesperadas en la demanda o retrasos en la entrega"
+                            "</div>",
+                            unsafe_allow_html=True,
                         )
 
     # ══════════════════════════════════════════════════════════════════════
