@@ -4420,6 +4420,10 @@ with tab3:
                 if len(_rh_consumo_list) < 2:
                     st.info("Se necesitan al menos 2 meses de historial para el pronóstico Bayesiano.")
                 else:
+                    # ── λ para el formulario (sin mostrar gráfico) ────────
+                    _bf_pre   = bayesian_forecast(_rh_consumo_list, _rh_dias_sig)
+                    _lambda_d = _bf_pre["lambda_diario_hat"]
+
                     # ── Horizonte Rodante MIP (PuLP/CBC, sin licencia) ───
                     # SL solo desde sidebar (Programa de compras no tiene FVenvimiento)
                     _rh_sl_default = int(vida_util_dias) if vida_util_dias > 0 else 30
@@ -4484,12 +4488,10 @@ with tab3:
                         _bf2     = bayesian_forecast(_cons2, _dias2s)
                         _lambda_d = _bf2["lambda_diario_hat"]
 
-                        import calendar as _cal
-                        from datetime import date as _date2
-                        _hoy2          = _date2.today()
-                        _dias_mes_sig  = _cal.monthrange(_hoy2.year, _hoy2.month)[1]
+                        # N_ITER = días del mes a pronosticar (mes siguiente al último dato)
+                        # igual que Paracetamol_RH.py: DIAS_MES_SIGUIENTE = calendar.monthrange(MES_SIGUIENTE...)
                         _WINDOW        = 5
-                        _N_ITER        = _dias_mes_sig
+                        _N_ITER        = _dias2s[-1]
                         _inv_ini       = round((_rh_tl + _rh_R) * _lambda_d)
 
                         np.random.seed(42)
