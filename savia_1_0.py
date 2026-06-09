@@ -3869,43 +3869,68 @@ with tab3:
                         costos_diarios  = {"(R,s,Q)": _sc["rsq"][1], "(R,S)": _sc["rs"][1], "(R,s,S)": _sc["rss"][1]}
                         vencidas_pol    = {"(R,s,Q)": _sc["rsq"][4], "(R,S)": _sc["rs"][4], "(R,s,S)": _sc["rss"][4]}
 
+                        # ── Selección jerárquica de la mejor política ─────────────────
+                        # Nivel 1 (error tipo 1): mínimos quiebres de stock
                         min_quiebres = min(quiebres_pol.values())
-                        candidatas   = [p for p, q in quiebres_pol.items() if q == min_quiebres]
-                        mejor        = min(candidatas, key=lambda p: costos_anuales[p])
+                        cands_q      = [p for p, q in quiebres_pol.items() if q == min_quiebres]
 
+                        # Nivel 2 (error tipo 2): entre iguales en quiebres, mínimos vencimientos
+                        min_vencidas = min(vencidas_pol[p] for p in cands_q)
+                        cands_v      = [p for p in cands_q if vencidas_pol[p] == min_vencidas]
+
+                        # Nivel 3 (error tipo 3): entre iguales en quiebres y vencidos, menor costo
+                        mejor        = min(cands_v, key=lambda p: costos_anuales[p])
+
+                        # ── Tabla comparativa ─────────────────────────────────────────
                         filas_comparación = []
                         for pol in ["(R,s,Q)", "(R,S)", "(R,s,S)"]:
-                            q = quiebres_pol[pol]
-                            disponibilidad = "Sin quiebres" if q == 0 else f"{q} u. sin atender"
+                            q_pol = quiebres_pol[pol]
+                            disponibilidad = "Sin quiebres" if q_pol == 0 else f"{q_pol} u. sin atender"
                             if pol == mejor:
                                 etiqueta = "RECOMENDADA"
-                            elif q > min_quiebres:
-                                etiqueta = "Quiebres de stock"
+                            elif q_pol > min_quiebres:
+                                # Error tipo 1: más quiebres que la mejor
+                                dif_q = q_pol - min_quiebres
+                                etiqueta = f"Más quiebres (+{dif_q} u.)"
+                            elif vencidas_pol[pol] > min_vencidas:
+                                # Error tipo 2: mismos quiebres pero más vencimientos
+                                dif_v = vencidas_pol[pol] - min_vencidas
+                                etiqueta = f"Más vencimientos (+{dif_v} u.)"
                             else:
-                                dif = round((costos_anuales[pol] - costos_anuales[mejor]) / max(costos_anuales[mejor], 1) * 100, 1)
-                                etiqueta = f"Más cara (+{dif} %)"
+                                # Error tipo 3: igual quiebres y vencidos, pero más cara
+                                dif_c = round((costos_anuales[pol] - costos_anuales[mejor]) / max(costos_anuales[mejor], 1) * 100, 1)
+                                etiqueta = f"Más costosa (+{dif_c} %)"
                             filas_comparación.append({
-                                "Estrategia":              NOMBRES[pol],
-                                "Cómo funciona":           DESCRIPCION[pol],
-                                "Quiebres de stock":       disponibilidad,
+                                "Estrategia":                NOMBRES[pol],
+                                "Cómo funciona":             DESCRIPCION[pol],
+                                "Quiebres de stock":         disponibilidad,
                                 "Unidades vencidas (prom.)": vencidas_pol[pol],
-                                "Costo diario ($)":        f"{_m(costos_diarios[pol])}",
-                                "Costo anual ($)":         f"{_m(costos_anuales[pol])}",
-                                "Evaluación":              etiqueta,
+                                "Costo diario ($)":          f"{_m(costos_diarios[pol])}",
+                                "Costo anual ($)":           f"{_m(costos_anuales[pol])}",
+                                "Evaluación":                etiqueta,
                             })
                         st.dataframe(_safe_df(pd.DataFrame(filas_comparación)), use_container_width=True, hide_index=True)
 
-                        razon_mejor = []
+                        # ── Explicación del criterio que determinó la recomendación ───
+                        criterios_aplicados = []
                         if min_quiebres == 0:
-                            razon_mejor.append("sin quiebres de stock")
+                            criterios_aplicados.append("sin quiebres de stock")
                         else:
-                            razon_mejor.append(f"menor cantidad de quiebres ({min_quiebres} u.)")
-                        razon_mejor.append("menor costo entre las de igual disponibilidad")
+                            criterios_aplicados.append(f"menor quiebres de stock ({min_quiebres} u.)")
+                        if len(cands_q) > 1:
+                            # El criterio de quiebres no alcanzó para desempatar
+                            criterios_aplicados.append(f"menor unidades vencidas ({min_vencidas} u.)")
+                        if len(cands_v) > 1:
+                            # Tampoco el de vencidos; el costo fue el desempate final
+                            criterios_aplicados.append("menor costo como criterio de desempate")
+
                         st.success(
-                            f"Estrategia recomendada: **{NOMBRES[mejor]}** ({mejor}) — {DESCRIPCION[mejor]}  \n"
-                            f"Criterio: {' y '.join(razon_mejor)}.  \n"
-                            f"Costo anual estimado: **${costos_anuales[mejor]:,.0f} CLP** · "
-                            f"Quiebres promedio: **{quiebres_pol[mejor]} u.**"
+                            f"**Estrategia recomendada: {NOMBRES[mejor]} ({mejor})** — {DESCRIPCION[mejor]}  \n"
+                            f"Criterios aplicados (en orden de prioridad): "
+                            f"{' → '.join(criterios_aplicados)}.  \n"
+                            f"Quiebres: **{quiebres_pol[mejor]} u.** · "
+                            f"Unidades vencidas: **{vencidas_pol[mejor]} u.** · "
+                            f"Costo anual: **${costos_anuales[mejor]:,.0f} CLP**"
                         )
 
                         # ═══════════════════════════════════════════════════════
