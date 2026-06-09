@@ -3908,11 +3908,148 @@ with tab3:
                             f"Quiebres promedio: **{quiebres_pol[mejor]} u.**"
                         )
 
+                        # ═══════════════════════════════════════════════════════
+                        # SECCIÓN: RECOMENDACIÓN DE PEDIDO
+                        # ═══════════════════════════════════════════════════════
                         st.divider()
-                        st.markdown("### 📊 Evolución del stock en bodega — últimas semanas de simulación")
+                        st.subheader("Recomendacion de pedido")
                         st.markdown(
-                            "Los gráficos muestran cómo sube y baja el stock de medicamento a lo largo del tiempo "
-                            "bajo cada estrategia de pedido. El patrón en **dientes de sierra** es normal: "
+                            "Ingresa el stock actual de **" + med_sim + "** para obtener una recomendacion "
+                            "concreta basada en la estrategia recomendada por la simulacion."
+                        )
+
+                        _ri1, _ri2 = st.columns(2)
+                        with _ri1:
+                            _stock_act = st.number_input(
+                                "Stock actual en bodega (unidades)",
+                                min_value=0, value=int(s_sim), step=100,
+                                key="rec_stock_act",
+                                help="Unidades fisicamente disponibles en bodega en este momento.",
+                            )
+                        with _ri2:
+                            _en_camino = st.number_input(
+                                "Pedidos ya hechos que aun no han llegado (unidades)",
+                                min_value=0, value=0, step=100,
+                                key="rec_en_camino",
+                                help="Si ya emitiste una orden de compra que esta en transito, incluyela aqui para un calculo mas preciso.",
+                            )
+
+                        _ip_rec = int(_stock_act) + int(_en_camino)
+                        _dem_per   = int(round(media_sim * periodo_revision))   # demanda 1 periodo
+                        _min_2per  = int(round(media_sim * 2 * periodo_revision))  # demanda 2 periodos
+
+                        # Cantidad recomendada segun mejor politica
+                        if mejor == "(R,s,Q)":
+                            _q_pol  = int(Q_star_sim) if _ip_rec <= s_sim else 0
+                            _s_obj  = S_rsq
+                        elif mejor == "(R,S)":
+                            _q_pol  = max(0, int(S_rs - _ip_rec))
+                            _s_obj  = S_rs
+                        else:  # (R,s,S)
+                            _q_pol  = max(0, int(S_rss - _ip_rec)) if _ip_rec <= s_sim else 0
+                            _s_obj  = S_rss
+
+                        # Ajuste al minimo de 2 periodos
+                        _q_final_rec = max(_q_pol, _min_2per) if _q_pol > 0 else 0
+                        _q_ajustado  = (_q_final_rec > _q_pol) and (_q_pol > 0)
+
+                        # Proyecciones
+                        _stock_prox_rev = max(0, int(_stock_act) - _dem_per)
+                        _stock_tras_ped = int(min(_stock_act + _q_final_rec, _s_obj)) if _q_final_rec > 0 else int(_stock_act)
+
+                        # Dias hasta que la posicion de inventario baja al umbral
+                        if _ip_rec > s_sim and media_sim > 0:
+                            _dias_al_umbral = (_ip_rec - s_sim) / media_sim
+                        else:
+                            _dias_al_umbral = 0.0
+
+                        # Estado (semaforo)
+                        if _ip_rec <= s_sim:
+                            _sbg, _sbord = "#fee2e2", "#dc2626"
+                            _stit = "Atencion: se recomienda pedir ahora"
+                            _smsg = (
+                                f"Tu posicion de inventario (<b>{_ip_rec:,} u.</b>) "
+                                f"ya bajo el umbral de pedido (<b>{s_sim:,} u.</b>). "
+                                f"Genera la orden de compra lo antes posible."
+                            )
+                        elif _dias_al_umbral < periodo_revision * 2:
+                            _sbg, _sbord = "#fef9c3", "#d97706"
+                            _stit = "Proximo pedido: en menos de 2 periodos"
+                            _smsg = (
+                                f"Tu stock llegara al umbral de pedido en aproximadamente "
+                                f"<b>{_dias_al_umbral:.0f} dias</b> "
+                                f"({_dias_al_umbral / max(periodo_revision, 0.001):.1f} periodos de revision). "
+                                f"Considera preparar el pedido en la proxima revision."
+                            )
+                        else:
+                            _sbg, _sbord = "#dcfce7", "#16a34a"
+                            _stit = "Stock en buen nivel"
+                            _smsg = (
+                                f"Tu stock esta <b>{int(_ip_rec - s_sim):,} u.</b> sobre el umbral de pedido, "
+                                f"equivalente a aproximadamente <b>{_dias_al_umbral:.0f} dias</b> de consumo adicional. "
+                                f"No se requiere accion inmediata."
+                            )
+
+                        st.markdown(
+                            f"<div style='background:{_sbg};border-left:5px solid {_sbord};"
+                            f"border-radius:8px;padding:14px 18px;margin:10px 0;font-size:14px;'>"
+                            f"<b>{_stit}</b><br>{_smsg}"
+                            f"</div>",
+                            unsafe_allow_html=True,
+                        )
+
+                        _rca, _rcb = st.columns(2)
+                        with _rca:
+                            st.markdown("**Detalle del pedido**")
+                            if _q_final_rec > 0:
+                                _nota_aj = " *(ajustado al minimo de 2 periodos)*" if _q_ajustado else ""
+                                st.markdown(
+                                    f"| Parametro | Valor |\n"
+                                    f"|---|---|\n"
+                                    f"| Estrategia recomendada | {NOMBRES[mejor]} ({mejor}) |\n"
+                                    f"| Umbral de pedido | {s_sim:,} u. |\n"
+                                    f"| Posicion de inventario actual | {_ip_rec:,} u. |\n"
+                                    f"| Cantidad segun politica | {_q_pol:,} u. |\n"
+                                    f"| Minimo recomendado (2 periodos) | {_min_2per:,} u. |\n"
+                                    f"| **Cantidad a pedir{_nota_aj}** | **{_q_final_rec:,} u.** |"
+                                )
+                            else:
+                                st.markdown(
+                                    f"| Parametro | Valor |\n"
+                                    f"|---|---|\n"
+                                    f"| Estrategia recomendada | {NOMBRES[mejor]} ({mejor}) |\n"
+                                    f"| Umbral de pedido | {s_sim:,} u. |\n"
+                                    f"| Posicion de inventario actual | {_ip_rec:,} u. |\n"
+                                    f"| **Estado** | **No se requiere pedido ahora** |"
+                                )
+
+                        with _rcb:
+                            st.markdown("**Proyeccion**")
+                            _rows_p = [
+                                f"| Periodo de revision | cada {periodo_revision} dia(s) |",
+                                f"| Demanda esperada por periodo | ~{_dem_per:,} u. |",
+                                f"| Stock estimado en proxima revision | ~{_stock_prox_rev:,} u. |",
+                            ]
+                            if _q_final_rec > 0:
+                                _rows_p += [
+                                    f"| Stock tras llegada del pedido | ~{_stock_tras_ped:,} u. |",
+                                    f"| Nivel maximo del modelo (S) | {_s_obj:,} u. |",
+                                ]
+                            if _dias_al_umbral > 0:
+                                _prox_ord_d = math.ceil(_dias_al_umbral / max(periodo_revision, 0.001)) * periodo_revision
+                                _rows_p.append(
+                                    f"| Proximo pedido estimado (sin pedir hoy) | en ~{_prox_ord_d:.0f} dias |"
+                                )
+                            st.markdown("| Parametro | Valor |\n|---|---|\n" + "\n".join(_rows_p))
+
+                        # ═══════════════════════════════════════════════════════
+                        # SECCIÓN: GRAFICOS
+                        # ═══════════════════════════════════════════════════════
+                        st.divider()
+                        st.markdown("### Evolucion del stock en bodega — ultimas semanas de simulacion")
+                        st.markdown(
+                            "Los graficos muestran como sube y baja el stock de medicamento a lo largo del tiempo "
+                            "bajo cada estrategia de pedido. El patron en **dientes de sierra** es normal: "
                             "el stock baja con la demanda diaria y sube cuando llega un pedido."
                         )
 
@@ -4009,14 +4146,15 @@ with tab3:
 
                         fig_sim.update_layout(
                             height=950,
-                            margin=dict(t=65, b=55, l=95, r=195),
+                            margin=dict(t=65, b=100, l=95, r=195),
                             paper_bgcolor="white",
                             plot_bgcolor="#f8fafc",
                             font=dict(family="sans-serif", size=12, color="#1e293b"),
+                            # Leyenda debajo de los 3 graficos para no tapar los titulos
                             legend=dict(
                                 orientation="h",
                                 x=0.5, xanchor="center",
-                                y=1.015, yanchor="bottom",
+                                y=-0.07, yanchor="top",
                                 font=dict(size=12),
                                 bgcolor="rgba(255,255,255,0.9)",
                                 bordercolor="#cbd5e1",
@@ -4057,23 +4195,23 @@ with tab3:
 
                         st.plotly_chart(fig_sim, use_container_width=True)
 
-                        # Leyenda visual simplificada al pie
+                        # Guia de colores al pie del grafico
                         st.markdown(
                             "<div style='background:#f1f5f9;border-radius:10px;padding:14px 20px;"
-                            "font-size:13px;line-height:2;border:1px solid #e2e8f0;'>"
-                            "<b>Cómo leer el gráfico</b><br>"
-                            "━━ <b>Línea sólida</b> → stock físico disponible en bodega<br>"
-                            "┄┄ <b>Línea punteada</b> → stock físico + pedidos que están en camino "
-                            "(se usa para decidir si se hace un pedido)<br>"
-                            "<span style='color:#dc2626'>— —</span> "
-                            "<b style='color:#dc2626'>Roja</b> → umbral de pedido: cuando el stock cae aquí, "
-                            "se genera una orden de compra<br>"
-                            "<span style='color:#16a34a'>— —</span> "
-                            "<b style='color:#16a34a'>Verde</b> → nivel máximo: el stock objetivo al que se "
-                            "repone en cada pedido<br>"
-                            "<span style='color:#d97706'>— —</span> "
-                            "<b style='color:#d97706'>Naranja</b> → reserva mínima de seguridad: colchón para "
-                            "cubrir variaciones inesperadas en la demanda o retrasos en la entrega"
+                            "font-size:13px;line-height:2.1;border:1px solid #e2e8f0;margin-top:4px;'>"
+                            "<b>Guia de lineas de referencia</b><br>"
+                            "<span style='color:#dc2626;font-weight:bold'>&#9135;&#9135; Roja</span>"
+                            " — Umbral de pedido: cuando el stock (o la posicion de inventario) cae "
+                            "hasta este nivel, se genera una nueva orden de compra.<br>"
+                            "<span style='color:#16a34a;font-weight:bold'>&#9135;&#9135; Verde</span>"
+                            " — Nivel maximo (S): tope de inventario al que se repone en cada pedido. "
+                            "El stock no deberia superar este valor habitualmente.<br>"
+                            "<span style='color:#d97706;font-weight:bold'>&#9135;&#9135; Naranja</span>"
+                            " — Reserva de seguridad: colchon minimo para absorber variaciones "
+                            "inesperadas en la demanda o retrasos en la entrega.<br>"
+                            "<span style='color:#1e293b;font-size:12px'>"
+                            "Linea solida = stock fisico en bodega &nbsp;|&nbsp; "
+                            "Linea punteada = stock + pedidos en camino</span>"
                             "</div>",
                             unsafe_allow_html=True,
                         )
