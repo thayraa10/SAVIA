@@ -525,8 +525,10 @@ def simular(OH_init, Q_fijo, usar_s, S_obj,
                 IP = OH + IT
 
                 if usar_s:
+                    # (R,s,Q): Q_fijo=Q_star ya tiene el cap de Q_max aplicado.
+                    # (R,s,S): lote variable sin cap adicional de Q_max (igual que notebook v2).
                     if IP <= s:
-                        lote = Q_fijo if Q_fijo is not None else min(max(0, S_obj - IP), Q_max)
+                        lote = Q_fijo if Q_fijo is not None else max(0, S_obj - IP)
                         if lote > 0:
                             IT += lote
                             Pedidos.append(lote)
@@ -534,13 +536,15 @@ def simular(OH_init, Q_fijo, usar_s, S_obj,
                             T_orden.sort()
                             CostoTotal += OC
                 else:
-                    lote = min(max(0, S_obj - IP), Q_max)
+                    # (R,S): OC se cobra en CADA revisión, aunque lote=0
+                    # (igual que notebook v2: CostoTotal += OC antes del if lote>0)
+                    lote = max(0, S_obj - IP)
+                    CostoTotal += OC
                     if lote > 0:
                         IT += lote
                         Pedidos.append(lote)
                         T_orden.append(TNow + LT)
                         T_orden.sort()
-                        CostoTotal += OC
                 Evento_Revisar = TNow + R
 
             else:
@@ -3712,9 +3716,9 @@ with tab3:
                     #   (R,s,Q)  cell_005: OH_init = s + Q* + U
                     #   (R,S)    cell_007: OH_init = S_obj = s + Q*
                     #   (R,s,S)  cell_009: OH_init = S_obj = s + Q*
-                    S_rsq  = s_sim + Q_star_sim + U_sim   # inventario inicial (R,s,Q)
-                    S_rs   = s_sim + Q_star_sim            # nivel máximo (R,S)
-                    S_rss  = s_sim + Q_star_sim            # nivel máximo (R,s,S)
+                    S_rsq  = s_sim + Q_star_sim + U_sim      # inv. inicial (R,s,Q): s + Q* + U
+                    S_rs   = s_sim                          # inv. inicial (R,S) = S_RS = s  (notebook v2)
+                    S_rss  = s_sim + Q_sim + U_sim          # inv. inicial (R,s,S) = s + Q + U  (notebook v2)
 
                     # ── Resumen de parámetros de simulación ───────────────────────
                     pc1, pc2, pc3 = st.columns(3)
@@ -3756,8 +3760,9 @@ with tab3:
 | Q_max (restricción SL) | **{Q_max_sim} u** |
 | Q* efectivo | **{Q_star_sim} u** |
 | E[O] esperanza caducidad | **{E_O_sim:.2f} u/pedido** |
-| Inv. inicial (R,s,Q) | **{S_rsq} u** |
-| Nivel máx. (R,S) y (R,s,S) | **{S_rs} u** |
+| Inv. inicial (R,s,Q) = s+Q*+U | **{S_rsq} u** |
+| Inv. inicial (R,S) = S_RS = s | **{S_rs} u** |
+| Inv. inicial (R,s,S) = s+Q+U  | **{S_rss} u** |
 """)
                     st.divider()
 
@@ -3878,9 +3883,9 @@ with tab3:
                         st.markdown("**Evolución de existencias en bodega — últimos 90 días de simulación:**")
 
                         refs_por_politica = {
-                            "(R,s,Q)": [(s_sim,  "#dc2626", "s = punto reorden"), (S_rsq, "#16a34a", "S = s+Q*+U"), (params_sim["SS"], "#d97706", "SS = seg.")],
-                            "(R,S)":   [(S_rs,   "#16a34a", "S = s+Q* (nivel máx.)"),    (params_sim["SS"], "#d97706", "SS = seg.")],
-                            "(R,s,S)": [(s_sim,  "#dc2626", "s = punto reorden"), (S_rss, "#16a34a", "S = s+Q* (nivel máx.)"), (params_sim["SS"], "#d97706", "SS = seg.")],
+                            "(R,s,Q)": [(s_sim,  "#dc2626", "s = punto reorden"), (S_rsq, "#16a34a", f"S = s+Q*+U = {S_rsq}"), (params_sim["SS"], "#d97706", "SS = seg.")],
+                            "(R,S)":   [(S_rs,   "#16a34a", f"S_RS = s = {S_rs}"),                   (params_sim["SS"], "#d97706", "SS = seg.")],
+                            "(R,s,S)": [(s_sim,  "#dc2626", "s = punto reorden"), (S_rss, "#16a34a", f"S = s+Q+U = {S_rss}"),   (params_sim["SS"], "#d97706", "SS = seg.")],
                         }
                         titulos_estrategias = [
                             f"Política (R,s,Q) — {NOMBRES['(R,s,Q)']}",
