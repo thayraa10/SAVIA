@@ -3801,25 +3801,6 @@ with tab3:
 """)
                     st.divider()
 
-                    # ── Costos analíticos (fórmulas cerradas del notebook) ─────────
-                    _ct_an = calcular_costos_analiticos(
-                        media_sim, var_sim,
-                        costo_orden, costo_mantener,
-                        params_sim["LT_ef"], periodo_revision, Z,
-                        s_sim, Q_sim, S_rs, U_sim,
-                    )
-                    st.markdown("**Costos teóricos anuales — fórmulas analíticas:**")
-                    _ca1, _ca2, _ca3 = st.columns(3)
-                    _ca1.metric("(R,s,Q) — Analítico", f"${_m(_ct_an['CT1'])} CLP",
-                                help="CT₁ = 360 × ⌈OC·(D/Q) + HC·(Q/2) + HC·(D·R + Z·√(R+LT)·√V − U)⌉")
-                    _ca2.metric("(R,S) — Analítico",   f"${_m(_ct_an['CT2'])} CLP",
-                                help="CT₂ = 360 × ⌈OC/R + HC·(D·R/2) + HC·Z·√(R+LT)·√V⌉")
-                    _ca3.metric("(R,s,S) — Analítico", f"${_m(_ct_an['CT3'])} CLP",
-                                help="CT₃ = 360 × ⌈OC·(D/(S−s+U)) + HC·((S−s+U)/2) + HC·(D·R + Z·√(R+LT)·√V − U)⌉")
-                    st.caption(
-                        "Los costos analíticos son estimados teóricos (fórmula cerrada). "
-                        "Los costos simulados (abajo) incorporan variabilidad estocástica y perecibilidad."
-                    )
                     st.divider()
 
                     # Limpiar resultados si el usuario cambia de medicamento
