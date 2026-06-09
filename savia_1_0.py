@@ -3666,51 +3666,6 @@ with tab3:
                     "(R,s,S)": "Si las existencias están bajas, pide lo necesario para llegar al máximo.",
                 }
 
-                # ── SECCIÓN 1: tabla de políticas ──────────────────────────────────
-                with st.expander("Detalle de abastecimiento", expanded=True):
-                    t3a, t3b = st.columns([3, 2])
-                    busq_t3 = t3a.text_input("Buscar:", placeholder="Nombre del producto...", key="busq_t3")
-                    # Filtrar solo las acciones que aparecen en los datos actuales
-                    acciones_disp = []
-                    for accion in ["Dar de baja", "Pedir ahora", "Pedir pronto", "Existencias suficientes"]:
-                        if accion in df_politicas["Acción recomendada"].values:
-                            acciones_disp.append(accion)
-                    filtro_accion = t3b.multiselect("Filtrar por acción:", acciones_disp, default=acciones_disp, key="filtro_accion_t3")
-                    df_vis = df_politicas[df_politicas["Acción recomendada"].isin(filtro_accion)].drop(columns="_media", errors="ignore")
-                    if busq_t3.strip():
-                        df_vis = df_vis[df_vis["Medicamento"].str.contains(busq_t3.strip(), case=False, na=False)]
-                    st.caption(f"{len(df_vis)} producto(s)")
-                    st.dataframe(_safe_df(df_vis), use_container_width=True, hide_index=True, height=400)
-                    st.info("**Guía:** *Pedir cuando queden menos de X* = punto de reorden. *Cuánto pedir* = cantidad más económica (EOQ). *Reserva de seguridad* = colchón para imprevistos.")
-
-                    # ── Descargar lo que se ve en la tabla (filtros aplicados) ──────
-                    if len(df_vis) > 0:
-                        _costo_vals_ab = (
-                            pd.to_numeric(resumen["costo_unitario"], errors="coerce").fillna(0)
-                            if "costo_unitario" in resumen.columns
-                            else pd.Series(0.0, index=resumen.index)
-                        )
-                        _costo_map_ab = dict(zip(resumen[COL_CODIGO].astype(str), _costo_vals_ab))
-                        _df_vis_dl = df_vis.copy()
-                        _df_vis_dl["Costo unitario (CLP)"] = (
-                            _df_vis_dl["Código"].astype(str).map(_costo_map_ab).fillna(0)
-                        )
-                        _df_vis_dl["Costo estimado pedido (CLP)"] = (
-                            pd.to_numeric(_df_vis_dl["Cuánto pedir"], errors="coerce").fillna(0) *
-                            _df_vis_dl["Costo unitario (CLP)"]
-                        ).round(0).astype(int)
-                        _buf_ped = io.BytesIO()
-                        _df_vis_dl.to_excel(_buf_ped, index=False, engine="openpyxl")
-                        st.download_button(
-                            label=f"Descargar tabla ({len(df_vis)} producto(s))",
-                            data=_buf_ped.getvalue(),
-                            file_name=f"abastecimiento_SAVIA_{date.today().strftime('%Y%m%d')}.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            use_container_width=True,
-                            key="dl_abastecimiento",
-                        )
-
-
                 # ── SECCIÓN 2: frecuencia de revisión ──────────────────────────────
 
                 # ── SECCIÓN 3: simulación de estrategias ───────────────────────────
@@ -4314,6 +4269,65 @@ with tab3:
                             "Linea punteada = stock + pedidos en camino</span>"
                             "</div>",
                             unsafe_allow_html=True,
+                        )
+
+                # ── Tabla de abastecimiento — todos los medicamentos ──────────────
+                st.divider()
+                st.markdown("### Tabla de abastecimiento — todos los medicamentos")
+                st.markdown(
+                    "Esta tabla resume las recomendaciones de pedido calculadas automáticamente "
+                    "para **cada medicamento** de la farmacia. Muestra cuándo pedir, cuánto pedir "
+                    "y el nivel máximo recomendado de inventario, según el historial de consumo y "
+                    "los parámetros configurados en el panel lateral.  \n"
+                    "Los productos más urgentes aparecen primero: primero los que hay que **dar de baja** "
+                    "(vencidos), luego los que hay que **pedir ahora** (bajo el punto de reorden), "
+                    "después los que hay que **pedir pronto**, y finalmente los que tienen "
+                    "**existencias suficientes**."
+                )
+                with st.expander("Ver tabla completa de abastecimiento", expanded=True):
+                    t3a, t3b = st.columns([3, 2])
+                    busq_t3 = t3a.text_input("Buscar:", placeholder="Nombre del producto...", key="busq_t3")
+                    acciones_disp = []
+                    for accion in ["Dar de baja", "Pedir ahora", "Pedir pronto", "Existencias suficientes"]:
+                        if accion in df_politicas["Acción recomendada"].values:
+                            acciones_disp.append(accion)
+                    filtro_accion = t3b.multiselect("Filtrar por acción:", acciones_disp, default=acciones_disp, key="filtro_accion_t3")
+                    df_vis = df_politicas[df_politicas["Acción recomendada"].isin(filtro_accion)].drop(columns="_media", errors="ignore")
+                    if busq_t3.strip():
+                        df_vis = df_vis[df_vis["Medicamento"].str.contains(busq_t3.strip(), case=False, na=False)]
+                    st.caption(f"{len(df_vis)} producto(s)")
+                    st.dataframe(_safe_df(df_vis), use_container_width=True, hide_index=True, height=400)
+                    st.info(
+                        "**Guía de columnas:**  \n"
+                        "**Pedir cuando queden menos de X** = punto de reorden (s): nivel al que se debe emitir una orden para no quedarse sin stock durante el tiempo de entrega.  \n"
+                        "**Cuánto pedir** = cantidad económica óptima (EOQ): minimiza la suma de costos de pedir y de mantener inventario.  \n"
+                        "**Reserva de seguridad** = colchón extra para absorber variaciones inesperadas en la demanda o demoras del proveedor.  \n"
+                        "**Nivel máximo** = tope de inventario recomendado para evitar exceso de existencias."
+                    )
+                    if len(df_vis) > 0:
+                        _costo_vals_ab = (
+                            pd.to_numeric(resumen["costo_unitario"], errors="coerce").fillna(0)
+                            if "costo_unitario" in resumen.columns
+                            else pd.Series(0.0, index=resumen.index)
+                        )
+                        _costo_map_ab = dict(zip(resumen[COL_CODIGO].astype(str), _costo_vals_ab))
+                        _df_vis_dl = df_vis.copy()
+                        _df_vis_dl["Costo unitario (CLP)"] = (
+                            _df_vis_dl["Código"].astype(str).map(_costo_map_ab).fillna(0)
+                        )
+                        _df_vis_dl["Costo estimado pedido (CLP)"] = (
+                            pd.to_numeric(_df_vis_dl["Cuánto pedir"], errors="coerce").fillna(0) *
+                            _df_vis_dl["Costo unitario (CLP)"]
+                        ).round(0).astype(int)
+                        _buf_ped = io.BytesIO()
+                        _df_vis_dl.to_excel(_buf_ped, index=False, engine="openpyxl")
+                        st.download_button(
+                            label=f"Descargar tabla ({len(df_vis)} producto(s))",
+                            data=_buf_ped.getvalue(),
+                            file_name=f"abastecimiento_SAVIA_{date.today().strftime('%Y%m%d')}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            use_container_width=True,
+                            key="dl_abastecimiento",
                         )
 
     # ══════════════════════════════════════════════════════════════════════
