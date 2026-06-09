@@ -3712,10 +3712,10 @@ with tab3:
                     Q_max_sim  = _per_sim["Q_max"]
                     E_O_sim    = _per_sim["E_O"]
 
-                    # Niveles iniciales por política — fórmulas exactas del notebook:
+                    # Inventarios iniciales — notebook v2 (parten del nivel máximo de cada política):
                     #   (R,s,Q)  cell_005: OH_init = s + Q* + U
-                    #   (R,S)    cell_007: OH_init = S_obj = s + Q*
-                    #   (R,s,S)  cell_009: OH_init = S_obj = s + Q*
+                    #   (R,S)    cell_007: OH_init = S_RS = s      ← nivel objetivo = s
+                    #   (R,s,S)  cell_009: OH_init = S  = s + Q + U  ← usa Q (EOQ), no Q*
                     S_rsq  = s_sim + Q_star_sim + U_sim      # inv. inicial (R,s,Q): s + Q* + U
                     S_rs   = s_sim                          # inv. inicial (R,S) = S_RS = s  (notebook v2)
                     S_rss  = s_sim + Q_sim + U_sim          # inv. inicial (R,s,S) = s + Q + U  (notebook v2)
