@@ -3756,8 +3756,8 @@ with tab3:
                         help="Costo diario de mantener una unidad en bodega.",
                     )
 
-                    # Detalles técnicos colapsados
-                    with st.expander("Ver parámetros técnicos completos", expanded=False):
+                    # Detalles técnicos (checkbox: expander no se puede anidar dentro de otro expander)
+                    if st.checkbox("Ver parámetros técnicos completos", value=False, key="chk_tech_params"):
                         _sl_fuente = " (desde sidebar)" if SL_sim else ""
                         _sl_str = f"{SL_sim} días{_sl_fuente}" if SL_sim else "Sin restricción"
                         _dt1, _dt2, _dt3 = st.columns(3)
