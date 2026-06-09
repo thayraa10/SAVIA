@@ -3868,35 +3868,77 @@ with tab3:
                         # Nivel 3 (error tipo 3): entre iguales en quiebres y vencidos, menor costo
                         mejor        = min(cands_v, key=lambda p: costos_anuales[p])
 
-                        # ── Tabla comparativa ─────────────────────────────────────────
-                        filas_comparación = []
+                        # ── Tarjetas comparativas (una por política) ──────────────────
+                        _eval_pol   = {}
+                        _lcolor_pol = {"(R,s,Q)": "#1a3a5c", "(R,S)": "#2563eb", "(R,s,S)": "#16a34a"}
+
                         for pol in ["(R,s,Q)", "(R,S)", "(R,s,S)"]:
                             q_pol = quiebres_pol[pol]
-                            disponibilidad = "Sin quiebres" if q_pol == 0 else f"{q_pol} u. sin atender"
                             if pol == mejor:
-                                etiqueta = "RECOMENDADA"
+                                _eval_pol[pol] = "RECOMENDADA"
                             elif q_pol > min_quiebres:
-                                # Error tipo 1: más quiebres que la mejor
-                                dif_q = q_pol - min_quiebres
-                                etiqueta = f"Más quiebres (+{dif_q} u.)"
+                                _eval_pol[pol] = f"Más quiebres (+{q_pol - min_quiebres:,} u.)"
                             elif vencidas_pol[pol] > min_vencidas:
-                                # Error tipo 2: mismos quiebres pero más vencimientos
-                                dif_v = vencidas_pol[pol] - min_vencidas
-                                etiqueta = f"Más vencimientos (+{dif_v} u.)"
+                                _eval_pol[pol] = f"Más vencimientos (+{vencidas_pol[pol] - min_vencidas:,} u.)"
                             else:
-                                # Error tipo 3: igual quiebres y vencidos, pero más cara
-                                dif_c = round((costos_anuales[pol] - costos_anuales[mejor]) / max(costos_anuales[mejor], 1) * 100, 1)
-                                etiqueta = f"Más costosa (+{dif_c} %)"
-                            filas_comparación.append({
-                                "Estrategia":                NOMBRES[pol],
-                                "Cómo funciona":             DESCRIPCION[pol],
-                                "Quiebres de stock":         disponibilidad,
-                                "Unidades vencidas (prom.)": vencidas_pol[pol],
-                                "Costo diario ($)":          f"{_m(costos_diarios[pol])}",
-                                "Costo anual ($)":           f"{_m(costos_anuales[pol])}",
-                                "Evaluación":                etiqueta,
-                            })
-                        st.dataframe(_safe_df(pd.DataFrame(filas_comparación)), use_container_width=True, hide_index=True)
+                                _dif_c = round((costos_anuales[pol] - costos_anuales[mejor]) / max(costos_anuales[mejor], 1) * 100, 1)
+                                _eval_pol[pol] = f"Más costosa (+{_dif_c} %)"
+
+                        _card_cols = st.columns(3)
+                        for _col_c, pol in zip(_card_cols, ["(R,s,Q)", "(R,S)", "(R,s,S)"]):
+                            _ev  = _eval_pol[pol]
+                            _q   = quiebres_pol[pol]
+                            _v   = vencidas_pol[pol]
+                            _ca  = costos_anuales[pol]
+                            _cd  = costos_diarios[pol]
+                            _lc  = _lcolor_pol[pol]
+
+                            if _ev == "RECOMENDADA":
+                                _bc="#16a34a"; _bbg="#f0fdf4"; _bdg="#dcfce7"; _btx="#15803d"; _ico="★"
+                            elif "quiebres" in _ev.lower():
+                                _bc="#dc2626"; _bbg="white";   _bdg="#fee2e2"; _btx="#dc2626"; _ico="✕"
+                            elif "vencimiento" in _ev.lower():
+                                _bc="#d97706"; _bbg="white";   _bdg="#fef3c7"; _btx="#b45309"; _ico="!"
+                            else:
+                                _bc="#94a3b8"; _bbg="white";   _bdg="#f1f5f9"; _btx="#475569"; _ico="↑$"
+
+                            _q_txt   = "Sin quiebres ✓" if _q == 0 else f"{_q:,} u. sin atender"
+                            _q_color = "#16a34a" if _q == 0 else "#dc2626"
+
+                            with _col_c:
+                                st.markdown(
+                                    f"<div style='border:2.5px solid {_bc};border-radius:14px;"
+                                    f"padding:18px 20px;background:{_bbg};height:100%'>"
+                                    # Código y nombre
+                                    f"<div style='font-size:23px;font-weight:800;color:{_lc};"
+                                    f"letter-spacing:-0.5px;margin-bottom:2px'>{pol}</div>"
+                                    f"<div style='font-size:15px;font-weight:700;color:#1e293b;"
+                                    f"margin-bottom:4px'>{NOMBRES[pol]}</div>"
+                                    f"<div style='font-size:12px;color:#64748b;margin-bottom:14px;"
+                                    f"line-height:1.4'>{DESCRIPCION[pol]}</div>"
+                                    # Métricas
+                                    f"<div style='border-top:1px solid #e2e8f0;padding-top:12px;"
+                                    f"display:flex;flex-direction:column;gap:9px;margin-bottom:14px'>"
+                                    f"<div style='display:flex;justify-content:space-between'>"
+                                    f"<span style='color:#64748b;font-size:13px'>Quiebres de stock</span>"
+                                    f"<span style='font-weight:700;color:{_q_color};font-size:13px'>{_q_txt}</span></div>"
+                                    f"<div style='display:flex;justify-content:space-between'>"
+                                    f"<span style='color:#64748b;font-size:13px'>Unidades vencidas</span>"
+                                    f"<span style='font-weight:700;color:#1e293b;font-size:13px'>{_v:,} u.</span></div>"
+                                    f"<div style='display:flex;justify-content:space-between'>"
+                                    f"<span style='color:#64748b;font-size:13px'>Costo diario</span>"
+                                    f"<span style='font-weight:700;color:#1e293b;font-size:13px'>${_cd:,.0f}</span></div>"
+                                    f"<div style='display:flex;justify-content:space-between'>"
+                                    f"<span style='color:#64748b;font-size:13px'>Costo anual</span>"
+                                    f"<span style='font-weight:700;color:#1e293b;font-size:13px'>${_ca:,.0f}</span></div>"
+                                    f"</div>"
+                                    # Badge evaluación
+                                    f"<div style='background:{_bdg};color:{_btx};font-weight:700;"
+                                    f"font-size:14px;text-align:center;padding:8px 12px;border-radius:8px'>"
+                                    f"{_ico} {_ev}</div>"
+                                    f"</div>",
+                                    unsafe_allow_html=True,
+                                )
 
                         # ── Explicación del criterio que determinó la recomendación ───
                         criterios_aplicados = []
