@@ -306,13 +306,16 @@ def agregar_lote(batches, cantidad, t_arribo, sl_dias):
 def calcular_politicas(Media, V, OC, HC, LT, R, Z=1.645):
     V      = max(V, 0.001)
     sigma  = V ** 0.5
-    R_     = max(R, 0.001)                                          # sin clamp a 1
-    LT_ef  = min(LT, LT - (math.trunc(LT / R_) * R_))             # fórmula exacta del notebook
+    R_     = max(R, 0.001)
+    LT_ef  = min(LT, LT - (math.trunc(LT / R_) * R_))             # LT mod R (para referencia)
+    # Período de protección: cuando LT >= R usar el LT real porque no hay órdenes previas
+    # en tránsito que cubran el lead time completo (especialmente al inicio de la simulación).
+    LT_prot = LT if LT >= R_ else LT_ef
     U      = math.ceil((Media / (2 * V)) + ((V * R_) / 2))
-    s      = math.ceil((Media * (LT_ef + R_)) + Z * sigma * ((LT_ef + R_) ** 0.5))
+    s      = math.ceil((Media * (LT_prot + R_)) + Z * sigma * ((LT_prot + R_) ** 0.5))
     Q      = math.ceil(((2 * OC * Media) / max(HC, 0.001)) ** 0.5)
     S      = s + Q + U
-    SS     = math.ceil((Media * R_) + (Z * sigma * ((LT_ef + R_) ** 0.5) - U))  # sin max(0,...)
+    SS     = math.ceil((Media * R_) + (Z * sigma * ((LT_prot + R_) ** 0.5) - U))
     return {"s": s, "Q": Q, "S": S, "SS": SS, "U": U, "LT_ef": round(LT_ef, 4)}
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -388,58 +391,76 @@ def _sim_discreta(Media, OC, HC, LT, R, s, Q_star, S_obj, politica,
     """
     Simulación discreta por período de revisión R.
     politica: 'rsq' | 'rs' | 'rss'
+
+    Corrección v2 (2026-06):
+    - pedidos_en_transito rastreados en DÍAS REALES (t_orden + LT), no en pasos.
+      t_orden = paso * R (inicio del período, momento de la revisión).
+      Las llegadas se procesan cuando dia_llegada <= t_actual = (paso+1)*R.
+      Esto garantiza que ningún lote llega antes de LT días reales,
+      independientemente de si LT es múltiplo de R o no.
+    - (R,s,Q): emite tantos lotes de Q_star como sean necesarios hasta que
+      IP > s (semántica correcta de revisión periódica cuando LT > R: entre
+      dos revisiones el inventario puede cruzar s múltiples veces).
+    - (R,S) y (R,s,S): solo adoptan días reales; lógica de orden sin cambio.
     """
-    pasos    = max(1, int(round(TiempoTotal / R)))
-    LT_pasos = max(1, int(round(LT / R)))
+    pasos = max(1, int(round(TiempoTotal / R)))
 
     CostoTotalRep = 0.0; CostoDiarioRep = 0.0
     Inv_final = []; Tiempo_final = []; IP_final = []
 
     for i in range(NR):
         np.random.seed(i)
-        OH = float(S_obj)   # todas las políticas arrancan en su nivel máximo (notebook: OH_init=S)
+        OH = float(S_obj)   # arranque en nivel máximo S (notebook: OH_init=S)
         IT = 0.0; CostoTotal = 0.0
-        pedidos_en_transito = []   # lista de (paso_llegada, cantidad)
+        pedidos_en_transito = []   # lista de (dia_llegada_real, cantidad)
         Inv = [OH]; Tiempo = [0.0]; IP_list = [OH + IT]
 
         for paso in range(pasos):
-            t = (paso + 1) * R
-            # Llegadas programadas
-            llegadas = [q for (pa, q) in pedidos_en_transito if pa == paso]
-            pedidos_en_transito = [(pa, q) for (pa, q) in pedidos_en_transito if pa != paso]
+            t_actual = (paso + 1) * R   # fin del período
+            t_orden  = paso * R         # inicio del período = momento de la revisión
+
+            # ── Llegadas cuyo día real <= t_actual ───────────────────────────
+            llegadas = [q for (dl, q) in pedidos_en_transito if dl <= t_actual]
+            pedidos_en_transito = [(dl, q) for (dl, q) in pedidos_en_transito
+                                   if dl > t_actual]
             OH += sum(llegadas)
             IT -= sum(llegadas)
 
-            # Demanda del período ~ Poisson(Media * R)
+            # ── Demanda del período ~ Poisson(Media × R) ────────────────────
             demanda = int(np.random.poisson(Media * R))
             OH_ant  = OH
             OH      = max(0.0, OH - demanda)
 
-            # Costo de holding (OH promedio * R * HC)
+            # ── Costo holding (trapezoidal) ──────────────────────────────────
             CostoTotal += ((OH_ant + OH) / 2.0) * R * HC
 
-            # Revisión: decidir si pedir
+            # ── Revisión y decisión de pedido ────────────────────────────────
             IP = OH + IT
+
             if politica == 'rsq':
-                if IP <= s:
+                # Emitir tantos Q_star hasta IP > s (multi-order periódico)
+                while IP <= s:
                     IT += Q_star
-                    pedidos_en_transito.append((paso + LT_pasos, Q_star))
+                    pedidos_en_transito.append((t_orden + LT, Q_star))
                     CostoTotal += OC
+                    IP += Q_star
+
             elif politica == 'rs':
                 Q_ord = max(0.0, S_obj - IP)
                 if Q_ord > 0:
                     IT += Q_ord
-                    pedidos_en_transito.append((paso + LT_pasos, Q_ord))
+                    pedidos_en_transito.append((t_orden + LT, Q_ord))
                     CostoTotal += OC
+
             elif politica == 'rss':
                 if IP <= s:
                     Q_ord = max(0.0, S_obj - IP)
                     if Q_ord > 0:
                         IT += Q_ord
-                        pedidos_en_transito.append((paso + LT_pasos, Q_ord))
+                        pedidos_en_transito.append((t_orden + LT, Q_ord))
                         CostoTotal += OC
 
-            Inv.append(OH); Tiempo.append(t); IP_list.append(OH + IT)
+            Inv.append(OH); Tiempo.append(t_actual); IP_list.append(OH + IT)
 
         CostoTotalRep  += CostoTotal
         CostoDiarioRep += CostoTotal / TiempoTotal
@@ -487,6 +508,11 @@ def simular(OH_init, Q_fijo, usar_s, S_obj,
 
     SL_eff = float(SL) if SL and SL > 0 else 1e6
     WC     = float(WC)
+
+    # Limitar OH_init a Media*SL_eff: si el lote inicial es mayor que lo consumible
+    # antes de vencer, el exceso se purga al día SL creando un vacío artificial de stock.
+    OH_init = min(float(OH_init), Media * SL_eff) if SL_eff < 1e5 else float(OH_init)
+
     CostoDiarioReplica = 0.0
     CostoTotalReplica  = 0.0
     VencimientoTotal   = 0
@@ -577,13 +603,26 @@ def simular(OH_init, Q_fijo, usar_s, S_obj,
                 IP = OH + IT
 
                 if usar_s:
-                    # (R,s,Q) y (R,s,S): ordena solo cuando IP ≤ s
-                    if IP <= s:
-                        lote = Q_fijo if Q_fijo is not None else max(0, S_obj - IP)
-                        if lote > 0:
-                            IT += lote
-                            bisect.insort(pending, (TNow + LT, lote))
+                    # (R,s,Q): emite tantos lotes de Q_fijo hasta IP > s (multi-order).
+                    # Cuando LT > R hay múltiples revisiones durante el lead time;
+                    # la política canónica genera una orden por cada cruce de s,
+                    # lo que en revisión periódica se traduce en: while IP <= s → pedir.
+                    # (R,s,S): emite un solo lote hasta S (lote variable, una sola orden).
+                    if Q_fijo is not None:
+                        # (R,s,Q) — cantidad fija, múltiples órdenes posibles
+                        while IP <= s:
+                            IT += Q_fijo
+                            bisect.insort(pending, (TNow + LT, Q_fijo))
                             CT += OC
+                            IP += Q_fijo
+                    else:
+                        # (R,s,S) — cantidad variable hasta S, una sola orden
+                        if IP <= s:
+                            lote = max(0, S_obj - IP)
+                            if lote > 0:
+                                IT += lote
+                                bisect.insort(pending, (TNow + LT, lote))
+                                CT += OC
                 else:
                     # (R,S): OC siempre; lote variable sin cap Q_max (notebook v2)
                     lote = max(0, S_obj - IP)
@@ -3699,9 +3738,19 @@ with tab3:
                     #   (R,s,Q)  cell_005: OH_init = s + Q* + U
                     #   (R,S)    cell_007: OH_init = S_RS = s      ← nivel objetivo = s
                     #   (R,s,S)  cell_009: OH_init = S  = s + Q + U  ← usa Q (EOQ), no Q*
-                    S_rsq  = s_sim + Q_star_sim + U_sim      # inv. inicial (R,s,Q): s + Q* + U
-                    S_rs   = s_sim                          # inv. inicial (R,S) = S_RS = s  (notebook v2)
-                    S_rss  = s_sim + Q_sim + U_sim          # inv. inicial (R,s,S) = s + Q + U  (notebook v2)
+                    #
+                    # CORRECCIÓN (R,s,Q): limitar OH_init a Media*SL_eff para evitar que
+                    # el lote inicial sea mayor que lo que se puede consumir antes de vencer.
+                    # Si S_rsq > Media*SL, el exceso se purga al día SL generando un
+                    # vacío de stock antes de que llegue el primer pedido → quiebres artificiales.
+                    _SL_eff_sim = float(SL_sim) if SL_sim and SL_sim > 0 else 1e6
+                    S_rsq_raw  = s_sim + Q_star_sim + U_sim
+                    S_rsq  = int(min(S_rsq_raw,  media_sim * _SL_eff_sim)) if _SL_eff_sim < 1e5 else S_rsq_raw
+                    # (R,S): nivel objetivo = S = s+Q+U para cubrir el período LT+R completo
+                    S_rs_raw   = s_sim + Q_sim + U_sim
+                    S_rs   = int(min(S_rs_raw, media_sim * _SL_eff_sim)) if _SL_eff_sim < 1e5 else S_rs_raw
+                    S_rss_raw  = s_sim + Q_sim + U_sim
+                    S_rss  = int(min(S_rss_raw,  media_sim * _SL_eff_sim)) if _SL_eff_sim < 1e5 else S_rss_raw
 
                     # ── Resumen de parámetros de simulación ───────────────────────
                     st.markdown(
@@ -3815,10 +3864,11 @@ with tab3:
                         _n_dias = max(periodo_revision * 4,
                                       min(max(float(periodo_revision), params_sim["Q"] / max(media_sim, 0.001)) * 15, 360.0))
                         _sl_arg = SL_sim if SL_sim else None
-                        # El notebook usa LT_ef (= LT mod R) en el simulador, no el LT crudo.
-                        # Esto hace que los pedidos lleguen en el tiempo efectivo dentro del
-                        # ciclo de revisión, replicando exactamente la lógica del notebook.
-                        LT_sim = params_sim["LT_ef"]
+                        # Se pasa el LT real (no LT_ef) al simulador.
+                        # LT_ef solo se usa en calcular_politicas() para dimensionar s y S.
+                        # En simular() el LT debe ser el real para que los pedidos lleguen
+                        # en el momento correcto (TNow + LT días).
+                        LT_sim = lead_time
                         with st.spinner("Ejecutando simulaciónes..."):
                             r_rsq = simular(S_rsq, Q_star_sim, True,  None,
                                             media_sim, var_sim, costo_orden, costo_mantener,
