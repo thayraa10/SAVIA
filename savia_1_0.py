@@ -4452,6 +4452,12 @@ with tab3:
                 _rh_med = st.selectbox("Medicamento:", _rh_meds, key="rh_med_sel")
                 _rh_row = resumen[resumen[COL_NOMBRE] == _rh_med].iloc[0]
 
+                # Detectar cambio de medicamento y limpiar recomendaciones anteriores
+                if st.session_state.get("_rh_prev_med_sel") != _rh_med:
+                    st.session_state.pop("rh_recommended_inv", None)
+                    st.session_state.pop("rh_inv_ini_w",       None)
+                    st.session_state["_rh_prev_med_sel"] = _rh_med
+
                 # ── Construir consumo mensual desde movimientos ───────────
                 _rh_mov = datos_movimientos[
                     datos_movimientos[COL_MOV_CODIGO] == str(_rh_row[COL_CODIGO])
@@ -4491,13 +4497,18 @@ with tab3:
                     st.markdown("#### Parámetros del Horizonte Rodante")
                     st.caption("Selecciona el medicamento, ajusta los parámetros y presiona **Ejecutar** — la página no recarga hasta ese momento.")
 
-                    # Valor por defecto de inventario inicial = (tl + R) × λ_d  (igual que referencia)
-                    # Se actualiza después de cada ejecución con el lambda correcto del medicamento
-                    # seleccionado en el form (guardado en session_state["rh_recommended_inv"]).
+                    # Valor por defecto de inventario inicial = tl × λ_d  (mínimo para evitar quiebre inicial)
+                    # Tras cada ejecución se actualiza a (tl+R) × λ_d con el lambda del medicamento real.
                     _rh_tl_default  = int(lead_time)
-                    _rh_R_default   = 3
-                    _rh_inv_min_cur = max(int(round((_rh_tl_default + _rh_R_default) * _lambda_d)), 1)
+                    _rh_inv_min_cur = max(int(round(_rh_tl_default * _lambda_d)), 1)
                     _rh_inv_default = st.session_state.get("rh_recommended_inv", _rh_inv_min_cur)
+
+                    # Aplicar el valor recomendado al widget ANTES de renderizar el formulario.
+                    # Si hay un reset pendiente (tras una ejecución) o si el widget aún no existe,
+                    # se pre-carga con _rh_inv_default para que el campo muestre el valor correcto.
+                    if st.session_state.pop("_rh_inv_pending_reset", False) or \
+                            "rh_inv_ini_w" not in st.session_state:
+                        st.session_state["rh_inv_ini_w"] = max(_rh_inv_default, 1)
 
                     with st.form("form_rh"):
                         _rh_med_form = st.selectbox(
@@ -4508,9 +4519,13 @@ with tab3:
                         )
                         _rh_inv_ini = st.number_input(
                             "Inventario inicial (unidades)",
-                            value=max(_rh_inv_default, 1),
+                            key="rh_inv_ini_w",
                             min_value=0, step=100,
-                            help="Stock con que parte la simulación el día 1. Por defecto = (lead_time + R) × λ_diario, igual al horizonte de protección de referencia.",
+                            help=(
+                                "Stock con que parte la simulación el día 1. "
+                                "Mínimo recomendado = lead_time × λ_diario (para no tener quiebres antes de la primera entrega). "
+                                "Tras cada ejecución el campo se actualiza automáticamente al valor recomendado."
+                            ),
                         )
                         _rh_c1, _rh_c2, _rh_c3 = st.columns(3)
                         with _rh_c1:
@@ -4568,19 +4583,23 @@ with tab3:
 
                         # Actualizar el inventario recomendado en session_state para el próximo render
                         _rh_rec_inv = max(int(round((_rh_tl + _rh_R) * _lambda_d)), 1)
-                        st.session_state["rh_recommended_inv"] = _rh_rec_inv
+                        st.session_state["rh_recommended_inv"]  = _rh_rec_inv
+                        # Marcar que el campo de inventario debe pre-cargarse con el nuevo valor
+                        st.session_state["_rh_inv_pending_reset"] = True
 
                         # Advertir si el inventario inicial es insuficiente para cubrir el lead time
                         _inv_min_lt = int(_rh_tl * _lambda_d)
                         if _rh_inv_ini < _inv_min_lt:
+                            _dias_cubiertos = int(_rh_inv_ini / max(_lambda_d, 1))
+                            _dias_quiebre   = _rh_tl - _dias_cubiertos
                             st.warning(
-                                f"⚠️ **Inventario inicial insuficiente para el lead time.** "
-                                f"Con {_rh_inv_ini:,} u y λ = {_lambda_d:.0f} u/día, el stock se agota en "
-                                f"≈ {int(_rh_inv_ini / max(_lambda_d, 1))} días — pero el primer pedido "
-                                f"tarda {_rh_tl} días en llegar. Habrá quiebres inevitables hasta que "
-                                f"arribe la primera orden. "
-                                f"**Inventario recomendado: {_rh_rec_inv:,} u** "
-                                f"= ({_rh_tl}+{_rh_R}) días × {_lambda_d:.0f} u/día."
+                                f"⚠️ **Inventario inicial insuficiente.** "
+                                f"Con {_rh_inv_ini:,} u y λ = {_lambda_d:.0f} u/día el stock se agota "
+                                f"en ≈ {_dias_cubiertos} días, pero el primer pedido tarda {_rh_tl} días "
+                                f"en llegar → **{_dias_quiebre} días sin stock** al inicio de la simulación. "
+                                f"El campo ya fue actualizado a **{_rh_rec_inv:,} u** "
+                                f"= ({_rh_tl}+{_rh_R}) × {_lambda_d:.0f} u/día. "
+                                f"Vuelve a ejecutar para eliminar los quiebres."
                             )
 
                         # N_ITER = días del mes a pronosticar (mes siguiente al último dato)
