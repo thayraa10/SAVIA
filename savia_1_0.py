@@ -4476,7 +4476,10 @@ with tab3:
                 # Detectar cambio de medicamento y limpiar recomendaciones anteriores
                 if st.session_state.get("_rh_prev_med_sel") != _rh_med:
                     st.session_state.pop("rh_recommended_inv", None)
-                    st.session_state.pop("rh_inv_ini_w",       None)
+                    # NOTA: NO se puede eliminar "rh_inv_ini_w" (es clave de widget registrado).
+                    # En su lugar, señalamos un reset pendiente → el bloque pre-form
+                    # actualizará st.session_state["rh_inv_ini_w"] con el default del nuevo med.
+                    st.session_state["_rh_inv_pending_reset"] = True
                     st.session_state["_rh_prev_med_sel"] = _rh_med
 
                 # ── Construir consumo mensual desde movimientos ───────────
