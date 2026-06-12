@@ -3420,7 +3420,7 @@ with tab2:
                         delta_color="off",
                         help="Cuántos meses del último año no hubo ningún consumo registrado. "
                              "0 = siempre tuvo movimiento (ideal). "
-                             "Un número alto puede indicar desabasto o que el producto dejó de usarse.",
+                             "Un número alto puede indicar quiebre de existencias o que el producto dejó de usarse.",
                     )
                 else:
                     _dkq1.metric("Meses sin actividad (últ. 12 m.)", "—")
@@ -4009,7 +4009,7 @@ with tab3:
                                     f"<div style='border-top:1px solid #e2e8f0;padding-top:12px;"
                                     f"display:flex;flex-direction:column;gap:9px;margin-bottom:14px'>"
                                     f"<div style='display:flex;justify-content:space-between'>"
-                                    f"<span style='color:#64748b;font-size:13px'>Desabasto</span>"
+                                    f"<span style='color:#64748b;font-size:13px'>Quiebre de existencias</span>"
                                     f"<span style='font-weight:700;color:{_q_color};font-size:13px'>{_q_txt}</span></div>"
                                     f"<div style='display:flex;justify-content:space-between'>"
                                     f"<span style='color:#64748b;font-size:13px'>Unidades vencidas</span>"
@@ -4032,9 +4032,9 @@ with tab3:
                         # ── Explicación del criterio que determinó la recomendación ───
                         criterios_aplicados = []
                         if min_quiebres == 0:
-                            criterios_aplicados.append("sin desabasto")
+                            criterios_aplicados.append("sin quiebre de existencias")
                         else:
-                            criterios_aplicados.append(f"menor desabasto ({min_quiebres} u.)")
+                            criterios_aplicados.append(f"menor quiebre de existencias ({min_quiebres} u.)")
                         if len(cands_q) > 1:
                             # El criterio de quiebres no alcanzó para desempatar
                             criterios_aplicados.append(f"menor unidades vencidas ({min_vencidas} u.)")
@@ -4584,7 +4584,7 @@ with tab3:
                             _rh_w    = st.number_input("Costo vencimiento (w, $/u)",
                                                         value=max(int(costo_desperdicio), 1), min_value=0, step=100,
                                                         help="Penalización por unidades vencidas. Típicamente el costo de compra por unidad.")
-                            _rh_s    = st.number_input("Costo de desabasto (s, $/u)",
+                            _rh_s    = st.number_input("Costo de quiebre de existencias (s, $/u)",
                                                         value=10_000_000, min_value=1, step=1_000_000,
                                                         help="Penalización por demanda insatisfecha. Debe ser MUY superior al costo de pedido (k) para que el modelo SIEMPRE prefiera pedir antes de quedarse sin existencias.")
                         _btn_rh = st.form_submit_button("Ejecutar Horizonte Rodante",
@@ -4796,7 +4796,7 @@ with tab3:
                             # Explicar el patrón diente de sierra
                             if _n_dias_q == 0:
                                 st.success(
-                                    "✅ **Sin desabasto.** Las existencias llegan a 0 al final de algunos días "
+                                    "✅ **Sin quiebre de existencias.** Las existencias llegan a 0 al final de algunos días "
                                     "porque el inventario se agota justo antes de la próxima entrega — "
                                     "esto es el comportamiento **óptimo** del modelo (no sobran ni faltan existencias). "
                                     "La demanda de esos días fue cubierta en su totalidad."
@@ -4806,7 +4806,7 @@ with tab3:
                                 _rango = (f"días {_dias_lista[0]}–{_dias_lista[-1]}"
                                           if len(_dias_lista) > 1 else f"día {_dias_lista[0]}")
                                 st.warning(
-                                    f"⚠️ **Desabasto real en {_rango}** ({_n_dias_q} días, "
+                                    f"⚠️ **Quiebre de existencias real en {_rango}** ({_n_dias_q} días, "
                                     f"{_m(int(_df_rh['Faltante (S)'].sum()))} u en total). "
                                     f"Fuera de ese período las existencias llegan a 0 entre ciclos pero "
                                     f"**S = 0** — la demanda se cubrió, es agotamiento óptimo normal."
@@ -4814,7 +4814,7 @@ with tab3:
                             st.caption(
                                 "Línea azul = existencias totales al final del día. "
                                 "Barras verdes = cantidad pedida. "
-                                "Barras rojas = desabasto real (demanda sin cubrir, S > 0). "
+                                "Barras rojas = quiebre de existencias real (demanda sin cubrir, S > 0). "
                                 "Líneas punteadas = días en que se ordenó."
                             )
                             st.markdown("#### Detalle diario")
