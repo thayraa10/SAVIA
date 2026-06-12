@@ -2219,7 +2219,7 @@ with tab1:
             f"{_m(_n_quiebre)}",
             delta=f"{_n_quiebre / len(resumen) * 100:.1f}% del total" if len(resumen) else None,
             delta_color="off",
-            help="Cantidad de medicamentos con stock igual a cero. "
+            help="Cantidad de medicamentos con existencias iguales a cero. "
                  "El archivo cargado no contiene datos de vencimiento.",
         )
     else:
@@ -2958,7 +2958,7 @@ with tab2:
                      help="Total de medicamentos visibles con los filtros de estado y búsqueda activos.")
         _t2c2.metric("Sin existencias",      f"{_m(_t2_sin)}", delta=_t2_pct if _t2_pct else None,
                      delta_color="off",
-                     help="Medicamentos con stock igual a cero dentro de la selección actual.")
+                     help="Medicamentos con existencias iguales a cero dentro de la selección actual.")
         _t2c3.metric("Requieren pedido",     f"{_m(_t2_ped)}", delta="cant. sugerida > 0",
                      delta_color="off",
                      help="Medicamentos con cantidad sugerida mayor a cero en la selección actual.")
@@ -3420,7 +3420,7 @@ with tab2:
                         delta_color="off",
                         help="Cuántos meses del último año no hubo ningún consumo registrado. "
                              "0 = siempre tuvo movimiento (ideal). "
-                             "Un número alto puede indicar quiebres de stock o que el producto dejó de usarse.",
+                             "Un número alto puede indicar desabasto o que el producto dejó de usarse.",
                     )
                 else:
                     _dkq1.metric("Meses sin actividad (últ. 12 m.)", "—")
@@ -3513,7 +3513,7 @@ with tab2:
                     if _d_scrit > 0 and _d_stk <= _d_scrit:
                         _gauge_txt = (
                             f"Existencias actuales: {_stk_fmt} u — nivel crítico. "
-                            f"El stock ha caído por debajo del umbral de emergencia ({_m(int(_d_scrit))} u). "
+                            f"Las existencias han caído por debajo del umbral de emergencia ({_m(int(_d_scrit))} u). "
                             f"Se requiere pedido urgente para evitar quiebre total."
                         )
                     elif _d_stk <= _d_smin:
@@ -3823,7 +3823,7 @@ with tab3:
                     )
                     _pd.metric(
                         "Reserva de seguridad (SS)", f"{params_sim['SS']:,} u",
-                        help="Colchón extra de stock para absorber variaciones en demanda o entrega.",
+                        help="Colchón extra de existencias para absorber variaciones en demanda o entrega.",
                     )
 
                     st.markdown("<div style='margin-top:6px;'></div>", unsafe_allow_html=True)
@@ -3836,7 +3836,7 @@ with tab3:
                     )
                     _po2.metric(
                         "Período revisión (R)", f"c/{round(periodo_revision, 1)} días",
-                        help="Frecuencia con que se revisa el nivel de stock.",
+                        help="Frecuencia con que se revisa el nivel de existencias.",
                     )
                     _sl_label = f"{SL_sim} días" if SL_sim else "Sin límite"
                     _po3.metric(
@@ -4009,7 +4009,7 @@ with tab3:
                                     f"<div style='border-top:1px solid #e2e8f0;padding-top:12px;"
                                     f"display:flex;flex-direction:column;gap:9px;margin-bottom:14px'>"
                                     f"<div style='display:flex;justify-content:space-between'>"
-                                    f"<span style='color:#64748b;font-size:13px'>Quiebres de stock</span>"
+                                    f"<span style='color:#64748b;font-size:13px'>Desabasto</span>"
                                     f"<span style='font-weight:700;color:{_q_color};font-size:13px'>{_q_txt}</span></div>"
                                     f"<div style='display:flex;justify-content:space-between'>"
                                     f"<span style='color:#64748b;font-size:13px'>Unidades vencidas</span>"
@@ -4032,9 +4032,9 @@ with tab3:
                         # ── Explicación del criterio que determinó la recomendación ───
                         criterios_aplicados = []
                         if min_quiebres == 0:
-                            criterios_aplicados.append("sin quiebres de stock")
+                            criterios_aplicados.append("sin desabasto")
                         else:
-                            criterios_aplicados.append(f"menor quiebres de stock ({min_quiebres} u.)")
+                            criterios_aplicados.append(f"menor desabasto ({min_quiebres} u.)")
                         if len(cands_q) > 1:
                             # El criterio de quiebres no alcanzó para desempatar
                             criterios_aplicados.append(f"menor unidades vencidas ({min_vencidas} u.)")
@@ -4057,15 +4057,15 @@ with tab3:
                         st.divider()
                         st.subheader("Recomendación de pedido")
                         st.markdown(
-                            "Ingresa el stock actual de **" + med_sim + "** para obtener una recomendación "
+                            "Ingresa las existencias actuales de **" + med_sim + "** para obtener una recomendación "
                             "concreta basada en la estrategia recomendada por la simulación."
                         )
 
                         _stock_act = st.number_input(
-                            "Stock actual en bodega (unidades)",
+                            "Existencias actuales en bodega (unidades)",
                             min_value=0, value=int(s_sim), step=100,
                             key="rec_stock_act",
-                            help="Unidades fisicamente disponibles en bodega en este momento.",
+                            help="Unidades físicamente disponibles en bodega en este momento.",
                         )
 
                         _ip_rec = int(_stock_act)
@@ -4108,18 +4108,18 @@ with tab3:
                             )
                         elif _dias_al_umbral < periodo_revision * 2:
                             _sbg, _sbord = "#fef9c3", "#d97706"
-                            _stit = "Proximo pedido: en menos de 2 períodos"
+                            _stit = "Próximo pedido: en menos de 2 períodos"
                             _smsg = (
-                                f"Tu stock llegara al umbral de pedido en aproximadamente "
+                                f"Las existencias llegarán al umbral de pedido en aproximadamente "
                                 f"<b>{_dias_al_umbral:.0f} días</b> "
                                 f"({_dias_al_umbral / max(periodo_revision, 0.001):.1f} períodos de revisión). "
-                                f"Considera preparar el pedido en la proxima revisión."
+                                f"Considera preparar el pedido en la próxima revisión."
                             )
                         else:
                             _sbg, _sbord = "#dcfce7", "#16a34a"
-                            _stit = "Stock en buen nivel"
+                            _stit = "Existencias en buen nivel"
                             _smsg = (
-                                f"Tu stock esta <b>{int(_ip_rec - s_sim):,} u.</b> sobre el umbral de pedido, "
+                                f"Las existencias están <b>{int(_ip_rec - s_sim):,} u.</b> sobre el umbral de pedido, "
                                 f"equivalente a aproximadamente <b>{_dias_al_umbral:.0f} días</b> de consumo adicional. "
                                 f"No se requiere acción inmediata."
                             )
@@ -4163,7 +4163,7 @@ with tab3:
                                 )
                             else:
                                 st.metric(
-                                    "Estado del stock",
+                                    "Estado de existencias",
                                     "Sin pedido urgente",
                                     help="El inventario actual supera el umbral de pedido.",
                                 )
@@ -4171,19 +4171,19 @@ with tab3:
                         with _mc2:
                             _delta_prox = _stock_prox_rev - s_sim
                             st.metric(
-                                "Stock en proxima revisión",
+                                "Existencias en próxima revisión",
                                 f"~{_stock_prox_rev:,} u.",
                                 delta=f"{_delta_prox:+,} vs umbral",
                                 delta_color="normal" if _delta_prox >= 0 else "inverse",
-                                help="Stock fisico estimado al llegar la proxima revisión (descontando demanda esperada).",
+                                help="Existencias físicas estimadas al llegar la próxima revisión (descontando demanda esperada).",
                             )
 
                         with _mc3:
                             if _q_final_rec > 0:
                                 st.metric(
-                                    "Stock tras llegada del pedido",
+                                    "Existencias tras llegada del pedido",
                                     f"~{_stock_tras_ped:,} u.",
-                                    help="Stock estimado cuando llegue el pedido ordenado hoy.",
+                                    help="Existencias estimadas cuando llegue el pedido ordenado hoy.",
                                 )
                             else:
                                 st.metric(
@@ -4226,7 +4226,7 @@ with tab3:
                         # SECCIÓN: GRAFICOS
                         # ═══════════════════════════════════════════════════════
                         st.divider()
-                        st.markdown("### Evolución del stock en bodega — últimas semanas de simulación")
+                        st.markdown("### Evolución de existencias en bodega — últimas semanas de simulación")
                         st.markdown(
                             "Los gráficos muestran como sube y baja el stock de medicamento a lo largo del tiempo "
                             "bajo cada estrategia de pedido. El patron en **dientes de sierra** es normal: "
@@ -4279,27 +4279,27 @@ with tab3:
                             # Línea sólida: stock físico en bodega
                             fig_sim.add_trace(go.Scatter(
                                 x=x_datos, y=y_oh, mode="lines",
-                                name="Stock físico en bodega",
+                                name="Existencias físicas en bodega",
                                 legendgroup="oh",
                                 line=dict(color=_col, width=2.2),
                                 showlegend=_mostrar_leyenda,
                                 hovertemplate=(
                                     "<b>Día %{x:.0f}</b><br>"
-                                    "Stock en bodega: <b>%{y:,.0f} u.</b><extra></extra>"
+                                    "Existencias en bodega: <b>%{y:,.0f} u.</b><extra></extra>"
                                 ),
                             ), row=num_fila, col=1)
 
                             # Línea punteada: posición de inventario (incluye pedidos en camino)
                             fig_sim.add_trace(go.Scatter(
                                 x=x_datos, y=y_ip, mode="lines",
-                                name="Stock + pedidos en camino",
+                                name="Existencias + pedidos en camino",
                                 legendgroup="ip",
                                 line=dict(color=_col, width=1.3, dash="dot"),
                                 opacity=0.6,
                                 showlegend=_mostrar_leyenda,
                                 hovertemplate=(
                                     "<b>Día %{x:.0f}</b><br>"
-                                    "Stock + pedidos en camino: <b>%{y:,.0f} u.</b><extra></extra>"
+                                    "Existencias + pedidos en camino: <b>%{y:,.0f} u.</b><extra></extra>"
                                 ),
                             ), row=num_fila, col=1)
 
@@ -4379,19 +4379,19 @@ with tab3:
                         st.markdown(
                             "<div style='background:#f1f5f9;border-radius:10px;padding:14px 20px;"
                             "font-size:13px;line-height:2.1;border:1px solid #e2e8f0;margin-top:4px;'>"
-                            "<b>Guia de lineas de referencia</b><br>"
+                            "<b>Guía de líneas de referencia</b><br>"
                             "<span style='color:#dc2626;font-weight:bold'>&#9135;&#9135; Roja</span>"
-                            " — Umbral de pedido: cuando el stock (o la posición de inventario) cae "
+                            " — Umbral de pedido: cuando las existencias (o la posición de inventario) caen "
                             "hasta este nivel, se genera una nueva orden de compra.<br>"
                             "<span style='color:#16a34a;font-weight:bold'>&#9135;&#9135; Verde</span>"
                             " — Nivel máximo (S): tope de inventario al que se repone en cada pedido. "
-                            "El stock no deberia superar este valor habitualmente.<br>"
+                            "Las existencias no deberían superar este valor habitualmente.<br>"
                             "<span style='color:#d97706;font-weight:bold'>&#9135;&#9135; Naranja</span>"
-                            " — Reserva de seguridad: colchon mínimo para absorber variaciones "
+                            " — Reserva de seguridad: colchón mínimo para absorber variaciones "
                             "inesperadas en la demanda o retrasos en la entrega.<br>"
                             "<span style='color:#1e293b;font-size:12px'>"
-                            "Linea solida = stock fisico en bodega &nbsp;|&nbsp; "
-                            "Linea punteada = stock + pedidos en camino</span>"
+                            "Línea sólida = existencias físicas en bodega &nbsp;|&nbsp; "
+                            "Línea punteada = existencias + pedidos en camino</span>"
                             "</div>",
                             unsafe_allow_html=True,
                         )
@@ -4424,7 +4424,7 @@ with tab3:
                     st.dataframe(_safe_df(df_vis), use_container_width=True, hide_index=True, height=400)
                     st.info(
                         "**Guía de columnas:**  \n"
-                        "**Pedir cuando queden menos de X** = punto de reorden (s): nivel al que se debe emitir una orden para no quedarse sin stock durante el tiempo de entrega.  \n"
+                        "**Pedir cuando queden menos de X** = punto de reorden (s): nivel al que se debe emitir una orden para no quedarse sin existencias durante el tiempo de entrega.  \n"
                         "**Cuánto pedir** = cantidad económica óptima (EOQ): minimiza la suma de costos de pedir y de mantener inventario.  \n"
                         "**Reserva de seguridad** = colchón extra para absorber variaciones inesperadas en la demanda o demoras del proveedor.  \n"
                         "**Nivel máximo** = tope de inventario recomendado para evitar exceso de existencias."
@@ -4546,18 +4546,18 @@ with tab3:
                             key="rh_inv_ini_w",
                             min_value=0, step=100,
                             help=(
-                                "Stock con que parte la simulación el día 1. "
-                                "Mínimo recomendado = lead_time × λ_diario (para no tener quiebres antes de la primera entrega). "
+                                "Existencias con que parte la simulación el día 1. "
+                                "Mínimo recomendado = tiempo_entrega × λ_diario (para no tener quiebres antes de la primera entrega). "
                                 "Tras cada ejecución el campo se actualiza automáticamente al valor recomendado."
                             ),
                         )
                         _rh_c1, _rh_c2, _rh_c3 = st.columns(3)
                         with _rh_c1:
-                            _rh_L    = st.number_input("Vida útil L (días, slots)",
+                            _rh_L    = st.number_input("Vida útil L (días)",
                                                         value=max(_rh_sl_default, 2),
                                                         min_value=2, step=1,
-                                                        help="Pre-llenado desde FVenvimiento. Unidades en slot L-1 se contabilizan como vencidas.")
-                            _rh_tl   = st.number_input("Lead time tl (días)",
+                                                        help="Pre-llenado desde FVenvimiento. Unidades en el último compartimento se contabilizan como vencidas.")
+                            _rh_tl   = st.number_input("Tiempo de entrega tl (días)",
                                                         value=int(lead_time), min_value=1, step=1)
                         with _rh_c2:
                             _rh_R    = st.number_input("Intervalo mínimo entre pedidos R (días)",
@@ -4567,26 +4567,26 @@ with tab3:
                                                         value=max(int(_lambda_d * 30 * 5), 1000),
                                                         min_value=1, step=100)
                             _rh_ss_d = st.number_input(
-                                "Stock de seguridad (días)",
+                                "Inventario de seguridad (días)",
                                 value=1, min_value=0, step=1,
                                 help=(
                                     "Colchón mínimo que el modelo mantiene en todo momento "
-                                    "(= días × λ_diario). Con ≥ 1 el stock nunca llega a 0 "
+                                    "(= días × λ_diario). Con ≥ 1 las existencias nunca llegan a 0 "
                                     "en régimen estacionario, protegiéndote ante variaciones "
                                     "de demanda o retrasos de entrega."
                                 ),
                             )
                         with _rh_c3:
-                            _rh_h    = st.number_input("Costo holding (h, $/u/día)",
+                            _rh_h    = st.number_input("Almacenamiento (h, $/u/día)",
                                                         value=int(costo_mantener), min_value=0, step=1)
-                            _rh_k    = st.number_input("Costo orden (k, $)",
+                            _rh_k    = st.number_input("Costo de pedido (k, $)",
                                                         value=int(costo_orden), min_value=0, step=1000)
                             _rh_w    = st.number_input("Costo vencimiento (w, $/u)",
                                                         value=max(int(costo_desperdicio), 1), min_value=0, step=100,
                                                         help="Penalización por unidades vencidas. Típicamente el costo de compra por unidad.")
-                            _rh_s    = st.number_input("Costo quiebre stock (s, $/u)",
+                            _rh_s    = st.number_input("Costo de desabasto (s, $/u)",
                                                         value=10_000_000, min_value=1, step=1_000_000,
-                                                        help="Penalización por demanda insatisfecha. Debe ser MUY superior al costo de orden (k) para que el modelo SIEMPRE prefiera pedir antes de quedar sin stock.")
+                                                        help="Penalización por demanda insatisfecha. Debe ser MUY superior al costo de pedido (k) para que el modelo SIEMPRE prefiera pedir antes de quedarse sin existencias.")
                         _btn_rh = st.form_submit_button("Ejecutar Horizonte Rodante",
                                                          use_container_width=True, type="primary")
 
@@ -4627,7 +4627,7 @@ with tab3:
                                 f"⚠️ **Inventario inicial insuficiente.** "
                                 f"Con {_rh_inv_ini:,} u y λ = {_lambda_d:.0f} u/día el stock se agota "
                                 f"en ≈ {_dias_cubiertos} días, pero el primer pedido tarda {_rh_tl} días "
-                                f"en llegar → **{_dias_quiebre} días sin stock** al inicio de la simulación. "
+                                f"en llegar → **{_dias_quiebre} días sin existencias** al inicio de la simulación. "
                                 f"Para eliminar los quiebres ajusta el inventario a **{_rh_rec_inv:,} u** "
                                 f"= ({_rh_tl}+{_rh_R}) × {_lambda_d:.0f} u/día y vuelve a ejecutar."
                             )
@@ -4684,7 +4684,7 @@ with tab3:
                                 "IC lo": _dlo, "IC hi": _dhi,
                                 "Pedido (Q)": _Qv, "¿Pide?": "Sí" if _Yv else "No",
                                 "Vencidas (W)": _Wv, "Faltante (S)": _Sv,
-                                "Stock total": _stk_tot,
+                                "Existencias totales": _stk_tot,
                             })
                             _bar.progress((_it + 1) / _N_ITER,
                                           text=f"Día {_day}/{_WINDOW + _N_ITER - 1}")
@@ -4729,7 +4729,7 @@ with tab3:
                             _h_c = _rh_c.get("h_cost", 0)
                             _k_c = _rh_c.get("k_cost", 0)
                             _w_c = _rh_c.get("w_cost", 0)
-                            _costo_hold  = int(_df_rh["Stock total"].sum() * _h_c)
+                            _costo_hold  = int(_df_rh["Existencias totales"].sum() * _h_c)
                             _costo_ord   = _n_ord * int(_k_c)
                             _costo_desp  = int(_df_rh["Vencidas (W)"].sum() * _w_c)
                             _costo_falt  = int(_df_rh["Faltante (S)"].sum() * _w_c)
@@ -4738,10 +4738,10 @@ with tab3:
                             _sc1, _sc2, _sc3, _sc4, _sc5 = st.columns(5)
                             _sc1.metric("Costo total del mes",
                                         f"${_m(_costo_total)} CLP",
-                                        help="Suma de todos los costos: holding + órdenes + desperdicio + faltante.")
-                            _sc2.metric("Costo holding",
+                                        help="Suma de todos los costos: almacenamiento + órdenes + desperdicio + faltante.")
+                            _sc2.metric("Costo de almacenamiento",
                                         f"${_m(_costo_hold)} CLP",
-                                        help="Costo de mantener inventario (stock diario × h).")
+                                        help="Costo de mantener inventario (existencias diarias × h).")
                             _sc3.metric("Costo por órdenes",
                                         f"${_m(_costo_ord)} CLP",
                                         help=f"{_n_ord} órdenes × ${_m(int(_k_c))} CLP/orden.")
@@ -4754,8 +4754,8 @@ with tab3:
 
                             _fig_rh = go.Figure()
                             _fig_rh.add_trace(go.Scatter(
-                                x=_df_rh["Día"], y=_df_rh["Stock total"],
-                                mode="lines", name="Stock total",
+                                x=_df_rh["Día"], y=_df_rh["Existencias totales"],
+                                mode="lines", name="Existencias totales",
                                 line=dict(color="#2563eb", width=2),
                             ))
                             _fig_rh.add_trace(go.Bar(
@@ -4786,7 +4786,7 @@ with tab3:
                             _fig_rh.update_layout(
                                 height=380, margin=dict(t=20, b=40, l=60, r=80),
                                 xaxis_title="Día del mes simulado",
-                                yaxis=dict(title="Stock total (u)", tickformat=","),
+                                yaxis=dict(title="Existencias totales (u)", tickformat=","),
                                 yaxis2=dict(title="Pedido / Quiebre / Vencidas (u)",
                                             overlaying="y", side="right", showgrid=False),
                                 legend=dict(orientation="h", y=-0.18, x=0),
@@ -4796,9 +4796,9 @@ with tab3:
                             # Explicar el patrón diente de sierra
                             if _n_dias_q == 0:
                                 st.success(
-                                    "✅ **Sin quiebres de stock.** El stock llega a 0 al final de algunos días "
+                                    "✅ **Sin desabasto.** Las existencias llegan a 0 al final de algunos días "
                                     "porque el inventario se agota justo antes de la próxima entrega — "
-                                    "esto es el comportamiento **óptimo** del modelo (no sobra ni falta stock). "
+                                    "esto es el comportamiento **óptimo** del modelo (no sobran ni faltan existencias). "
                                     "La demanda de esos días fue cubierta en su totalidad."
                                 )
                             else:
@@ -4806,15 +4806,15 @@ with tab3:
                                 _rango = (f"días {_dias_lista[0]}–{_dias_lista[-1]}"
                                           if len(_dias_lista) > 1 else f"día {_dias_lista[0]}")
                                 st.warning(
-                                    f"⚠️ **Quiebres reales en {_rango}** ({_n_dias_q} días, "
+                                    f"⚠️ **Desabasto real en {_rango}** ({_n_dias_q} días, "
                                     f"{_m(int(_df_rh['Faltante (S)'].sum()))} u en total). "
-                                    f"Fuera de ese período el stock llega a 0 entre ciclos pero "
+                                    f"Fuera de ese período las existencias llegan a 0 entre ciclos pero "
                                     f"**S = 0** — la demanda se cubrió, es agotamiento óptimo normal."
                                 )
                             st.caption(
-                                "Línea azul = stock total al final del día. "
+                                "Línea azul = existencias totales al final del día. "
                                 "Barras verdes = cantidad pedida. "
-                                "Barras rojas = quiebre real (demanda sin cubrir, S > 0). "
+                                "Barras rojas = desabasto real (demanda sin cubrir, S > 0). "
                                 "Líneas punteadas = días en que se ordenó."
                             )
                             st.markdown("#### Detalle diario")
