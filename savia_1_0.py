@@ -4615,11 +4615,8 @@ with tab3:
                         _bf2     = bayesian_forecast(_cons2, _dias2s)
                         _lambda_d = _bf2["lambda_diario_hat"]
 
-                        # Actualizar el inventario recomendado en session_state para el próximo render
+                        # Valor recomendado de referencia (solo informativo, no sobreescribe el campo)
                         _rh_rec_inv = max(int(round((_rh_tl + _rh_R) * _lambda_d)), 1)
-                        st.session_state["rh_recommended_inv"]  = _rh_rec_inv
-                        # Marcar que el campo de inventario debe pre-cargarse con el nuevo valor
-                        st.session_state["_rh_inv_pending_reset"] = True
 
                         # Advertir si el inventario inicial es insuficiente para cubrir el lead time
                         _inv_min_lt = int(_rh_tl * _lambda_d)
@@ -4631,9 +4628,8 @@ with tab3:
                                 f"Con {_rh_inv_ini:,} u y λ = {_lambda_d:.0f} u/día el stock se agota "
                                 f"en ≈ {_dias_cubiertos} días, pero el primer pedido tarda {_rh_tl} días "
                                 f"en llegar → **{_dias_quiebre} días sin stock** al inicio de la simulación. "
-                                f"El campo ya fue actualizado a **{_rh_rec_inv:,} u** "
-                                f"= ({_rh_tl}+{_rh_R}) × {_lambda_d:.0f} u/día. "
-                                f"Vuelve a ejecutar para eliminar los quiebres."
+                                f"Para eliminar los quiebres ajusta el inventario a **{_rh_rec_inv:,} u** "
+                                f"= ({_rh_tl}+{_rh_R}) × {_lambda_d:.0f} u/día y vuelve a ejecutar."
                             )
 
                         # N_ITER = días del mes a pronosticar (mes siguiente al último dato)
