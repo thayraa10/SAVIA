@@ -259,11 +259,11 @@ def encontrar_columna(df, palabras_clave, ya_usadas):
     return None
 
 # ──────────────────────────────────────────────────────────────────────────────
-def calcular_estado(dias):
-    if pd.isna(dias): return "Sin fecha"
-    if dias < 0:      return "VENCIDO"
-    if dias <= 30:    return "CRITICO"
-    if dias <= 90:    return "ADVERTENCIA"
+def calcular_estado(días):
+    if pd.isna(días): return "Sin fecha"
+    if días < 0:      return "VENCIDO"
+    if días <= 30:    return "CRITICO"
+    if días <= 90:    return "ADVERTENCIA"
     return "NORMAL"
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -386,11 +386,11 @@ def recomendar_periodo(media_diaria, varianza_diaria, costo_orden, costo_mantene
 # SIMULACIÓN DISCRETA (por período R) — para productos de alta demanda (Media>200)
 # Equivalente estadísticamente a la continua pero 1000x más rápida.
 # ──────────────────────────────────────────────────────────────────────────────
-def _sim_discreta(Media, OC, HC, LT, R, s, Q_star, S_obj, politica,
+def _sim_discreta(Media, OC, HC, LT, R, s, Q_star, S_obj, política,
                   NR=5, TiempoTotal=360):
     """
     Simulación discreta por período de revisión R.
-    politica: 'rsq' | 'rs' | 'rss'
+    política: 'rsq' | 'rs' | 'rss'
 
     Corrección v2 (2026-06):
     - pedidos_en_transito rastreados en DÍAS REALES (t_orden + LT), no en pasos.
@@ -437,7 +437,7 @@ def _sim_discreta(Media, OC, HC, LT, R, s, Q_star, S_obj, politica,
             # ── Revisión y decisión de pedido ────────────────────────────────
             IP = OH + IT
 
-            if politica == 'rsq':
+            if política == 'rsq':
                 # Emitir tantos Q_star hasta IP > s (multi-order periódico)
                 while IP <= s:
                     IT += Q_star
@@ -445,14 +445,14 @@ def _sim_discreta(Media, OC, HC, LT, R, s, Q_star, S_obj, politica,
                     CostoTotal += OC
                     IP += Q_star
 
-            elif politica == 'rs':
+            elif política == 'rs':
                 Q_ord = max(0.0, S_obj - IP)
                 if Q_ord > 0:
                     IT += Q_ord
                     pedidos_en_transito.append((t_orden + LT, Q_ord))
                     CostoTotal += OC
 
-            elif politica == 'rss':
+            elif política == 'rss':
                 if IP <= s:
                     Q_ord = max(0.0, S_obj - IP)
                     if Q_ord > 0:
@@ -733,7 +733,11 @@ def _solve_horizon_rh(inv0, d_hat, period, pending, cooldown,
     """
     if s_cost is None:
         s_cost = max(10_000_000, k_cost * 100)
-    HORIZON = tl + 5
+    # HORIZON debe cubrir al menos tl + R días para que el pedido de hoy
+    # (que llega en tau=tl) alcance a cubrir el período completo hasta el
+    # próximo pedido (R días después). Si HORIZON < tl + R + 1, el pedido
+    # de hoy solo cubre HORIZON - tl - 1 días, menos que R, generando gaps.
+    HORIZON = tl + max(5, R_rh + 1)
     A  = list(range(L))
     A1 = list(range(1, L))
     TH = list(range(HORIZON))
@@ -840,7 +844,7 @@ def leer_con_encabezado_correcto(archivo_bytes, nombre_hoja):
     df_prueba = pd.read_excel(io.BytesIO(archivo_bytes), sheet_name=nombre_hoja, header=0, nrows=1)
     primera_col = str(df_prueba.columns[0]).lower()
     # Palabras clave que indican que los encabezados ya están en la fila 1
-    _palabras_h0 = ["codigo", "sku", "clave", "f_pedido", "fecha", "matcod",
+    _palabras_h0 = ["código", "sku", "clave", "f_pedido", "fecha", "matcod",
                     "pedido", "material", "id", "item", "producto"]
     if any(p in primera_col for p in _palabras_h0):
         return pd.read_excel(io.BytesIO(archivo_bytes), sheet_name=nombre_hoja, header=0)
@@ -883,7 +887,7 @@ def transformar_formato_ancho(df):
     col_nombre = None
     for col in df.columns:
         col_l = str(col).lower().strip()
-        if ("codigo" in col_l or "código" in col_l) and col_codigo is None:
+        if ("código" in col_l or "código" in col_l) and col_codigo is None:
             col_codigo = col
         elif "nombre" in col_l and col_nombre is None:
             col_nombre = col
@@ -967,11 +971,11 @@ def transformar_formato_ancho(df):
     filas_mov  = []
     filas_inv  = []
     for _, row in df.iterrows():
-        codigo = row[col_codigo]
+        código = row[col_codigo]
         nombre = row[col_nombre]
-        if pd.isna(codigo) or pd.isna(nombre):
+        if pd.isna(código) or pd.isna(nombre):
             continue
-        cod = str(codigo).strip()
+        cod = str(código).strip()
         nom = str(nombre).strip()
 
         # Movimientos mensuales
@@ -1040,7 +1044,7 @@ def _store_global():
         "vida_util_dias": 0, "costo_desperdicio": 0, "beta_servicio": 0.95,
         "fecha_revision": date.today(), "hora_revision": None, "responsable": "",
         "archivos":       [],   # [{nombre, size, cargado_en, responsable, preview, n_productos, mov, inv_extra, inv_directo}]
-        "historial":      [],   # [{Fecha, Responsable, Accion, Archivo, Productos}]
+        "historial":      [],   # [{Fecha, Responsable, Acción, Archivo, Productos}]
         "archivos_bytes": {},   # {nombre: bytes_originales} — para descargar el archivo original + filas nuevas
         "gh_gist_id":     None, # gist_id del Gist de SAVIA en GitHub
     }
@@ -1097,7 +1101,7 @@ def _excel_mov_actualizado(nuevos_movs: list) -> tuple:
                 return c
         return None
 
-    _c_cod  = _find_col(_df_orig, ["matcod", "codigo", "cod_mat"])
+    _c_cod  = _find_col(_df_orig, ["matcod", "código", "cod_mat"])
     _c_nom  = _find_col(_df_orig, ["matnombre", "nombre", "material", "medicamento"])
     _c_fpd  = _find_col(_df_orig, ["f_pedido", "fecha_pedido", "fecha"])
     _c_cant = _find_col(_df_orig, ["cant_despachada", "despachada", "dispensada", "cantidad"])
@@ -1132,7 +1136,7 @@ def _excel_inv_actualizado() -> tuple:
     _bytes_map = _store_global().get("archivos_bytes", {})
     _movs      = _store_global().get("movimientos", [])  # lista interna
 
-    # Buscar el archivo de inventario (tiene columnas tipo Existencia, Codigo, Material, etc.)
+    # Buscar el archivo de inventario (tiene columnas tipo Existencia, Código, Material, etc.)
     _archivo_inv_bytes = None
     _archivo_inv_nom   = None
     for _nom, _bts in _bytes_map.items():
@@ -1140,7 +1144,7 @@ def _excel_inv_actualizado() -> tuple:
             # El inventario tiene cabecera en fila 2 (índice 2)
             _df_test = pd.read_excel(io.BytesIO(_bts), header=2, nrows=1)
             _cols_l  = [str(c).lower() for c in _df_test.columns]
-            if any("existencia" in c or "codigo" in c or "material" in c for c in _cols_l):
+            if any("existencia" in c or "código" in c or "material" in c for c in _cols_l):
                 _archivo_inv_bytes = _bts
                 _archivo_inv_nom   = _nom
                 break
@@ -1162,7 +1166,7 @@ def _excel_inv_actualizado() -> tuple:
                 return c
         return None
 
-    _c_cod  = _find_col(_df_inv, ["codigo", "cod"])
+    _c_cod  = _find_col(_df_inv, ["código", "cod"])
     _c_nom  = _find_col(_df_inv, ["material", "nombre", "medicamento"])
     _c_exist = _find_col(_df_inv, ["existencia"])
 
@@ -1354,7 +1358,7 @@ def _gh_cargar_desde_gist():
             _store["historial"].append({
                 "Fecha":       _ahora_gh,
                 "Responsable": _resp_gh,
-                "Accion":      "Carga desde GitHub Gist",
+                "Acción":      "Carga desde GitHub Gist",
                 "Archivo":     _nom_orig,
                 "Productos":   _rec["n_productos"],
             })
@@ -1478,23 +1482,23 @@ def _recompute():
             store["inv_lotes"] = _il_raw
             _il_cl = {str(c).lower(): c for c in _il_raw.columns}
             def _find_il(kws):
-                # 1° coincidencia exacta  (ej: "codigo" == "codigo")
+                # 1° coincidencia exacta  (ej: "código" == "código")
                 for kw in kws:
                     for cl, co in _il_cl.items():
                         if cl == kw:
                             return co
-                # 2° empieza con la palabra (ej: "codigo" en "codigoproducto")
+                # 2° empieza con la palabra (ej: "código" en "codigoproducto")
                 for kw in kws:
                     for cl, co in _il_cl.items():
                         if cl.startswith(kw):
                             return co
-                # 3° contiene la palabra (ej: "codigo" en "matcodigo") — último recurso
+                # 3° contiene la palabra (ej: "código" en "matcodigo") — último recurso
                 for kw in kws:
                     for cl, co in _il_cl.items():
                         if kw in cl:
                             return co
                 return None
-            _c_il_cod  = _find_il(["codigo", "sku", "clave"])
+            _c_il_cod  = _find_il(["código", "sku", "clave"])
             _c_il_stk  = _find_il(["existencia", "stock"])
             _c_il_venc = _find_il(["fvenv", "vencimiento", "venc", "caducidad"])
             _c_il_prec = _find_il(["precio", "costo"])
@@ -1647,7 +1651,7 @@ with st.sidebar:
                 _s["historial"].append({
                     "Fecha":       _ahora,
                     "Responsable": _resp,
-                    "Accion":      "Carga",
+                    "Acción":      "Carga",
                     "Archivo":     _nom,
                     "Productos":   _rec["n_productos"],
                 })
@@ -1688,7 +1692,7 @@ with st.sidebar:
                             _s["historial"].append({
                                 "Fecha":       pd.Timestamp.now(tz=pytz.timezone("America/Santiago")).strftime("%Y-%m-%d %H:%M"),
                                 "Responsable": _s.get("responsable", "") or "sin especificar",
-                                "Accion":      "Eliminacion",
+                                "Acción":      "Eliminacion",
                                 "Archivo":     _eliminado["nombre"],
                                 "Productos":   _eliminado["n_productos"],
                             })
@@ -1802,7 +1806,7 @@ IL_COD  = None; IL_NOM  = None; IL_LOTE = None
 IL_VENC = None; IL_STK  = None; IL_PREC = None; IL_UBIC = None
 if datos_inv_lotes is not None and len(datos_inv_lotes) > 0:
     _il_usadas = set()
-    IL_COD  = encontrar_columna(datos_inv_lotes, ["codigo", "sku", "clave"],                        _il_usadas)
+    IL_COD  = encontrar_columna(datos_inv_lotes, ["código", "sku", "clave"],                        _il_usadas)
     IL_NOM  = encontrar_columna(datos_inv_lotes, ["material", "nombre", "medicamento", "descripción"], _il_usadas)
     IL_LOTE = encontrar_columna(datos_inv_lotes, ["lote", "lotes", "batch", "partida"],              _il_usadas)
     IL_VENC = encontrar_columna(datos_inv_lotes, ["vencimiento", "venc", "caducidad", "expiry", "fvenv"], _il_usadas)
@@ -1816,14 +1820,14 @@ if datos_inv_lotes is not None and len(datos_inv_lotes) > 0:
 # La primera columna que coincide queda asignada y no se puede usar de nuevo.
 # ──────────────────────────────────────────────────────────────────────────────
 usadas_inv = set()  # rastrea qué columnas ya fueron asignadas
-COL_CODIGO      = encontrar_columna(datos_inventario, ["codigo", "sku", "clave", "articulo", "referencia"],             usadas_inv)
+COL_CODIGO      = encontrar_columna(datos_inventario, ["código", "sku", "clave", "articulo", "referencia"],             usadas_inv)
 COL_NOMBRE      = encontrar_columna(datos_inventario, ["nombre", "material", "medicamento", "fármaco", "descripción"],              usadas_inv)
 COL_LOTE        = encontrar_columna(datos_inventario, ["lote", "batch", "partida"],                                     usadas_inv)
 COL_VENCIMIENTO = encontrar_columna(datos_inventario, ["vencimiento", "vence", "caducidad", "expiry", "fec venc", "vto", "fvenv"], usadas_inv)
 COL_STOCK       = encontrar_columna(datos_inventario, ["stock", "existencia", "disponible", "inventario", "saldo"],     usadas_inv)
 COL_COSTO       = encontrar_columna(datos_inventario, ["costo", "cost", "precio compra", "valor compra", "precio"],     usadas_inv)
 COL_MARCA       = encontrar_columna(datos_inventario, ["marca", "laboratorio", "fabricante"],                           usadas_inv)
-COL_UNIDAD      = encontrar_columna(datos_inventario, ["unidad", "medida", "presentacion"],                             usadas_inv)
+COL_UNIDAD      = encontrar_columna(datos_inventario, ["unidad", "medida", "presentación"],                             usadas_inv)
 
 
 # Si no se detectó alguna columna esencial, el usuario la elige manualmente
@@ -1836,8 +1840,8 @@ if not COL_STOCK:       COL_STOCK       = st.selectbox("Columna de STOCK:",     
 # Detectar columnas de movimientos (con su propio set para no mezclar con inventario)
 if datos_movimientos is not None:
     usadas_mov       = set()
-    COL_MOV_CODIGO   = encontrar_columna(datos_movimientos, ["codigo", "sku", "nombre", "medicamento"], usadas_mov)
-    COL_MOV_FECHA    = encontrar_columna(datos_movimientos, ["fecha", "date", "periodo", "mes"],         usadas_mov)
+    COL_MOV_CODIGO   = encontrar_columna(datos_movimientos, ["código", "sku", "nombre", "medicamento"], usadas_mov)
+    COL_MOV_FECHA    = encontrar_columna(datos_movimientos, ["fecha", "date", "período", "mes"],         usadas_mov)
     COL_MOV_CANTIDAD = encontrar_columna(datos_movimientos, ["dispensada", "dispensado", "demanda", "consumo", "cantidad"], usadas_mov)
     tiene_movimientos = (COL_MOV_CODIGO is not None and COL_MOV_FECHA is not None and COL_MOV_CANTIDAD is not None)
 else:
@@ -2646,7 +2650,7 @@ with tab2:
                 "<span style='color:#D69E2E'><b>amarillo</b></span> = medio, "
                 "<span style='color:#DD6B20'><b>naranja</b></span> = bajo, "
                 "<span style='color:#E53E3E'><b>rojo</b></span> = sin existencias. "
-                "Usa el filtro para ver la distribución de un medicamento especifico."
+                "Usa el filtro para ver la distribución de un medicamento específico."
             ), unsafe_allow_html=True)
             # ── Filtro por medicamento ────────────────────────────────────────
             _bd_all_names = ["— Todos los medicamentos —"] + sorted(
@@ -2788,7 +2792,7 @@ with tab2:
                 paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
             )
             st.plotly_chart(_bd_fig, use_container_width=True)
-            st.caption("Pasa el cursor sobre cada nodo para ver el nombre de la bodega, las unidades en existencia y su participacion porcentual sobre el total.")
+            st.caption("Pasa el cursor sobre cada nodo para ver el nombre de la bodega, las unidades en existencia y su participación porcentual sobre el total.")
 
             # ── Tabla de detalle por bodega ───────────────────────────────────
             st.markdown(
@@ -3341,7 +3345,7 @@ with tab2:
                             help="Meses que duran las existencias actuales al ritmo de consumo promedio. Menos de 1 mes = crítico.")
             elif _d_dcob > 0:
                 _dk3.metric("Días de cobertura", f"{_d_dcob:.0f} días",
-                            help="Dias que duran las existencias actuales al ritmo de consumo promedio.")
+                            help="Días que duran las existencias actuales al ritmo de consumo promedio.")
             else:
                 _dk3.metric("Cobertura", "—",
                             help="No hay datos suficientes para estimar la cobertura (sin historial de consumo).")
@@ -3670,13 +3674,13 @@ with tab3:
                 R_etiqueta = f"Cada {int(periodo_revision)} días"
                 dias_cob = fila["dias_cobertura"]
                 if fila["estado"] == "VENCIDO":
-                    accion = "Dar de baja"
+                    acción = "Dar de baja"
                 elif fila["stock_total"] < p["s"]:
-                    accion = "Pedir ahora"
+                    acción = "Pedir ahora"
                 elif dias_cob is not None and not pd.isna(dias_cob) and dias_cob < (lead_time + periodo_revision) * 1.5:
-                    accion = "Pedir pronto"
+                    acción = "Pedir pronto"
                 else:
-                    accion = "Existencias suficientes"
+                    acción = "Existencias suficientes"
                 filas_politicas.append({
                     "Código":                       fila[COL_CODIGO],
                     "Medicamento":                  fila[COL_NOMBRE],
@@ -3688,7 +3692,7 @@ with tab3:
                     "Reserva de seguridad":         math.ceil(p["SS"]),
                     "Días de existencias disponibles": dias_cob if dias_cob is not None and not pd.isna(dias_cob) else "—",
                     "Revisar cada":                 R_etiqueta,
-                    "Acción recomendada":           accion,
+                    "Acción recomendada":           acción,
                     "_media":                       fila["media_diaria"],
                 })
 
@@ -4017,10 +4021,10 @@ with tab3:
                         # SECCIÓN: RECOMENDACIÓN DE PEDIDO
                         # ═══════════════════════════════════════════════════════
                         st.divider()
-                        st.subheader("Recomendacion de pedido")
+                        st.subheader("Recomendación de pedido")
                         st.markdown(
-                            "Ingresa el stock actual de **" + med_sim + "** para obtener una recomendacion "
-                            "concreta basada en la estrategia recomendada por la simulacion."
+                            "Ingresa el stock actual de **" + med_sim + "** para obtener una recomendación "
+                            "concreta basada en la estrategia recomendada por la simulación."
                         )
 
                         _stock_act = st.number_input(
@@ -4031,10 +4035,10 @@ with tab3:
                         )
 
                         _ip_rec = int(_stock_act)
-                        _dem_per   = int(round(media_sim * periodo_revision))   # demanda 1 periodo
-                        _min_2per  = int(round(media_sim * 2 * periodo_revision))  # demanda 2 periodos
+                        _dem_per   = int(round(media_sim * periodo_revision))   # demanda 1 período
+                        _min_2per  = int(round(media_sim * 2 * periodo_revision))  # demanda 2 períodos
 
-                        # Cantidad recomendada segun mejor politica
+                        # Cantidad recomendada según mejor política
                         if mejor == "(R,s,Q)":
                             _q_pol  = int(Q_star_sim) if _ip_rec <= s_sim else 0
                             _s_obj  = S_rsq
@@ -4045,7 +4049,7 @@ with tab3:
                             _q_pol  = max(0, int(S_rss - _ip_rec)) if _ip_rec <= s_sim else 0
                             _s_obj  = S_rss
 
-                        # Ajuste al minimo de 2 periodos
+                        # Ajuste al mínimo de 2 períodos
                         _q_final_rec = max(_q_pol, _min_2per) if _q_pol > 0 else 0
                         _q_ajustado  = (_q_final_rec > _q_pol) and (_q_pol > 0)
 
@@ -4053,7 +4057,7 @@ with tab3:
                         _stock_prox_rev = max(0, int(_stock_act) - _dem_per)
                         _stock_tras_ped = int(min(_stock_act + _q_final_rec, _s_obj)) if _q_final_rec > 0 else int(_stock_act)
 
-                        # Dias hasta que la posicion de inventario baja al umbral
+                        # Días hasta que la posición de inventario baja al umbral
                         if _ip_rec > s_sim and media_sim > 0:
                             _dias_al_umbral = (_ip_rec - s_sim) / media_sim
                         else:
@@ -4062,28 +4066,28 @@ with tab3:
                         # Estado (semaforo)
                         if _ip_rec <= s_sim:
                             _sbg, _sbord = "#fee2e2", "#dc2626"
-                            _stit = "Atencion: se recomienda pedir ahora"
+                            _stit = "Atención: se recomienda pedir ahora"
                             _smsg = (
-                                f"Tu posicion de inventario (<b>{_ip_rec:,} u.</b>) "
+                                f"Tu posición de inventario (<b>{_ip_rec:,} u.</b>) "
                                 f"ya bajo el umbral de pedido (<b>{s_sim:,} u.</b>). "
                                 f"Genera la orden de compra lo antes posible."
                             )
                         elif _dias_al_umbral < periodo_revision * 2:
                             _sbg, _sbord = "#fef9c3", "#d97706"
-                            _stit = "Proximo pedido: en menos de 2 periodos"
+                            _stit = "Proximo pedido: en menos de 2 períodos"
                             _smsg = (
                                 f"Tu stock llegara al umbral de pedido en aproximadamente "
-                                f"<b>{_dias_al_umbral:.0f} dias</b> "
-                                f"({_dias_al_umbral / max(periodo_revision, 0.001):.1f} periodos de revision). "
-                                f"Considera preparar el pedido en la proxima revision."
+                                f"<b>{_dias_al_umbral:.0f} días</b> "
+                                f"({_dias_al_umbral / max(periodo_revision, 0.001):.1f} períodos de revisión). "
+                                f"Considera preparar el pedido en la proxima revisión."
                             )
                         else:
                             _sbg, _sbord = "#dcfce7", "#16a34a"
                             _stit = "Stock en buen nivel"
                             _smsg = (
                                 f"Tu stock esta <b>{int(_ip_rec - s_sim):,} u.</b> sobre el umbral de pedido, "
-                                f"equivalente a aproximadamente <b>{_dias_al_umbral:.0f} dias</b> de consumo adicional. "
-                                f"No se requiere accion inmediata."
+                                f"equivalente a aproximadamente <b>{_dias_al_umbral:.0f} días</b> de consumo adicional. "
+                                f"No se requiere acción inmediata."
                             )
 
                         # ── Título de estado (grande y llamativo, sin caja) ───────────
@@ -4121,7 +4125,7 @@ with tab3:
                                 st.metric(
                                     "Pedir ahora",
                                     f"{_q_final_rec:,} u.",
-                                    help="Cantidad recomendada a ordenar. Cubre al menos 2 periodos de demanda.",
+                                    help="Cantidad recomendada a ordenar. Cubre al menos 2 períodos de demanda.",
                                 )
                             else:
                                 st.metric(
@@ -4133,11 +4137,11 @@ with tab3:
                         with _mc2:
                             _delta_prox = _stock_prox_rev - s_sim
                             st.metric(
-                                "Stock en proxima revision",
+                                "Stock en proxima revisión",
                                 f"~{_stock_prox_rev:,} u.",
                                 delta=f"{_delta_prox:+,} vs umbral",
                                 delta_color="normal" if _delta_prox >= 0 else "inverse",
-                                help="Stock fisico estimado al llegar la proxima revision (descontando demanda esperada).",
+                                help="Stock fisico estimado al llegar la proxima revisión (descontando demanda esperada).",
                             )
 
                         with _mc3:
@@ -4149,33 +4153,33 @@ with tab3:
                                 )
                             else:
                                 st.metric(
-                                    "Demanda por periodo",
+                                    "Demanda por período",
                                     f"~{_dem_per:,} u.",
-                                    help=f"Demanda esperada en {periodo_revision} dia(s).",
+                                    help=f"Demanda esperada en {periodo_revision} día(s).",
                                 )
 
                         if _ncols == 4:
                             with _mc4:
                                 st.metric(
-                                    "Demanda por periodo",
+                                    "Demanda por período",
                                     f"~{_dem_per:,} u.",
-                                    help=f"Demanda esperada en {periodo_revision} dia(s).",
+                                    help=f"Demanda esperada en {periodo_revision} día(s).",
                                 )
 
                         # ── Barra de contexto secundario ──────────────────────────────
                         _ctx_parts = [
                             f"<b>Estrategia:</b> {NOMBRES[mejor]} ({mejor})",
                             f"<b>Umbral de pedido:</b> {s_sim:,} u.",
-                            f"<b>Revision cada:</b> {periodo_revision} dia(s)",
+                            f"<b>Revisión cada:</b> {periodo_revision} día(s)",
                         ]
                         if _q_ajustado:
                             _ctx_parts.append(
-                                f"<b>Cant. segun politica:</b> {_q_pol:,} u. "
-                                f"<i>(ajustado a min. 2 periodos: {_q_final_rec:,} u.)</i>"
+                                f"<b>Cant. según política:</b> {_q_pol:,} u. "
+                                f"<i>(ajustado a min. 2 períodos: {_q_final_rec:,} u.)</i>"
                             )
                         if _dias_al_umbral > 0 and _q_final_rec == 0:
                             _prox_ord_d = math.ceil(_dias_al_umbral / max(periodo_revision, 0.001)) * periodo_revision
-                            _ctx_parts.append(f"<b>Proximo pedido estimado:</b> en ~{_prox_ord_d:.0f} dias")
+                            _ctx_parts.append(f"<b>Proximo pedido estimado:</b> en ~{_prox_ord_d:.0f} días")
                         st.markdown(
                             "<div style='background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;"
                             "padding:10px 16px;font-size:13px;color:#475569;margin-top:8px;'>"
@@ -4188,9 +4192,9 @@ with tab3:
                         # SECCIÓN: GRAFICOS
                         # ═══════════════════════════════════════════════════════
                         st.divider()
-                        st.markdown("### Evolucion del stock en bodega — ultimas semanas de simulacion")
+                        st.markdown("### Evolucion del stock en bodega — ultimas semanas de simulación")
                         st.markdown(
-                            "Los graficos muestran como sube y baja el stock de medicamento a lo largo del tiempo "
+                            "Los gráficos muestran como sube y baja el stock de medicamento a lo largo del tiempo "
                             "bajo cada estrategia de pedido. El patron en **dientes de sierra** es normal: "
                             "el stock baja con la demanda diaria y sube cuando llega un pedido."
                         )
@@ -4292,7 +4296,7 @@ with tab3:
                             paper_bgcolor="white",
                             plot_bgcolor="#f8fafc",
                             font=dict(family="sans-serif", size=12, color="#1e293b"),
-                            # Leyenda debajo de los 3 graficos para no tapar los titulos
+                            # Leyenda debajo de los 3 gráficos para no tapar los titulos
                             legend=dict(
                                 orientation="h",
                                 x=0.5, xanchor="center",
@@ -4337,19 +4341,19 @@ with tab3:
 
                         st.plotly_chart(fig_sim, use_container_width=True)
 
-                        # Guia de colores al pie del grafico
+                        # Guia de colores al pie del gráfico
                         st.markdown(
                             "<div style='background:#f1f5f9;border-radius:10px;padding:14px 20px;"
                             "font-size:13px;line-height:2.1;border:1px solid #e2e8f0;margin-top:4px;'>"
                             "<b>Guia de lineas de referencia</b><br>"
                             "<span style='color:#dc2626;font-weight:bold'>&#9135;&#9135; Roja</span>"
-                            " — Umbral de pedido: cuando el stock (o la posicion de inventario) cae "
+                            " — Umbral de pedido: cuando el stock (o la posición de inventario) cae "
                             "hasta este nivel, se genera una nueva orden de compra.<br>"
                             "<span style='color:#16a34a;font-weight:bold'>&#9135;&#9135; Verde</span>"
-                            " — Nivel maximo (S): tope de inventario al que se repone en cada pedido. "
+                            " — Nivel máximo (S): tope de inventario al que se repone en cada pedido. "
                             "El stock no deberia superar este valor habitualmente.<br>"
                             "<span style='color:#d97706;font-weight:bold'>&#9135;&#9135; Naranja</span>"
-                            " — Reserva de seguridad: colchon minimo para absorber variaciones "
+                            " — Reserva de seguridad: colchon mínimo para absorber variaciones "
                             "inesperadas en la demanda o retrasos en la entrega.<br>"
                             "<span style='color:#1e293b;font-size:12px'>"
                             "Linea solida = stock fisico en bodega &nbsp;|&nbsp; "
@@ -4375,9 +4379,9 @@ with tab3:
                     t3a, t3b = st.columns([3, 2])
                     busq_t3 = t3a.text_input("Buscar:", placeholder="Nombre del producto...", key="busq_t3")
                     acciones_disp = []
-                    for accion in ["Dar de baja", "Pedir ahora", "Pedir pronto", "Existencias suficientes"]:
-                        if accion in df_politicas["Acción recomendada"].values:
-                            acciones_disp.append(accion)
+                    for acción in ["Dar de baja", "Pedir ahora", "Pedir pronto", "Existencias suficientes"]:
+                        if acción in df_politicas["Acción recomendada"].values:
+                            acciones_disp.append(acción)
                     filtro_accion = t3b.multiselect("Filtrar por acción:", acciones_disp, default=acciones_disp, key="filtro_accion_t3")
                     df_vis = df_politicas[df_politicas["Acción recomendada"].isin(filtro_accion)].drop(columns="_media", errors="ignore")
                     if busq_t3.strip():
