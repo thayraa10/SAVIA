@@ -5,6 +5,7 @@ import numpy as np
 import math
 import io
 import re
+import unicodedata
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import date, timedelta
@@ -245,15 +246,22 @@ def _ayuda(texto: str, color: str = "#EBF8FF", borde: str = "#3182CE"):
 
 # ──────────────────────────────────────────────────────────────────────────────
 
+def _sin_tildes(texto: str) -> str:
+    """Devuelve el texto en minúsculas y sin tildes/diacríticos.
+    Permite comparar 'código' con 'codigo', 'CÓDIGO', etc."""
+    nfkd = unicodedata.normalize("NFKD", str(texto))
+    return "".join(c for c in nfkd if not unicodedata.combining(c)).lower()
+
+
 def encontrar_columna(df, palabras_clave, ya_usadas):
     if df is None:
         return None
     for columna in df.columns:
         if columna in ya_usadas:
             continue
-        nombre = str(columna).lower().replace("_", " ").replace("-", " ")
+        nombre = _sin_tildes(str(columna)).replace("_", " ").replace("-", " ")
         for palabra in palabras_clave:
-            if palabra in nombre:
+            if _sin_tildes(palabra) in nombre:
                 ya_usadas.add(columna)
                 return columna
     return None
@@ -842,9 +850,10 @@ def leer_con_encabezado_correcto(archivo_bytes, nombre_hoja):
     Cualquier otro archivo estándar tiene encabezados en la primera fila.
     """
     df_prueba = pd.read_excel(io.BytesIO(archivo_bytes), sheet_name=nombre_hoja, header=0, nrows=1)
-    primera_col = str(df_prueba.columns[0]).lower()
+    primera_col = _sin_tildes(str(df_prueba.columns[0]))
     # Palabras clave que indican que los encabezados ya están en la fila 1
-    _palabras_h0 = ["código", "sku", "clave", "f_pedido", "fecha", "matcod",
+    # Se normalizan con _sin_tildes para comparar sin importar si el Excel usa tildes o no
+    _palabras_h0 = ["codigo", "sku", "clave", "f_pedido", "fecha", "matcod",
                     "pedido", "material", "id", "item", "producto"]
     if any(p in primera_col for p in _palabras_h0):
         return pd.read_excel(io.BytesIO(archivo_bytes), sheet_name=nombre_hoja, header=0)
@@ -886,8 +895,8 @@ def transformar_formato_ancho(df):
     col_codigo = None
     col_nombre = None
     for col in df.columns:
-        col_l = str(col).lower().strip()
-        if ("código" in col_l or "código" in col_l) and col_codigo is None:
+        col_l = _sin_tildes(str(col)).strip()
+        if "codigo" in col_l and col_codigo is None:
             col_codigo = col
         elif "nombre" in col_l and col_nombre is None:
             col_nombre = col
@@ -1097,7 +1106,8 @@ def _excel_mov_actualizado(nuevos_movs: list) -> tuple:
     # Detectar columnas clave del archivo original
     def _find_col(df, keywords):
         for c in df.columns:
-            if any(k in str(c).lower() for k in keywords):
+            cn = _sin_tildes(str(c))
+            if any(_sin_tildes(k) in cn for k in keywords):
                 return c
         return None
 
@@ -1143,8 +1153,8 @@ def _excel_inv_actualizado() -> tuple:
         try:
             # El inventario tiene cabecera en fila 2 (índice 2)
             _df_test = pd.read_excel(io.BytesIO(_bts), header=2, nrows=1)
-            _cols_l  = [str(c).lower() for c in _df_test.columns]
-            if any("existencia" in c or "código" in c or "material" in c for c in _cols_l):
+            _cols_l  = [_sin_tildes(str(c)) for c in _df_test.columns]
+            if any("existencia" in c or "codigo" in c or "material" in c for c in _cols_l):
                 _archivo_inv_bytes = _bts
                 _archivo_inv_nom   = _nom
                 break
@@ -1162,7 +1172,8 @@ def _excel_inv_actualizado() -> tuple:
 
     def _find_col(df, keywords):
         for c in df.columns:
-            if any(k in str(c).lower() for k in keywords):
+            cn = _sin_tildes(str(c))
+            if any(_sin_tildes(k) in cn for k in keywords):
                 return c
         return None
 
@@ -1480,20 +1491,22 @@ def _recompute():
             _il_raw = pd.concat(inv_dirs, ignore_index=True)
             _il_raw.columns = [str(c) for c in _il_raw.columns]
             store["inv_lotes"] = _il_raw
-            _il_cl = {str(c).lower(): c for c in _il_raw.columns}
+            _il_cl = {_sin_tildes(str(c)): c for c in _il_raw.columns}
             def _find_il(kws):
-                # 1° coincidencia exacta  (ej: "código" == "código")
-                for kw in kws:
+                # Normaliza las palabras clave para comparar sin tildes
+                kws_n = [_sin_tildes(k) for k in kws]
+                # 1° coincidencia exacta  (ej: "código" == "codigo")
+                for kw in kws_n:
                     for cl, co in _il_cl.items():
                         if cl == kw:
                             return co
                 # 2° empieza con la palabra (ej: "código" en "codigoproducto")
-                for kw in kws:
+                for kw in kws_n:
                     for cl, co in _il_cl.items():
                         if cl.startswith(kw):
                             return co
                 # 3° contiene la palabra (ej: "código" en "matcodigo") — último recurso
-                for kw in kws:
+                for kw in kws_n:
                     for cl, co in _il_cl.items():
                         if kw in cl:
                             return co
