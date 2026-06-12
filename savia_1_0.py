@@ -4470,15 +4470,15 @@ with tab3:
             if not _rh_meds:
                 st.warning("No hay medicamentos con historial de consumo.")
             else:
-                _rh_med = st.selectbox("Medicamento:", _rh_meds, key="rh_med_sel")
+                # Usar el medicamento del último submit del formulario (o el primero de la lista)
+                _rh_med = st.session_state.get("rh_med_form", _rh_meds[0])
+                if _rh_med not in _rh_meds:
+                    _rh_med = _rh_meds[0]
                 _rh_row = resumen[resumen[COL_NOMBRE] == _rh_med].iloc[0]
 
                 # Detectar cambio de medicamento y limpiar recomendaciones anteriores
                 if st.session_state.get("_rh_prev_med_sel") != _rh_med:
                     st.session_state.pop("rh_recommended_inv", None)
-                    # NOTA: NO se puede eliminar "rh_inv_ini_w" (es clave de widget registrado).
-                    # En su lugar, señalamos un reset pendiente → el bloque pre-form
-                    # actualizará st.session_state["rh_inv_ini_w"] con el default del nuevo med.
                     st.session_state["_rh_inv_pending_reset"] = True
                     st.session_state["_rh_prev_med_sel"] = _rh_med
 
