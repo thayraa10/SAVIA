@@ -2653,7 +2653,7 @@ with tab2:
     _t2_bod, _t2_inv, _t2_venc, _t2_det = st.tabs([
         "Existencias por Bodega",
         "Inventario",
-        "Vencimientos",
+        "Control de Lotes",
         "Detalle por Medicamento",
     ])
 
