@@ -3793,8 +3793,11 @@ with tab3:
                     _SL_eff_sim = float(SL_sim) if SL_sim and SL_sim > 0 else 1e6
                     S_rsq_raw  = s_sim + Q_star_sim + U_sim
                     S_rsq  = int(min(S_rsq_raw,  media_sim * _SL_eff_sim)) if _SL_eff_sim < 1e5 else S_rsq_raw
-                    # (R,S): nivel objetivo = S = s+Q+U para cubrir el período LT+R completo
-                    S_rs_raw   = s_sim + Q_sim + U_sim
+                    # (R,S): nivel objetivo = s (demanda durante LT+R + reserva de seguridad).
+                    # En la política (R,S) se repone hasta s en CADA revisión, por lo que
+                    # el inventario oscila en torno a s − R·λ, diente de sierra estrecho.
+                    # Usar s+Q+U (igual que (R,s,S)) hace las dos políticas idénticas visualmente.
+                    S_rs_raw   = s_sim
                     S_rs   = int(min(S_rs_raw, media_sim * _SL_eff_sim)) if _SL_eff_sim < 1e5 else S_rs_raw
                     S_rss_raw  = s_sim + Q_sim + U_sim
                     S_rss  = int(min(S_rss_raw,  media_sim * _SL_eff_sim)) if _SL_eff_sim < 1e5 else S_rss_raw
@@ -3819,7 +3822,7 @@ with tab3:
                     )
                     _pc.metric(
                         "Cantidad a pedir (Q*)", f"{Q_star_sim:,} u",
-                        help="Lote de pedido económicamente óptimo, ajustado por perecibilidad.",
+                        help="Lote de pedido calculado según EOQ, ajustado por perecibilidad.",
                     )
                     _pd.metric(
                         "Reserva de seguridad (SS)", f"{params_sim['SS']:,} u",
@@ -3983,15 +3986,15 @@ with tab3:
                             _lc  = _lcolor_pol[pol]
 
                             if _ev == "RECOMENDADA":
-                                _bc="#16a34a"; _bbg="#f0fdf4"; _bdg="#dcfce7"; _btx="#15803d"; _ico="★"
+                                _bc="#16a34a"; _bbg="#f0fdf4"; _bdg="#dcfce7"; _btx="#15803d"; _ico=""
                             elif "quiebres" in _ev.lower():
-                                _bc="#dc2626"; _bbg="white";   _bdg="#fee2e2"; _btx="#dc2626"; _ico="✕"
+                                _bc="#dc2626"; _bbg="white";   _bdg="#fee2e2"; _btx="#dc2626"; _ico=""
                             elif "vencimiento" in _ev.lower():
                                 _bc="#d97706"; _bbg="white";   _bdg="#fef3c7"; _btx="#b45309"; _ico="!"
                             else:
                                 _bc="#94a3b8"; _bbg="white";   _bdg="#f1f5f9"; _btx="#475569"; _ico="↑$"
 
-                            _q_txt   = "Sin quiebres ✓" if _q == 0 else f"{_q:,} u. sin atender"
+                            _q_txt   = "Sin quiebres" if _q == 0 else f"{_q:,} u. sin atender"
                             _q_color = "#16a34a" if _q == 0 else "#dc2626"
 
                             with _col_c:
@@ -4425,7 +4428,7 @@ with tab3:
                     st.info(
                         "**Guía de columnas:**  \n"
                         "**Pedir cuando queden menos de X** = punto de reorden (s): nivel al que se debe emitir una orden para no quedarse sin existencias durante el tiempo de entrega.  \n"
-                        "**Cuánto pedir** = cantidad económica óptima (EOQ): minimiza la suma de costos de pedir y de mantener inventario.  \n"
+                        "**Cuánto pedir** = cantidad económica de pedido (EOQ): minimiza la suma de costos de pedir y de mantener inventario.  \n"
                         "**Reserva de seguridad** = colchón extra para absorber variaciones inesperadas en la demanda o demoras del proveedor.  \n"
                         "**Nivel máximo** = tope de inventario recomendado para evitar exceso de existencias."
                     )
@@ -4624,7 +4627,7 @@ with tab3:
                             _dias_cubiertos = int(_rh_inv_ini / max(_lambda_d, 1))
                             _dias_quiebre   = _rh_tl - _dias_cubiertos
                             st.warning(
-                                f"⚠️ **Inventario inicial insuficiente.** "
+                                f"**Inventario inicial insuficiente.** "
                                 f"Con {_rh_inv_ini:,} u y λ = {_lambda_d:.0f} u/día el stock se agota "
                                 f"en ≈ {_dias_cubiertos} días, pero el primer pedido tarda {_rh_tl} días "
                                 f"en llegar → **{_dias_quiebre} días sin existencias** al inicio de la simulación. "
@@ -4666,7 +4669,7 @@ with tab3:
                                 ss_units=_ss_u,
                             )
                             if _sol is None:
-                                st.error(f"Sin solución óptima en el día {_day}.")
+                                st.error(f"Sin solución factible en el día {_day}.")
                                 _failed = True
                                 break
 
@@ -4796,9 +4799,9 @@ with tab3:
                             # Explicar el patrón diente de sierra
                             if _n_dias_q == 0:
                                 st.success(
-                                    "✅ **Sin quiebre de existencias.** Las existencias llegan a 0 al final de algunos días "
+                                    "**Sin quiebre de existencias.** Las existencias llegan a 0 al final de algunos días "
                                     "porque el inventario se agota justo antes de la próxima entrega — "
-                                    "esto es el comportamiento **óptimo** del modelo (no sobran ni faltan existencias). "
+                                    "esto es el comportamiento esperado del modelo (no sobran ni faltan existencias). "
                                     "La demanda de esos días fue cubierta en su totalidad."
                                 )
                             else:
@@ -4806,10 +4809,10 @@ with tab3:
                                 _rango = (f"días {_dias_lista[0]}–{_dias_lista[-1]}"
                                           if len(_dias_lista) > 1 else f"día {_dias_lista[0]}")
                                 st.warning(
-                                    f"⚠️ **Quiebre de existencias real en {_rango}** ({_n_dias_q} días, "
+                                    f"**Quiebre de existencias real en {_rango}** ({_n_dias_q} días, "
                                     f"{_m(int(_df_rh['Faltante (S)'].sum()))} u en total). "
                                     f"Fuera de ese período las existencias llegan a 0 entre ciclos pero "
-                                    f"**S = 0** — la demanda se cubrió, es agotamiento óptimo normal."
+                                    f"**S = 0** — la demanda se cubrió, es agotamiento normal al final del ciclo."
                                 )
                             st.caption(
                                 "Línea azul = existencias totales al final del día. "
