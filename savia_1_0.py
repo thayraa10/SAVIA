@@ -4475,9 +4475,12 @@ with tab3:
                     st.caption("Selecciona el medicamento, ajusta los parámetros y presiona **Ejecutar** — la página no recarga hasta ese momento.")
 
                     # Valor por defecto de inventario inicial = (tl + R) × λ_d  (igual que referencia)
+                    # Se actualiza después de cada ejecución con el lambda correcto del medicamento
+                    # seleccionado en el form (guardado en session_state["rh_recommended_inv"]).
                     _rh_tl_default  = int(lead_time)
                     _rh_R_default   = 3
-                    _rh_inv_default = int(round((_rh_tl_default + _rh_R_default) * _lambda_d))
+                    _rh_inv_min_cur = max(int(round((_rh_tl_default + _rh_R_default) * _lambda_d)), 1)
+                    _rh_inv_default = st.session_state.get("rh_recommended_inv", _rh_inv_min_cur)
 
                     with st.form("form_rh"):
                         _rh_med_form = st.selectbox(
@@ -4545,6 +4548,23 @@ with tab3:
                         _dias2s  = _dias2 + [( pd.Timestamp(_rh_mensual2[COL_MOV_FECHA].iloc[-1]) + pd.DateOffset(months=1)).days_in_month] if _dias2 else [30]
                         _bf2     = bayesian_forecast(_cons2, _dias2s)
                         _lambda_d = _bf2["lambda_diario_hat"]
+
+                        # Actualizar el inventario recomendado en session_state para el próximo render
+                        _rh_rec_inv = max(int(round((_rh_tl + _rh_R) * _lambda_d)), 1)
+                        st.session_state["rh_recommended_inv"] = _rh_rec_inv
+
+                        # Advertir si el inventario inicial es insuficiente para cubrir el lead time
+                        _inv_min_lt = int(_rh_tl * _lambda_d)
+                        if _rh_inv_ini < _inv_min_lt:
+                            st.warning(
+                                f"⚠️ **Inventario inicial insuficiente para el lead time.** "
+                                f"Con {_rh_inv_ini:,} u y λ = {_lambda_d:.0f} u/día, el stock se agota en "
+                                f"≈ {int(_rh_inv_ini / max(_lambda_d, 1))} días — pero el primer pedido "
+                                f"tarda {_rh_tl} días en llegar. Habrá quiebres inevitables hasta que "
+                                f"arribe la primera orden. "
+                                f"**Inventario recomendado: {_rh_rec_inv:,} u** "
+                                f"= ({_rh_tl}+{_rh_R}) días × {_lambda_d:.0f} u/día."
+                            )
 
                         # N_ITER = días del mes a pronosticar (mes siguiente al último dato)
                         # igual que Paracetamol_RH.py: DIAS_MES_SIGUIENTE = calendar.monthrange(MES_SIGUIENTE...)
