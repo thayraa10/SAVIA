@@ -3723,7 +3723,7 @@ with tab3:
                     "Pedir cuando queden menos de": math.ceil(p["s"]),
                     "Cuánto pedir":                 math.ceil(p["Q"]),
                     "Nivel máximo recomendado":      math.ceil(p["S"]),
-                    "Reserva de seguridad":         math.ceil(p["SS"]),
+                    "Reserva de seguridad":         "Suficiente" if math.ceil(p["SS"]) >= 0 else "Insuficiente",
                     "Días de existencias disponibles": dias_cob if dias_cob is not None and not pd.isna(dias_cob) else "—",
                     "Revisar cada":                 R_etiqueta,
                     "Acción recomendada":           acción,
