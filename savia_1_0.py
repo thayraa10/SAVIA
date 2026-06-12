@@ -4687,8 +4687,11 @@ with tab3:
                                         delta_color="off")
                             _sr4.metric("Unidades vencidas",
                                         f"{_m(int(_df_rh['Vencidas (W)'].sum()))} u")
+                            _n_dias_q = int((_df_rh["Faltante (S)"] > 0).sum())
                             _sr5.metric("Demanda insatisfecha",
-                                        f"{_m(int(_df_rh['Faltante (S)'].sum()))} u")
+                                        f"{_m(int(_df_rh['Faltante (S)'].sum()))} u",
+                                        delta=f"{_n_dias_q} día{'s' if _n_dias_q!=1 else ''} con quiebre real",
+                                        delta_color="inverse" if _n_dias_q > 0 else "off")
 
                             # ── Fila 2: costos ─────────────────────────────
                             _h_c = _rh_c.get("h_cost", 0)
@@ -4731,6 +4734,17 @@ with tab3:
                             for _dp in _df_rh[_df_rh["¿Pide?"] == "Sí"]["Día"].tolist():
                                 _fig_rh.add_vline(x=_dp, line_dash="dot", line_color="#16a34a",
                                                   line_width=1.2, opacity=0.7)
+                            # Zona roja: días con QUIEBRE REAL (S > 0) — distintos del stock
+                            # llegando a 0 después de cubrir demanda (que es comportamiento normal)
+                            _mask_s = _df_rh["Faltante (S)"] > 0
+                            if _mask_s.any():
+                                _fig_rh.add_trace(go.Bar(
+                                    x=_df_rh.loc[_mask_s, "Día"],
+                                    y=_df_rh.loc[_mask_s, "Faltante (S)"],
+                                    name="Quiebre real (S>0)",
+                                    marker_color="#ef4444", opacity=0.75,
+                                    yaxis="y2",
+                                ))
                             if _df_rh["Vencidas (W)"].sum() > 0:
                                 _fig_rh.add_trace(go.Bar(
                                     x=_df_rh["Día"], y=_df_rh["Vencidas (W)"],
@@ -4741,17 +4755,35 @@ with tab3:
                                 height=380, margin=dict(t=20, b=40, l=60, r=80),
                                 xaxis_title="Día del mes simulado",
                                 yaxis=dict(title="Stock total (u)", tickformat=","),
-                                yaxis2=dict(title="Pedido / Vencidas (u)", overlaying="y",
-                                            side="right", showgrid=False),
+                                yaxis2=dict(title="Pedido / Quiebre / Vencidas (u)",
+                                            overlaying="y", side="right", showgrid=False),
                                 legend=dict(orientation="h", y=-0.18, x=0),
                                 paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="#f8fafc",
                             )
                             st.plotly_chart(_fig_rh, use_container_width=True)
+                            # Explicar el patrón diente de sierra
+                            if _n_dias_q == 0:
+                                st.success(
+                                    "✅ **Sin quiebres de stock.** El stock llega a 0 al final de algunos días "
+                                    "porque el inventario se agota justo antes de la próxima entrega — "
+                                    "esto es el comportamiento **óptimo** del modelo (no sobra ni falta stock). "
+                                    "La demanda de esos días fue cubierta en su totalidad."
+                                )
+                            else:
+                                _dias_lista = _df_rh.loc[_mask_s, "Día"].tolist()
+                                _rango = (f"días {_dias_lista[0]}–{_dias_lista[-1]}"
+                                          if len(_dias_lista) > 1 else f"día {_dias_lista[0]}")
+                                st.warning(
+                                    f"⚠️ **Quiebres reales en {_rango}** ({_n_dias_q} días, "
+                                    f"{_m(int(_df_rh['Faltante (S)'].sum()))} u en total). "
+                                    f"Fuera de ese período el stock llega a 0 entre ciclos pero "
+                                    f"**S = 0** — la demanda se cubrió, es agotamiento óptimo normal."
+                                )
                             st.caption(
-                                "Línea azul = stock total. "
+                                "Línea azul = stock total al final del día. "
                                 "Barras verdes = cantidad pedida. "
-                                "Líneas punteadas = días en que se ordenó. "
-                                "Barras rojas = unidades vencidas."
+                                "Barras rojas = quiebre real (demanda sin cubrir, S > 0). "
+                                "Líneas punteadas = días en que se ordenó."
                             )
                             st.markdown("#### Detalle diario")
                             _df_rh_show = _df_rh.rename(columns={
