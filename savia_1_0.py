@@ -730,14 +730,17 @@ def _forecast_demand_rh(history: list):
 # Solo disponible si gurobipy está instalado y licenciado.
 # ──────────────────────────────────────────────────────────────────────────────
 def _solve_horizon_rh(inv0, d_hat, period, pending, cooldown,
-                      L, tl, R_rh, Qmax, h_cost, k_cost, w_cost, s_cost=None):
+                      L, tl, R_rh, Qmax, h_cost, k_cost, w_cost, s_cost=None,
+                      ss_units=0):
     """Horizonte rodante MIP resuelto con PuLP/CBC (sin licencia requerida).
 
-    w_cost : penalización por unidad VENCIDA (waste).
-    s_cost : penalización por unidad de demanda INSATISFECHA (shortage).
-             Debe ser MUCHO mayor que k_cost para que el modelo siempre prefiera
-             hacer un pedido antes que permitir un quiebre de stock.
-             Por defecto: max(10_000_000, k_cost * 100).
+    w_cost   : penalización por unidad VENCIDA (waste).
+    s_cost   : penalización por unidad de demanda INSATISFECHA (shortage).
+               Debe ser MUCHO mayor que k_cost. Por defecto: max(10_000_000, k_cost×100).
+    ss_units : stock de seguridad mínimo deseado (unidades). Implementado como
+               restricción blanda con la misma penalización que s_cost, de modo que
+               el modelo SIEMPRE prefiere pedir antes que bajar del piso de seguridad.
+               Con ss_units > 0 el stock nunca llega a 0 en régimen estacionario.
     """
     if s_cost is None:
         s_cost = max(10_000_000, k_cost * 100)
@@ -803,6 +806,16 @@ def _solve_horizon_rh(inv0, d_hat, period, pending, cooldown,
             neighbors = [t for t in range(max(0, tau - R_rh + 1), tau) if t >= cooldown]
             if neighbors:
                 mdl += _pulp.lpSum(Y[t] for t in neighbors) + Y[tau] <= 1
+
+    # ── Stock de seguridad (restricción blanda) ────────────────────────────
+    # Si ss_units > 0, penalizar cada unidad por debajo del piso con s_cost.
+    # Como s_cost >> k_cost, el solver siempre preferirá hacer un pedido antes
+    # de quedar bajo el mínimo → el stock nunca llega a 0 en régimen estacionario.
+    if ss_units > 0:
+        UB = {t: _pulp.LpVariable(f"UB_{t}", lowBound=0, cat="Integer") for t in TH}
+        for tau in TH:
+            mdl += _pulp.lpSum(I[a, tau] for a in A) + UB[tau] >= ss_units
+        mdl += _pulp.lpSum(s_cost * UB[tau] for tau in TH)
 
     mdl.solve(_pulp.PULP_CBC_CMD(msg=0))
 
@@ -4542,6 +4555,16 @@ with tab3:
                             _rh_Qmax = st.number_input("Cantidad máxima por pedido (Qmax)",
                                                         value=max(int(_lambda_d * 30 * 5), 1000),
                                                         min_value=1, step=100)
+                            _rh_ss_d = st.number_input(
+                                "Stock de seguridad (días)",
+                                value=1, min_value=0, step=1,
+                                help=(
+                                    "Colchón mínimo que el modelo mantiene en todo momento "
+                                    "(= días × λ_diario). Con ≥ 1 el stock nunca llega a 0 "
+                                    "en régimen estacionario, protegiéndote ante variaciones "
+                                    "de demanda o retrasos de entrega."
+                                ),
+                            )
                         with _rh_c3:
                             _rh_h    = st.number_input("Costo holding (h, $/u/día)",
                                                         value=int(costo_mantener), min_value=0, step=1)
@@ -4627,11 +4650,13 @@ with tab3:
                             _inv_st[0] += _arr_hoy
                             _pending_rh = [(a, q) for (a, q) in _pending_rh if a != _day]
 
-                            _cd  = max(0, _rh_R - (_day - _last_order))
+                            _cd     = max(0, _rh_R - (_day - _last_order))
+                            _ss_u   = int(_rh_ss_d * _dh)   # SS en unidades = días × λ̂ del día
                             _sol = _solve_horizon_rh(
                                 _inv_st, _dh, _day, _pending_rh, _cd,
                                 _rh_L, _rh_tl, _rh_R, _rh_Qmax,
                                 _rh_h, _rh_k, _rh_w, _rh_s,
+                                ss_units=_ss_u,
                             )
                             if _sol is None:
                                 st.error(f"Sin solución óptima en el día {_day}.")
