@@ -722,8 +722,17 @@ def _forecast_demand_rh(history: list):
 # Solo disponible si gurobipy está instalado y licenciado.
 # ──────────────────────────────────────────────────────────────────────────────
 def _solve_horizon_rh(inv0, d_hat, period, pending, cooldown,
-                      L, tl, R_rh, Qmax, h_cost, k_cost, w_cost):
-    """Horizonte rodante MIP resuelto con PuLP/CBC (sin licencia requerida)."""
+                      L, tl, R_rh, Qmax, h_cost, k_cost, w_cost, s_cost=None):
+    """Horizonte rodante MIP resuelto con PuLP/CBC (sin licencia requerida).
+
+    w_cost : penalización por unidad VENCIDA (waste).
+    s_cost : penalización por unidad de demanda INSATISFECHA (shortage).
+             Debe ser MUCHO mayor que k_cost para que el modelo siempre prefiera
+             hacer un pedido antes que permitir un quiebre de stock.
+             Por defecto: max(10_000_000, k_cost * 100).
+    """
+    if s_cost is None:
+        s_cost = max(10_000_000, k_cost * 100)
     HORIZON = tl + 5
     A  = list(range(L))
     A1 = list(range(1, L))
@@ -747,8 +756,8 @@ def _solve_horizon_rh(inv0, d_hat, period, pending, cooldown,
     mdl += (
         _pulp.lpSum(h_cost * I[a, tau] for a in A  for tau in TH) +
         _pulp.lpSum(k_cost * Y[tau]    for tau in TH) +
-        _pulp.lpSum(w_cost * W[tau]    for tau in TH) +
-        _pulp.lpSum(w_cost * S[tau]    for tau in TH)
+        _pulp.lpSum(w_cost * W[tau]    for tau in TH) +  # penaliza vencimientos
+        _pulp.lpSum(s_cost * S[tau]    for tau in TH)    # penaliza quiebres de stock
     )
 
     for tau in TH:
@@ -4465,6 +4474,11 @@ with tab3:
                     st.markdown("#### Parámetros del Horizonte Rodante")
                     st.caption("Selecciona el medicamento, ajusta los parámetros y presiona **Ejecutar** — la página no recarga hasta ese momento.")
 
+                    # Valor por defecto de inventario inicial = (tl + R) × λ_d  (igual que referencia)
+                    _rh_tl_default  = int(lead_time)
+                    _rh_R_default   = 3
+                    _rh_inv_default = int(round((_rh_tl_default + _rh_R_default) * _lambda_d))
+
                     with st.form("form_rh"):
                         _rh_med_form = st.selectbox(
                             "Medicamento a simular:",
@@ -4474,9 +4488,9 @@ with tab3:
                         )
                         _rh_inv_ini = st.number_input(
                             "Inventario inicial (unidades)",
-                            value=int(round((_rh_sl_default / 2) * _lambda_d)) if _rh_sl_default else int(round(10 * _lambda_d)),
+                            value=max(_rh_inv_default, 1),
                             min_value=0, step=100,
-                            help="Stock con que parte la simulación el día 1. Ajústalo al stock actual real para obtener una proyección más precisa.",
+                            help="Stock con que parte la simulación el día 1. Por defecto = (lead_time + R) × λ_diario, igual al horizonte de protección de referencia.",
                         )
                         _rh_c1, _rh_c2, _rh_c3 = st.columns(3)
                         with _rh_c1:
@@ -4498,8 +4512,12 @@ with tab3:
                                                         value=int(costo_mantener), min_value=0, step=1)
                             _rh_k    = st.number_input("Costo orden (k, $)",
                                                         value=int(costo_orden), min_value=0, step=1000)
-                            _rh_w    = st.number_input("Costo desperdicio/faltante (w, $/u)",
-                                                        value=int(costo_desperdicio), min_value=0, step=1000)
+                            _rh_w    = st.number_input("Costo vencimiento (w, $/u)",
+                                                        value=max(int(costo_desperdicio), 1), min_value=0, step=100,
+                                                        help="Penalización por unidades vencidas. Típicamente el costo de compra por unidad.")
+                            _rh_s    = st.number_input("Costo quiebre stock (s, $/u)",
+                                                        value=10_000_000, min_value=1, step=1_000_000,
+                                                        help="Penalización por demanda insatisfecha. Debe ser MUY superior al costo de orden (k) para que el modelo SIEMPRE prefiera pedir antes de quedar sin stock.")
                         _btn_rh = st.form_submit_button("Ejecutar Horizonte Rodante",
                                                          use_container_width=True, type="primary")
 
@@ -4557,7 +4575,7 @@ with tab3:
                             _sol = _solve_horizon_rh(
                                 _inv_st, _dh, _day, _pending_rh, _cd,
                                 _rh_L, _rh_tl, _rh_R, _rh_Qmax,
-                                _rh_h, _rh_k, _rh_w,
+                                _rh_h, _rh_k, _rh_w, _rh_s,
                             )
                             if _sol is None:
                                 st.error(f"Sin solución óptima en el día {_day}.")
