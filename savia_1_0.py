@@ -1601,7 +1601,7 @@ with st.sidebar:
 
     # ── Cargar datos ──────────────────────────────────────────────────────────
     st.header("Cargar datos")
-    st.caption("Para selecciónar varios archivos a la vez: Cmd+clic (Mac) o Ctrl+clic (Windows).")
+    st.caption("Para seleccionar varios archivos a la vez: Cmd+clic (Mac) o Ctrl+clic (Windows).")
     archivos = st.file_uploader("Archivos Excel o CSV", type=["xlsx", "csv"],
                                 accept_multiple_files=True, label_visibility="collapsed")
 
@@ -3656,7 +3656,7 @@ with tab2:
                             paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="#f8fafc", showlegend=False,
                         )
                         st.plotly_chart(_fig_h, use_container_width=True)
-                        st.caption("Barras azules = unidades dispensadas cada mes. Linea roja punteada = promedio mensual histórico. Meses por encima del promedio pueden indicar estacionalidad o picos de demanda que deben considerarse al planificar el siguiente pedido.")
+                        st.caption("Barras azules = unidades dispensadas cada mes. Línea roja punteada = promedio mensual histórico. Meses por encima del promedio pueden indicar estacionalidad o picos de demanda que deben considerarse al planificar el siguiente pedido.")
                     else:
                         st.info("Sin fechas válidas para construir el historial.")
                 else:
@@ -4226,7 +4226,7 @@ with tab3:
                         # SECCIÓN: GRAFICOS
                         # ═══════════════════════════════════════════════════════
                         st.divider()
-                        st.markdown("### Evolucion del stock en bodega — ultimas semanas de simulación")
+                        st.markdown("### Evolución del stock en bodega — últimas semanas de simulación")
                         st.markdown(
                             "Los gráficos muestran como sube y baja el stock de medicamento a lo largo del tiempo "
                             "bajo cada estrategia de pedido. El patron en **dientes de sierra** es normal: "
@@ -4508,7 +4508,7 @@ with tab3:
                 _rh_dias_sig     = _rh_dias_list + [_dias_mes_sig]
 
                 if len(_rh_consumo_list) < 2:
-                    st.info("Se necesitan al menos 2 meses de historial para el pronóstico Bayesiano.")
+                    st.info("Se necesitan al menos 2 meses de historial para el pronóstico bayesiano.")
                 else:
                     # ── λ para el formulario (sin mostrar gráfico) ────────
                     _bf_pre   = bayesian_forecast(_rh_consumo_list, _rh_dias_sig)
