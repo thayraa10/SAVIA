@@ -768,13 +768,26 @@ def _solve_horizon_rh(inv0, d_hat, period, pending, cooldown,
     W = {t:      _pulp.LpVariable(f"W_{t}",     lowBound=0, cat="Integer") for t in TH}
     S = {t:      _pulp.LpVariable(f"S_{t}",     lowBound=0, cat="Integer") for t in TH}
 
-    mdl += (
+    # Stock de seguridad: variables de slack ANTES del objetivo para incluirlas en él.
+    # CRÍTICO: en PuLP, `mdl += expr` REEMPLAZA el objetivo si se hace después de
+    # haberlo fijado. Por eso se construye el objetivo COMPLETO en una sola expresión.
+    if ss_units > 0:
+        UB = {t: _pulp.LpVariable(f"UB_{t}", lowBound=0, cat="Integer") for t in TH}
+
+    # ── OBJETIVO COMPLETO (una sola asignación) ────────────────────────────
+    _obj = (
         _pulp.lpSum(h_cost * I[a, tau] for a in A  for tau in TH) +
         _pulp.lpSum(k_cost * Y[tau]    for tau in TH) +
-        _pulp.lpSum(w_cost * W[tau]    for tau in TH) +  # penaliza vencimientos
-        _pulp.lpSum(s_cost * S[tau]    for tau in TH)    # penaliza quiebres de stock
+        _pulp.lpSum(w_cost * W[tau]    for tau in TH) +   # penaliza vencimientos
+        _pulp.lpSum(s_cost * S[tau]    for tau in TH)     # penaliza quiebres de stock
     )
+    if ss_units > 0:
+        # Misma penalización que quiebre: el modelo SIEMPRE prefiere pedir
+        # antes que bajar del piso de seguridad.
+        _obj += _pulp.lpSum(s_cost * UB[tau] for tau in TH)
+    mdl += _obj
 
+    # ── RESTRICCIONES ─────────────────────────────────────────────────────
     for tau in TH:
         for a in range(L - 1):
             prev = inv0[a] if tau == 0 else I[a, tau - 1]
@@ -807,15 +820,10 @@ def _solve_horizon_rh(inv0, d_hat, period, pending, cooldown,
             if neighbors:
                 mdl += _pulp.lpSum(Y[t] for t in neighbors) + Y[tau] <= 1
 
-    # ── Stock de seguridad (restricción blanda) ────────────────────────────
-    # Si ss_units > 0, penalizar cada unidad por debajo del piso con s_cost.
-    # Como s_cost >> k_cost, el solver siempre preferirá hacer un pedido antes
-    # de quedar bajo el mínimo → el stock nunca llega a 0 en régimen estacionario.
+    # Restricción del stock de seguridad: stock_total[tau] + UB[tau] >= SS
     if ss_units > 0:
-        UB = {t: _pulp.LpVariable(f"UB_{t}", lowBound=0, cat="Integer") for t in TH}
         for tau in TH:
             mdl += _pulp.lpSum(I[a, tau] for a in A) + UB[tau] >= ss_units
-        mdl += _pulp.lpSum(s_cost * UB[tau] for tau in TH)
 
     mdl.solve(_pulp.PULP_CBC_CMD(msg=0))
 
